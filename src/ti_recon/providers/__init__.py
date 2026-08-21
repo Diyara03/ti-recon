@@ -32,6 +32,12 @@ from ti_recon.providers.errors import (
     ProviderUnknownError,
     UnsupportedProviderOperation,
 )
+from ti_recon.providers.registry import (
+    DuplicateProviderId,
+    ProviderRegistry,
+    ProviderRegistryError,
+    UnknownProvider,
+)
 from ti_recon.providers.request import ProviderRequest
 from ti_recon.providers.result import (
     CacheabilityHint,
@@ -47,6 +53,7 @@ __all__ = [
     "CacheabilityHint",
     "CapabilityDiscovery",
     "CredentialValidation",
+    "DuplicateProviderId",
     "NormalizedPayload",
     "ProviderAdapter",
     "ProviderAuthenticationError",
@@ -64,6 +71,8 @@ __all__ = [
     "ProviderPlanLimitedError",
     "ProviderQuotaExceededError",
     "ProviderRateLimitedError",
+    "ProviderRegistry",
+    "ProviderRegistryError",
     "ProviderRequest",
     "ProviderResultEnvelope",
     "ProviderSchemaError",
@@ -71,5 +80,6 @@ __all__ = [
     "ProviderUnavailableError",
     "ProviderUnknownError",
     "RateLimitSnapshot",
+    "UnknownProvider",
     "UnsupportedProviderOperation",
 ]

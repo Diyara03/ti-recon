@@ -7,9 +7,8 @@
 > Censys, ThreatFox, URLhaus or MalwareBazaar adapter in this repository.
 >
 > **Coverage at this commit:** capabilities, descriptor, request, result
-> envelope, error taxonomy and the adapter contract. The registry and the HTTP
-> transport land in the following commits of this series and are documented
-> then.
+> envelope, error taxonomy, the adapter contract and the registry. The shared
+> HTTP transport lands in the next commit of this series and is documented then.
 
 ## 1. Why the framework looks like this
 
@@ -173,7 +172,6 @@ is never retryable.
 
 ```python
 class ProviderAdapter(ABC):
-
     @property
     @abstractmethod
     def descriptor(self) -> ProviderDescriptor: ...
@@ -188,16 +186,23 @@ class ProviderAdapter(ABC):
     @abstractmethod
     async def lookup(self, request, credential) -> ProviderResultEnvelope: ...
 
-    async def batch_lookup(self, requests, credential): raise UnsupportedProviderOperation(...)
-    async def pivot(self, request, credential):        raise UnsupportedProviderOperation(...)
-    async def active_action(self, request, credential): raise UnsupportedProviderOperation(...)
+    async def batch_lookup(self, requests, credential):
+        raise UnsupportedProviderOperation(...)
+
+    async def pivot(self, request, credential):
+        raise UnsupportedProviderOperation(...)
+
+    async def active_action(self, request, credential):
+        raise UnsupportedProviderOperation(...)
 
     @abstractmethod
     def normalize(self, request, payload, *, raw_reference=None) -> NormalizedPayload: ...
     @abstractmethod
     def classify_error(self, error) -> ProviderErrorCategory: ...
 
-    def parse_rate_limits(self, headers) -> RateLimitSnapshot | None: return None
+    def parse_rate_limits(self, headers) -> RateLimitSnapshot | None:
+        return None
+
     async def health(self, credential=None) -> ProviderHealthReport: ...
 ```
 
@@ -259,3 +264,63 @@ naming a vendor:
 of evidence with `transport_provider=fake_aggregator` and
 `origin_provider=fake_scanner`, landing in the same lineage group as the scanner's
 own evidence — so querying both cannot inflate confidence.
+
+
+## 9. `ProviderRegistry`
+
+The registry is what makes "which vendor do I call?" an unaskable question. The
+engine describes what it needs; the registry answers with whichever registered
+providers can serve it.
+
+```python
+registry = ProviderRegistry(adapters)
+
+registry.register(adapter)               # DuplicateProviderId on collision
+registry.unregister(provider_id)         # UnknownProvider if absent
+registry.get(provider_id)                # UnknownProvider if absent
+registry.list_all()                      # ordered by provider_id
+registry.descriptors()                   # safe to expose; no credential state
+registry.find_by_object_type(object_type)
+registry.find_by_capability(capability)
+registry.find_compatible(object_type, capability, *, activity_mode, requires_credentials)
+registry.capabilities_for_object_type(object_type)
+```
+
+Properties, all tested:
+
+- **Duplicate provider ids are rejected, not overwritten.** Silently replacing
+  an integration would make evidence provenance ambiguous, since
+  `transport_provider` is just the provider id. A rejected duplicate leaves the
+  original in place.
+- **Deterministic ordering.** Every listing is sorted by `provider_id`, so
+  results do not depend on registration order and investigations stay
+  reproducible and diffable.
+- **No credentials.** The registry holds adapters and descriptors only. No
+  method name matches the credential-key pattern, and serialized descriptors
+  contain no credential state.
+- **Several providers may serve one capability**, and providers may require no
+  credential at all (`requires_credentials=False`).
+- **No vendor branching.** A test greps the registry source for vendor names and
+  fails if any appears. Registering a brand-new provider requires no registry
+  change.
+- **No scoring or prioritization.** `find_compatible` returns every match.
+  Choosing which to call, in what order, at what cost is a later task; a test
+  asserts there is no `rank`/`score`/`prioritize`/`select` method, so a policy
+  cannot quietly accrete inside a lookup table.
+
+`activity_mode` (default `PASSIVE`) is a filter rather than a hint: a passive
+investigation must never be handed an adapter that can only act, and an active
+request must not be served by a passive-only adapter.
+
+`capabilities_for_object_type` exists for coverage reporting — it is what lets an
+investigation distinguish "no provider could serve that capability for this
+object type" from "providers were tried and found nothing".
+
+Worked example — the canonical match:
+
+```
+need: ipv4-addr + SCANNER_CONTEXT
+
+FakeScannerProvider     (ipv4/ipv6, SCANNER_CONTEXT)    -> match
+FakeAggregatorProvider  (all types, REPUTATION)         -> no match
+```
