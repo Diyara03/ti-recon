@@ -10,6 +10,8 @@ able to short-circuit the assessment layer.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import Field, model_validator
 
 from ti_recon.enums import (
@@ -28,9 +30,56 @@ from ti_recon.models.evidence import Evidence, RawEvidenceReference
 from ti_recon.models.intel_object import IntelObject
 from ti_recon.models.investigation import ProviderRun
 from ti_recon.models.relationship import Relationship
+from ti_recon.providers.quota import ProviderQuotaSnapshot
 from ti_recon.security import SENSITIVE_KEY_PATTERN
 
-__all__ = ["CacheabilityHint", "NormalizedPayload", "ProviderResultEnvelope", "RateLimitSnapshot"]
+__all__ = [
+    "CacheabilityHint",
+    "NormalizedPayload",
+    "ProviderResultEnvelope",
+    "RateLimitSnapshot",
+    "RateLimitWindow",
+]
+
+
+class RateLimitWindow(FrozenTiReconModel):
+    """One rate-limit window a provider reported.
+
+    Providers throttle over several windows at once — a minute allowance and an
+    hour allowance and a day allowance, often per action. Modelling this as a
+    single ``remaining`` count would collapse them and lose the only thing worth
+    knowing: *which* window is exhausted and when it refills.
+
+    ``window_name`` is the provider's own label, not a fixed vocabulary. Nothing
+    here assumes minute/hour/day.
+    """
+
+    window_name: str = Field(min_length=1, max_length=64)
+    limit: int | None = Field(default=None, ge=0)
+    remaining: int | None = Field(default=None, ge=0)
+    reset_at: UtcDatetime | None = None
+    reset_after_seconds: float | None = Field(default=None, ge=0.0)
+
+    @property
+    def is_exhausted(self) -> bool:
+        """Whether this window has no requests left.
+
+        An unknown ``remaining`` is not exhaustion: declining to call a provider
+        that told us nothing would be worse than trying.
+        """
+        return self.remaining is not None and self.remaining <= 0
+
+    def delay_until_reset(self, now: datetime) -> float | None:
+        """Seconds until this window refills, or ``None`` if unstated.
+
+        A relative offset wins over an absolute instant, because it cannot be
+        skewed by a clock difference between us and the provider.
+        """
+        if self.reset_after_seconds is not None:
+            return max(0.0, self.reset_after_seconds)
+        if self.reset_at is None:
+            return None
+        return max(0.0, (self.reset_at - now).total_seconds())
 
 
 class RateLimitSnapshot(FrozenTiReconModel):
@@ -39,6 +88,11 @@ class RateLimitSnapshot(FrozenTiReconModel):
     Every field is nullable because most providers expose some of this and no
     provider exposes all of it. A snapshot with everything ``None`` is a valid,
     honest answer — better than inventing numbers a scheduler would trust.
+
+    The top-level ``limit``/``remaining``/``reset_at`` describe the single window
+    a simple provider reports. ``windows`` carries the full picture when a
+    provider throttles over several windows at once; the two are not required to
+    agree, since a provider may report a headline count plus a breakdown.
     """
 
     operation: str | None = Field(default=None, max_length=64)
@@ -46,6 +100,15 @@ class RateLimitSnapshot(FrozenTiReconModel):
     remaining: int | None = Field(default=None, ge=0)
     reset_at: UtcDatetime | None = None
     scope: str | None = Field(default=None, max_length=64)
+    windows: tuple[RateLimitWindow, ...] = ()
+
+    @model_validator(mode="after")
+    def _validate_snapshot(self) -> RateLimitSnapshot:
+        names = [window.window_name for window in self.windows]
+        if len(names) != len(set(names)):
+            msg = "rate-limit window names must be unique within a snapshot"
+            raise ValueError(msg)
+        return self
 
     @property
     def is_empty(self) -> bool:
@@ -55,7 +118,41 @@ class RateLimitSnapshot(FrozenTiReconModel):
             and self.remaining is None
             and self.reset_at is None
             and self.scope is None
+            and not self.windows
         )
+
+    def window(self, window_name: str) -> RateLimitWindow | None:
+        """The named window, or ``None`` if this provider does not report it."""
+        for candidate in self.windows:
+            if candidate.window_name == window_name:
+                return candidate
+        return None
+
+    @property
+    def exhausted_windows(self) -> tuple[RateLimitWindow, ...]:
+        return tuple(window for window in self.windows if window.is_exhausted)
+
+    @property
+    def is_throttled(self) -> bool:
+        """Whether any reported window is out of requests."""
+        if self.exhausted_windows:
+            return True
+        return self.remaining is not None and self.remaining <= 0
+
+    def longest_reset_delay(self, now: datetime) -> float | None:
+        """The longest wait among exhausted windows, or ``None`` if unstated.
+
+        The longest rather than the shortest: a request needs *every* exhausted
+        window to have refilled before it can succeed.
+        """
+        delays = [
+            delay
+            for window in self.exhausted_windows
+            if (delay := window.delay_until_reset(now)) is not None
+        ]
+        if self.remaining is not None and self.remaining <= 0 and self.reset_at is not None:
+            delays.append(max(0.0, (self.reset_at - now).total_seconds()))
+        return max(delays) if delays else None
 
 
 class CacheabilityHint(FrozenTiReconModel):
@@ -110,6 +207,7 @@ class ProviderResultEnvelope(FrozenTiReconModel):
 
     cacheability: CacheabilityHint = CacheabilityHint()
     rate_limit: RateLimitSnapshot | None = None
+    quota: ProviderQuotaSnapshot | None = None
 
     raw_reference: RawEvidenceReference | None = None
 
@@ -153,6 +251,7 @@ class ProviderResultEnvelope(FrozenTiReconModel):
         raw_reference: RawEvidenceReference | None = None,
         cacheability: CacheabilityHint | None = None,
         rate_limit: RateLimitSnapshot | None = None,
+        quota: ProviderQuotaSnapshot | None = None,
     ) -> ProviderResultEnvelope:
         """Build an envelope around a normalized payload."""
         return cls(
@@ -163,6 +262,7 @@ class ProviderResultEnvelope(FrozenTiReconModel):
             api_version=api_version,
             cacheability=cacheability or CacheabilityHint(),
             rate_limit=rate_limit,
+            quota=quota,
             raw_reference=raw_reference,
             evidence=payload.evidence,
             objects=payload.objects,
