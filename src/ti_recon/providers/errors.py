@@ -11,11 +11,13 @@ response bodies or request headers.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import ClassVar, Final
 
 from ti_recon.enums import ProviderErrorCategory, ProviderRunStatus
 
 __all__ = [
+    "PROVIDER_ERROR_CLASSES",
     "PROVIDER_ERROR_RUN_STATUS",
     "RETRYABLE_ERROR_CATEGORIES",
     "ProviderAuthenticationError",
@@ -33,6 +35,7 @@ __all__ = [
     "ProviderUnavailableError",
     "ProviderUnknownError",
     "UnsupportedProviderOperation",
+    "provider_error_for",
 ]
 
 #: How each error category is recorded on a :class:`~ti_recon.models.ProviderRun`.
@@ -76,13 +79,35 @@ class ProviderError(Exception):
         message: str | None = None,
         operation: str | None = None,
         retry_after_seconds: float | None = None,
+        reset_at: datetime | None = None,
+        provider_error_code: str | None = None,
     ) -> None:
         self.provider_id = provider_id
         self.operation = operation
         self.retry_after_seconds = retry_after_seconds
+        # When a limit lifts, if the provider said so. Either an offset
+        # (``retry_after_seconds``) or an absolute instant (``reset_at``) is
+        # enough for the execution layer to decide between waiting inline and
+        # backing off; neither is guessed when the provider stayed silent.
+        self.reset_at = reset_at
+        # The provider's own error identifier, kept for diagnosis. Adapters must
+        # pass a short code, never a response body or a request header.
+        self.provider_error_code = provider_error_code
         detail = message or self.category.value
         location = f"{provider_id}.{operation}" if operation else provider_id
         super().__init__(f"[{self.category.value}] {location}: {detail}")
+
+    def delay_until_reset(self, now: datetime) -> float | None:
+        """Seconds until this limit lifts, or ``None`` if the provider did not say.
+
+        ``retry_after_seconds`` wins when both are present: a relative offset
+        cannot be skewed by a clock difference between us and the provider.
+        """
+        if self.retry_after_seconds is not None:
+            return max(0.0, self.retry_after_seconds)
+        if self.reset_at is not None:
+            return max(0.0, (self.reset_at - now).total_seconds())
+        return None
 
     @property
     def run_status(self) -> ProviderRunStatus:
@@ -205,3 +230,44 @@ class UnsupportedProviderOperation(ProviderError):
     @property
     def is_retryable(self) -> bool:
         return False
+
+
+#: Every category's exception class, so a normalized category can be turned
+#: back into a typed error. Used when an adapter's ``classify_error`` maps a
+#: non-``ProviderError`` exception onto a category.
+PROVIDER_ERROR_CLASSES: Final[dict[ProviderErrorCategory, type[ProviderError]]] = {
+    ProviderErrorCategory.AUTHENTICATION_ERROR: ProviderAuthenticationError,
+    ProviderErrorCategory.PERMISSION_ERROR: ProviderPermissionError,
+    ProviderErrorCategory.PLAN_LIMITED: ProviderPlanLimitedError,
+    ProviderErrorCategory.RATE_LIMITED: ProviderRateLimitedError,
+    ProviderErrorCategory.QUOTA_EXCEEDED: ProviderQuotaExceededError,
+    ProviderErrorCategory.NOT_FOUND: ProviderNotFoundError,
+    ProviderErrorCategory.INVALID_REQUEST: ProviderInvalidRequestError,
+    ProviderErrorCategory.PARTIAL_RESULT: ProviderPartialResultError,
+    ProviderErrorCategory.TRANSIENT_ERROR: ProviderTransientError,
+    ProviderErrorCategory.PROVIDER_UNAVAILABLE: ProviderUnavailableError,
+    ProviderErrorCategory.SCHEMA_ERROR: ProviderSchemaError,
+    ProviderErrorCategory.UNKNOWN_ERROR: ProviderUnknownError,
+}
+
+
+def provider_error_for(
+    category: ProviderErrorCategory,
+    provider_id: str,
+    *,
+    message: str | None = None,
+    operation: str | None = None,
+    retry_after_seconds: float | None = None,
+    reset_at: datetime | None = None,
+    provider_error_code: str | None = None,
+) -> ProviderError:
+    """Build the typed error for a normalized category."""
+    error_class = PROVIDER_ERROR_CLASSES[category]
+    return error_class(
+        provider_id,
+        message=message,
+        operation=operation,
+        retry_after_seconds=retry_after_seconds,
+        reset_at=reset_at,
+        provider_error_code=provider_error_code,
+    )

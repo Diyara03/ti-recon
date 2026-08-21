@@ -33,9 +33,22 @@ from ti_recon.execution.clock import (
 )
 from ti_recon.execution.models import CacheScope, CooldownReason, ExecutionScope
 from ti_recon.execution.policy import CACHEABLE_STATUSES, CachePolicy
+from ti_recon.execution.retry import (
+    AUTOMATICALLY_RETRYABLE_CATEGORIES,
+    CONDITIONALLY_RETRYABLE_CATEGORIES,
+    NEVER_RETRYABLE_CATEGORIES,
+    RetryDecision,
+    RetryOutcome,
+    RetryPolicy,
+    compute_backoff,
+    decide_retry,
+)
 
 __all__ = [
+    "AUTOMATICALLY_RETRYABLE_CATEGORIES",
     "CACHEABLE_STATUSES",
+    "CONDITIONALLY_RETRYABLE_CATEGORIES",
+    "NEVER_RETRYABLE_CATEGORIES",
     "AsyncioSleeper",
     "CacheKey",
     "CachePolicy",
@@ -51,7 +64,12 @@ __all__ = [
     "ProviderCache",
     "RandomJitter",
     "RecordingSleeper",
+    "RetryDecision",
+    "RetryOutcome",
+    "RetryPolicy",
     "Sleeper",
     "SystemClock",
     "build_cache_key",
+    "compute_backoff",
+    "decide_retry",
 ]
