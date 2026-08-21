@@ -473,3 +473,41 @@ def test_repr_exposes_no_credential(client: ProviderHttpClient) -> None:
     text = repr(client)
     assert "fake_provider" in text
     assert SECRET not in text
+
+
+# --------------------------------------------------------------------------- #
+# Scheme-shaped paths
+#
+# `urljoin` treats `mailto:x` or `javascript:x` as an absolute URL even though
+# the string contains no "://", so the base-URL containment check — not the
+# "://" check — is what stops these.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "javascript:alert(1)",
+        "mailto:someone@evil.example",
+        "data:text/html,<script>",
+        "file:/etc/passwd",
+    ],
+)
+async def test_scheme_shaped_paths_are_refused(client: ProviderHttpClient, path: str) -> None:
+    with pytest.raises(ProviderTransportSecurityError, match="would leave the provider base URL"):
+        await client.get(path)
+
+
+@respx.mock
+async def test_post_uses_the_same_boundary(client: ProviderHttpClient) -> None:
+    route = respx.post(f"{BASE_URL}submit").mock(return_value=httpx.Response(200))
+    await client.post("submit", json={"value": "evil.example"})
+    assert route.called
+    with pytest.raises(ProviderTransportSecurityError):
+        await client.post("https://evil.example/submit")
+
+
+def test_config_is_exposed_for_inspection(client: ProviderHttpClient) -> None:
+    assert client.config.provider_id == "fake_provider"
+    assert client.config.base_url == BASE_URL
+    assert client.config.host == "api.fake-provider.test"

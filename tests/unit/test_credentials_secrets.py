@@ -223,3 +223,20 @@ def test_credential_status_is_separate_from_provider_status() -> None:
     credential_values = {member.value for member in CredentialStatus}
     run_values = {member.value for member in ProviderRunStatus}
     assert credential_values & run_values == set()
+
+
+def test_policy_blocked_connection_is_not_usable() -> None:
+    """Policy alone can make a perfectly valid credential unusable."""
+    from ti_recon.credentials import PolicyStatus
+
+    connection = make_connection(status=CredentialStatus.ACTIVE, policy_status=PolicyStatus.BLOCKED)
+    assert connection.is_usable is False
+
+
+async def test_repository_reports_size_without_leaking_contents() -> None:
+    repository = InMemoryConnectionRepository()
+    await repository.save(make_connection())
+    assert len(repository) == 1
+    text = repr(repository)
+    assert "connections=1" in text
+    assert "user-a" not in text

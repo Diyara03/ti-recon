@@ -322,14 +322,14 @@ def _split_authority(netloc: str) -> tuple[str | None, str, int | None]:
     port: int | None = None
     if remainder.startswith("["):
         closing = remainder.find("]")
-        if closing == -1:
+        if closing == -1:  # pragma: no cover - urlsplit rejects this first
             msg = "URL has an unterminated IPv6 host"
             raise NormalizationError(msg)
         host = remainder[: closing + 1]
         tail = remainder[closing + 1 :]
         if tail.startswith(":"):
             port = _parse_port(tail[1:])
-        elif tail:
+        elif tail:  # pragma: no cover - urlsplit rejects this first
             msg = "URL authority is malformed"
             raise NormalizationError(msg)
     elif ":" in remainder:

@@ -182,3 +182,14 @@ def test_strongest_hash_returns_none_when_empty() -> None:
 def test_canonical_key_for_file_without_hashes_is_an_error() -> None:
     with pytest.raises(ValueError, match="at least one hash"):
         canonical_key_for(IntelObjectType.FILE, SHA256, {})
+
+
+def test_file_with_non_mapping_hashes_property_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="hashes"):
+        IntelObject(
+            object_class=ObjectClass.OBSERVABLE,
+            object_type=IntelObjectType.FILE,
+            canonical_value=SHA256,
+            display_value=SHA256,
+            properties={"hashes": SHA256},
+        )

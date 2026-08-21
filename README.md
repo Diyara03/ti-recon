@@ -36,6 +36,7 @@ TI Recon backend                 <-- this repository
    |-- capability planner         (future)
    |-- provider registry          implemented
    |-- provider adapters          contract implemented, no real adapters
+   |-- provider HTTP transport    implemented (SSRF-bounded)
    |-- normalized evidence        implemented (Task 3 models)
    |-- lineage / correlation      models implemented, engine future
    |-- evidence fusion            (future)
@@ -98,6 +99,9 @@ uv run pytest -q
 uv run pytest -q --cov=ti_recon --cov-report=term-missing
 ```
 
+719 tests pass with 100% statement coverage of `src/ti_recon` (99% including
+branches).
+
 ## Configuration
 
 Copy `.env.example` to `.env` (git-ignored) for local development. `.env.example`
@@ -118,8 +122,11 @@ In production, provider credentials are held per user by the credential layer
 - **No verdict engine.** `Assessment` / `AssessmentContribution` models exist,
   but nothing computes a verdict, risk score or confidence.
 - **No caching, retries, backoff or quota coordination** (Task 6).
-- **No batch, pivot or active operations.** The contract declares them; the
-  default implementations raise `UnsupportedProviderOperation`.
+- **No batch, pivot or active operations against a real provider.** The
+  contract declares them and the default implementations raise
+  `UnsupportedProviderOperation`; only test fakes implement batch lookup.
+- **No provider selection.** The registry returns every compatible provider;
+  nothing ranks, prioritizes or costs them.
 - Normalization is purely syntactic — no DNS resolution, no WHOIS, no network I/O.
 
 ## Documentation

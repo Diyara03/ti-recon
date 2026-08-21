@@ -105,7 +105,7 @@ class ProviderResultEnvelope(FrozenTiReconModel):
     operation: ProviderOperation
     status: ProviderRunStatus
     retrieved_at: UtcDatetime = Field(default_factory=utc_now)
-    api_version: str | None = Field(default=None, max_length=32)
+    api_version: str = Field(min_length=1, max_length=32)
     adapter_version: str = Field(min_length=1, max_length=32)
 
     cacheability: CacheabilityHint = CacheabilityHint()
@@ -148,8 +148,8 @@ class ProviderResultEnvelope(FrozenTiReconModel):
         operation: ProviderOperation,
         status: ProviderRunStatus,
         adapter_version: str,
+        api_version: str,
         payload: NormalizedPayload,
-        api_version: str | None = None,
         raw_reference: RawEvidenceReference | None = None,
         cacheability: CacheabilityHint | None = None,
         rate_limit: RateLimitSnapshot | None = None,

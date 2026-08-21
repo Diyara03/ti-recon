@@ -21,6 +21,7 @@ from ti_recon.credentials import (
     PolicyDenied,
     PolicyStatus,
     SecretNotFound,
+    SecretRef,
     credential_group_for,
     providers_in_group,
 )
@@ -426,3 +427,65 @@ async def test_another_users_disconnect_attempt_is_a_no_op(harness: Harness) -> 
         authenticated_user_id=USER_A, provider_id="fake_aggregator"
     )
     assert resolved.reveal() == KEY_A
+
+
+async def test_find_connection_for_provider_resolves_via_the_group(
+    harness: Harness,
+) -> None:
+    created = await harness.manager.create_connection(
+        user_id=USER_A,
+        provider_id="threatfox",
+        secret="abuse-key-AAAA",
+        auth_type=AuthType.AUTH_KEY,
+    )
+    found = await harness.manager.find_connection_for_provider(
+        user_id=USER_A, provider_id="malwarebazaar"
+    )
+    assert found is not None
+    assert found.id == created.id
+    assert (
+        await harness.manager.find_connection_for_provider(
+            user_id=USER_B, provider_id="malwarebazaar"
+        )
+        is None
+    )
+
+
+async def test_failed_rotation_rolls_back_the_new_secret(harness: Harness) -> None:
+    """A rotation that cannot be recorded must not leave a stray secret behind."""
+    connection = await harness.manager.create_connection(
+        user_id=USER_A,
+        provider_id="fake_aggregator",
+        secret=KEY_A,
+        auth_type=AuthType.API_KEY,
+    )
+    original_save = harness.repository.save
+    calls = {"n": 0}
+
+    async def failing_save(updated: object) -> None:
+        calls["n"] += 1
+        msg = "storage unavailable"
+        raise RuntimeError(msg)
+
+    harness.repository.save = failing_save  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="storage unavailable"):
+        await harness.manager.replace_credential(
+            user_id=USER_A, connection_id=connection.id, secret=KEY_B
+        )
+    harness.repository.save = original_save  # type: ignore[method-assign]
+
+    assert calls["n"] == 1
+    # The old secret is still there, the new one is gone, and nothing leaked.
+    assert len(harness.store) == 1
+    resolved = await harness.resolver.resolve(
+        authenticated_user_id=USER_A, provider_id="fake_aggregator"
+    )
+    assert resolved.reveal() == KEY_A
+
+
+def test_secret_reference_str_shows_no_secret() -> None:
+    reference = SecretRef(owner_user_id=USER_A, key="opaque-key")
+    text = str(reference)
+    assert USER_A in text
+    assert "opaque-key" in text
+    assert KEY_A not in text

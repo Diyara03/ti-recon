@@ -379,6 +379,7 @@ def test_successful_envelope_may_not_carry_an_error_category() -> None:
             operation=ProviderOperation.LOOKUP,
             status=ProviderRunStatus.SUCCESS,
             adapter_version="0.1.0",
+            api_version="v1",
             error_category=ProviderErrorCategory.RATE_LIMITED,
         )
 
@@ -390,6 +391,7 @@ def test_failed_envelope_must_carry_an_error_category() -> None:
             operation=ProviderOperation.LOOKUP,
             status=ProviderRunStatus.ERROR,
             adapter_version="0.1.0",
+            api_version="v1",
         )
 
 
@@ -400,6 +402,7 @@ def test_envelope_rejects_credential_mentions_in_warnings() -> None:
             operation=ProviderOperation.LOOKUP,
             status=ProviderRunStatus.NO_DATA,
             adapter_version="0.1.0",
+            api_version="v1",
             warnings=("retry with a valid api_key",),
         )
 
@@ -411,6 +414,7 @@ def test_envelope_rejects_credential_mentions_in_error_message() -> None:
             operation=ProviderOperation.LOOKUP,
             status=ProviderRunStatus.ERROR,
             adapter_version="0.1.0",
+            api_version="v1",
             error_category=ProviderErrorCategory.AUTHENTICATION_ERROR,
             error_message="rejected Authorization header value abc123",
         )
@@ -701,3 +705,35 @@ def test_empty_normalization_is_valid() -> None:
     assert payload.evidence == ()
     assert payload.objects == ()
     assert payload.relationships == ()
+
+
+def test_descriptor_requires_passive_or_active_support() -> None:
+    with pytest.raises(ValidationError, match="passive or active"):
+        ProviderDescriptor(
+            provider_id="fake_inert",
+            display_name="Fake Inert",
+            adapter_version="0.1.0",
+            source_family="none",
+            supported_object_types=frozenset({IntelObjectType.URL}),
+            capabilities=frozenset({ProviderCapability.REPUTATION}),
+            supports_passive=False,
+        )
+
+
+def test_base_adapter_parse_rate_limits_returns_none() -> None:
+    """The contract default must not invent limits an adapter never parsed."""
+    assert ProviderAdapter.parse_rate_limits(FakeMinimalProvider(), {}) is None
+
+
+def test_descriptor_keeps_an_explicit_credential_group() -> None:
+    """Shared-credential providers name their group instead of themselves."""
+    descriptor = ProviderDescriptor(
+        provider_id="fake_grouped",
+        display_name="Fake Grouped",
+        adapter_version="0.1.0",
+        source_family="grouped_family",
+        credential_group="shared_group",
+        supported_object_types=frozenset({IntelObjectType.URL}),
+        capabilities=frozenset({ProviderCapability.REPUTATION}),
+    )
+    assert descriptor.credential_group == "shared_group"

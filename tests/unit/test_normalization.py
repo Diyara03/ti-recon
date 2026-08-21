@@ -360,3 +360,37 @@ def test_normalization_result_is_immutable() -> None:
     result = normalize_observable("8.8.8.8")
     with pytest.raises(ValueError, match="frozen"):
         result.original_input = "changed"
+
+
+# --------------------------------------------------------------------------- #
+# Edge cases found while measuring coverage
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("raw", [".", "..", "..."])
+def test_dot_only_input_is_rejected(raw: str) -> None:
+    with pytest.raises(NormalizationError):
+        normalize_domain(raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "ф" * 70 + ".рф",  # label too long once punycoded
+        "\u0640.example",  # Arabic tatweel: disallowed by UTS-46
+    ],
+)
+def test_idna_rejected_domains_are_reported_as_invalid(raw: str) -> None:
+    with pytest.raises(NormalizationError, match="internationalized domain name"):
+        normalize_domain(raw)
+
+
+def test_url_with_a_bare_scheme_like_path_component_is_still_a_url() -> None:
+    """`a;b` is a path segment, not a scheme, and must survive normalization."""
+    canonical = normalize_url("https://evil.example/a;b").canonical_value
+    assert canonical == "https://evil.example/a;b"
+
+
+def test_url_with_userinfo_but_no_host_is_rejected() -> None:
+    with pytest.raises(NormalizationError, match="missing a host"):
+        normalize_url("http://user@/a")

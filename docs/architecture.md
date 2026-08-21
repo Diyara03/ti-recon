@@ -200,6 +200,8 @@ implemented. `ProviderAdapter.active_action` raises
 ```
 src/ti_recon/
   enums.py            shared vocabularies
+  security.py         credential-key guards shared by models and transport
+  versions.py         ENGINE_VERSION / POLICY_VERSION audit stamps
   models/
     base.py           TiReconModel base, utc_now
     intel_object.py   IntelObject (Observables and derived objects)
@@ -212,8 +214,12 @@ src/ti_recon/
     errors.py         NormalizationError
     observables.py    normalize_observable + per-type normalizers
   credentials/
-    models.py         ProviderConnection, CredentialMaterial, enums
+    enums.py          AuthType, CredentialStatus, PolicyStatus
+    errors.py         credential-layer errors (no secrets in messages)
+    groups.py         credential groups (e.g. shared abuse.ch Auth-Key)
+    models.py         SecretRef, ProviderConnection, CredentialMaterial
     secret_store.py   SecretStore protocol, InMemorySecretStore
+    repository.py     ConnectionRepository protocol, in-memory implementation
     manager.py        CredentialManager (lifecycle)
     resolver.py       CredentialResolver (user-scoped resolution)
   providers/

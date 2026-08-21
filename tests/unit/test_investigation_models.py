@@ -119,3 +119,8 @@ def test_non_error_statuses_do_not_require_an_error_code() -> None:
 
 def test_cache_hit_defaults_to_false() -> None:
     assert make_run().cache_hit is False
+
+
+def test_provider_run_rejects_completion_before_start() -> None:
+    with pytest.raises(ValidationError, match="must not precede started_at"):
+        make_run(started_at=T0, completed_at=T0 - timedelta(seconds=1))

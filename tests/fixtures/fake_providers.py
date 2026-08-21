@@ -383,6 +383,7 @@ class FakeWarningListProvider(_FakeAdapterBase):
             operation=request.operation,
             status=ProviderRunStatus.NO_DATA,
             adapter_version=self._descriptor.adapter_version,
+            api_version=self._descriptor.api_version,
             payload=payload,
         )
 
@@ -419,6 +420,7 @@ class FakeMinimalProvider(_FakeAdapterBase):
             operation=request.operation,
             status=ProviderRunStatus.NO_DATA,
             adapter_version=self._descriptor.adapter_version,
+            api_version=self._descriptor.api_version,
             payload=self.normalize(request, {}),
         )
 

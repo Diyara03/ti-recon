@@ -29,7 +29,10 @@ class ProviderDescriptor(FrozenTiReconModel):
     provider_id: str = Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_]*$")
     display_name: str = Field(min_length=1, max_length=120)
     adapter_version: str = Field(min_length=1, max_length=32)
-    api_version: str | None = Field(default=None, max_length=32)
+    # Explicit rather than optional: a stored assessment must remain explainable,
+    # and "which API version produced this?" is part of that. A provider with an
+    # unversioned API says so out loud.
+    api_version: str = Field(default="unversioned", min_length=1, max_length=32)
     source_family: str = Field(min_length=1, max_length=64)
     credential_group: str = Field(default="", max_length=64)
     supported_object_types: frozenset[IntelObjectType] = Field(min_length=1)
