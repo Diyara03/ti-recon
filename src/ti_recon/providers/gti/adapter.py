@@ -26,11 +26,12 @@ from types import TracebackType
 
 from ti_recon.credentials.enums import CredentialStatus
 from ti_recon.credentials.models import CredentialMaterial
-from ti_recon.enums import ProviderErrorCategory
+from ti_recon.enums import IntelObjectType, ProviderErrorCategory, ProviderRunStatus
 from ti_recon.execution.clock import Clock, SystemClock
 from ti_recon.execution.limits import QuotaStore
 from ti_recon.execution.models import ExecutionScope
 from ti_recon.models.evidence import RawEvidenceReference
+from ti_recon.models.intel_object import IntelObject, strongest_hash
 from ti_recon.providers.adapter import (
     CapabilityDiscovery,
     CredentialValidation,
@@ -41,12 +42,20 @@ from ti_recon.providers.capabilities import ProviderHealth
 from ti_recon.providers.descriptor import ProviderDescriptor
 from ti_recon.providers.errors import (
     ProviderError,
+    ProviderInvalidRequestError,
     UnsupportedProviderOperation,
 )
-from ti_recon.providers.gti.client import GTIClient, GTIClientFactory, VtPyGTIClientFactory
+from ti_recon.providers.gti.client import (
+    GTIClient,
+    GTIClientFactory,
+    GTIObject,
+    VtPyGTIClientFactory,
+    url_identifier,
+)
 from ti_recon.providers.gti.config import GTIConfig
 from ti_recon.providers.gti.descriptor import GTI_PROVIDER_ID, build_gti_descriptor
-from ti_recon.providers.gti.policy import GTILookupPolicy
+from ti_recon.providers.gti.normalizer import enrich_primary_object
+from ti_recon.providers.gti.policy import GTILookupPolicy, collection_for_object_type
 from ti_recon.providers.gti.quota import GTIQuotaReading, parse_overall_quotas
 from ti_recon.providers.quota import ProviderQuotaSnapshot
 from ti_recon.providers.request import ProviderRequest
@@ -268,8 +277,131 @@ class GTIAdapter(ProviderAdapter):
     async def lookup(
         self, request: ProviderRequest, credential: CredentialMaterial | None
     ) -> ProviderResultEnvelope:
-        """Passive enrichment of one observable. Implemented in the next commit."""
-        raise UnsupportedProviderOperation(GTI_PROVIDER_ID, operation="lookup")
+        """Passive enrichment of one observable.
+
+        One GTI object fetch, plus a quota refresh only when Task 6's store has
+        gone stale. Nothing is submitted, rescanned or downloaded.
+
+        A ``NotFoundError`` is turned into a ``NO_DATA`` envelope rather than
+        being allowed to propagate. Both routes report NO_DATA, but an envelope
+        can be negatively cached, so an unknown hash costs one API call rather
+        than one per investigation that asks about it. NO_DATA means "GTI has
+        never seen this" — never that the observable is benign.
+        """
+        if credential is None:
+            raise ProviderInvalidRequestError(
+                GTI_PROVIDER_ID,
+                message="GTI requires a credential",
+                operation="lookup",
+            )
+        collection, object_id = self._locate(request.intel_object)
+
+        async with self._client_for(credential) as client:
+            try:
+                gti_object = await client.get_primary_object(
+                    collection=collection,
+                    object_id=object_id,
+                    exclude_attributes=self._lookup_policy.excluded_attributes,
+                )
+            except ProviderError as error:
+                if error.category is ProviderErrorCategory.NOT_FOUND:
+                    return self._no_data_envelope(request)
+                raise
+            quota = await self._refresh_quota_if_stale(client, credential)
+
+        return self._envelope(request, gti_object, quota=quota)
+
+    def _locate(self, intel_object: IntelObject) -> tuple[str, str]:
+        """The GTI collection and object id for an observable.
+
+        A URL becomes an opaque identifier here, which is what keeps the URL
+        under investigation out of every request path TI Recon builds.
+        """
+        collection = collection_for_object_type(intel_object.object_type)
+        if collection is None:
+            raise UnsupportedProviderOperation(
+                GTI_PROVIDER_ID,
+                operation=f"lookup for {intel_object.object_type.value}",
+            )
+        if intel_object.object_type is IntelObjectType.URL:
+            return collection, url_identifier(intel_object.canonical_value)
+        if intel_object.object_type is IntelObjectType.FILE:
+            return collection, self._file_identifier(intel_object)
+        return collection, intel_object.canonical_value
+
+    @staticmethod
+    def _file_identifier(intel_object: IntelObject) -> str:
+        """The hash GTI should be asked about.
+
+        The strongest available, because a SHA-256 identifies a file
+        unambiguously where an MD5 can collide. Falls back to the canonical
+        value for a file object whose hashes were recorded elsewhere.
+        """
+        best = strongest_hash(intel_object.hashes)
+        return best[1] if best is not None else intel_object.canonical_value
+
+    def _envelope(
+        self,
+        request: ProviderRequest,
+        gti_object: GTIObject,
+        *,
+        quota: ProviderQuotaSnapshot | None,
+    ) -> ProviderResultEnvelope:
+        raw_reference = self._raw_reference(request, gti_object)
+        payload = self._normalize_object(request, gti_object, raw_reference=raw_reference)
+        return ProviderResultEnvelope.from_payload(
+            provider=GTI_PROVIDER_ID,
+            operation=request.operation,
+            status=ProviderRunStatus.SUCCESS,
+            adapter_version=self._descriptor.adapter_version,
+            api_version=self._descriptor.api_version,
+            payload=payload,
+            raw_reference=raw_reference,
+            quota=quota,
+        )
+
+    def _no_data_envelope(self, request: ProviderRequest) -> ProviderResultEnvelope:
+        return ProviderResultEnvelope.from_payload(
+            provider=GTI_PROVIDER_ID,
+            operation=request.operation,
+            status=ProviderRunStatus.NO_DATA,
+            adapter_version=self._descriptor.adapter_version,
+            api_version=self._descriptor.api_version,
+            payload=NormalizedPayload(),
+        )
+
+    def _raw_reference(
+        self, request: ProviderRequest, gti_object: GTIObject
+    ) -> RawEvidenceReference:
+        """A pointer to the response, carrying no response and no credential.
+
+        The storage key names the collection and object id — never the quota
+        path, never a header, never the API key.
+        """
+        return RawEvidenceReference(
+            investigation_id=request.investigation_id,
+            provider=GTI_PROVIDER_ID,
+            operation=request.operation,
+            storage_key=(
+                f"gti/{gti_object.object_type}/{gti_object.object_id}/{request.operation.value}"
+            ),
+            retrieved_at=self._clock.now(),
+        )
+
+    def _normalize_object(
+        self,
+        request: ProviderRequest,
+        gti_object: GTIObject,
+        *,
+        raw_reference: RawEvidenceReference | None,
+    ) -> NormalizedPayload:
+        """Normalize one GTI object into Task 3 models.
+
+        Evidence normalization arrives in the next commits; for now the primary
+        object is enriched with the identity and metadata GTI reported.
+        """
+        enriched = enrich_primary_object(request.intel_object, gti_object)
+        return NormalizedPayload(objects=(enriched,))
 
     def normalize(
         self,
@@ -278,8 +410,20 @@ class GTIAdapter(ProviderAdapter):
         *,
         raw_reference: RawEvidenceReference | None = None,
     ) -> NormalizedPayload:
-        """Turn a GTI payload into Task 3 models. Implemented in a later commit."""
-        return NormalizedPayload()
+        """Turn a stored GTI payload into Task 3 models.
+
+        The pure, synchronous half of ``lookup``: it accepts the raw response
+        body so normalization can be tested against a fixture with no client
+        and no network.
+        """
+        gti_object = GTIObject(
+            object_type=str(payload.get("type", request.intel_object.object_type.value)),
+            object_id=str(payload.get("id", request.intel_object.canonical_value)),
+            attributes=_mapping(payload.get("attributes")),
+            relationships=_mapping(payload.get("relationships")),
+            context_attributes=_mapping(payload.get("context_attributes")),
+        )
+        return self._normalize_object(request, gti_object, raw_reference=raw_reference)
 
     def classify_error(self, error: Exception) -> ProviderErrorCategory:
         """Normalize an exception the client did not already translate.
@@ -333,3 +477,8 @@ class _ClientScope:
         traceback: TracebackType | None,
     ) -> None:
         await self._client.close()
+
+
+def _mapping(value: object) -> dict[str, object]:
+    """A plain mapping, or an empty one when GTI sent something else."""
+    return dict(value) if isinstance(value, Mapping) else {}
