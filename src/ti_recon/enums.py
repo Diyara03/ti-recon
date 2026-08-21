@@ -13,6 +13,10 @@ from enum import StrEnum
 __all__ = [
     "ActivityMode",
     "AssessmentState",
+    "ConflictSeverity",
+    "ConflictStatus",
+    "ConflictType",
+    "ContributionRole",
     "CoverageRelevance",
     "CoverageStatus",
     "EvidenceClass",
@@ -23,7 +27,11 @@ __all__ = [
     "InvestigationStatus",
     "MatchScope",
     "ObjectClass",
+    "ProviderCapability",
+    "ProviderErrorCategory",
+    "ProviderOperation",
     "ProviderRunStatus",
+    "RelationshipType",
     "SourceReliabilityGrade",
     "Verdict",
 ]
@@ -243,3 +251,125 @@ class InformationCredibilityGrade(StrEnum):
     DOUBTFUL = "4"
     IMPROBABLE = "5"
     CANNOT_BE_JUDGED = "6"
+
+
+class ProviderCapability(StrEnum):
+    """An intelligence capability, independent of any vendor.
+
+    The engine asks for a capability and the registry answers with whichever
+    configured providers can serve it. No engine code names a vendor, which is
+    what makes every provider optional and substitutable.
+
+    This vocabulary lives here rather than in ``ti_recon.providers`` because the
+    data model refers to it (an investigation requests capabilities, a provider
+    run serves one, coverage is reported per capability); the data model must not
+    depend on the provider framework.
+    """
+
+    REPUTATION = "reputation"
+    MALWARE_INTELLIGENCE = "malware_intelligence"
+    WEB_BEHAVIOR = "web_behavior"
+    SCANNER_CONTEXT = "scanner_context"
+    NETWORK_OWNERSHIP = "network_ownership"
+    CURRENT_INFRASTRUCTURE = "current_infrastructure"
+    HISTORICAL_INFRASTRUCTURE = "historical_infrastructure"
+    CERTIFICATE_CONTEXT = "certificate_context"
+    RELATIONSHIPS = "relationships"
+    FALSE_POSITIVE_CONTEXT = "false_positive_context"
+    BATCH_LOOKUP = "batch_lookup"
+    ACTIVE_SCAN = "active_scan"
+
+
+#: Capabilities that cause new interaction with the target and therefore
+#: require ``ActivityMode.ACTIVE`` plus explicit user approval.
+ACTIVE_CAPABILITIES: frozenset[ProviderCapability] = frozenset({ProviderCapability.ACTIVE_SCAN})
+
+
+class ProviderOperation(StrEnum):
+    """The kind of call being made against a provider."""
+
+    LOOKUP = "lookup"
+    BATCH_LOOKUP = "batch_lookup"
+    PIVOT = "pivot"
+    ACTIVE_ACTION = "active_action"
+    VALIDATE_CREDENTIALS = "validate_credentials"
+    DISCOVER_CAPABILITIES = "discover_capabilities"
+    HEALTH = "health"
+
+
+class ProviderErrorCategory(StrEnum):
+    """Provider-neutral error categories.
+
+    Adapters map their vendor's failure modes onto these so the engine can
+    reason about failures without knowing any provider's HTTP conventions.
+    """
+
+    AUTHENTICATION_ERROR = "authentication_error"
+    PERMISSION_ERROR = "permission_error"
+    PLAN_LIMITED = "plan_limited"
+    RATE_LIMITED = "rate_limited"
+    QUOTA_EXCEEDED = "quota_exceeded"
+    NOT_FOUND = "not_found"
+    INVALID_REQUEST = "invalid_request"
+    PARTIAL_RESULT = "partial_result"
+    TRANSIENT_ERROR = "transient_error"
+    PROVIDER_UNAVAILABLE = "provider_unavailable"
+    SCHEMA_ERROR = "schema_error"
+    UNKNOWN_ERROR = "unknown_error"
+
+
+class RelationshipType(StrEnum):
+    """Initial relationship vocabulary between intelligence objects."""
+
+    RESOLVES_TO = "resolves-to"
+    REDIRECTS_TO = "redirects-to"
+    CONTACTS = "contacts"
+    DOWNLOADS = "downloads"
+    DROPS = "drops"
+    HOSTS = "hosts"
+    USES_CERTIFICATE = "uses-certificate"
+    BELONGS_TO_ASN = "belongs-to-asn"
+    ASSOCIATED_WITH_MALWARE = "associated-with-malware"
+    SIMILAR_TO = "similar-to"
+    DERIVED_FROM = "derived-from"
+    DUPLICATE_OF = "duplicate-of"
+    RELATED_TO = "related-to"
+
+
+class ConflictType(StrEnum):
+    """Why two pieces of evidence are in tension."""
+
+    DIRECTIONAL = "directional"
+    TEMPORAL = "temporal"
+    VALUE_MISMATCH = "value_mismatch"
+    SCOPE_MISMATCH = "scope_mismatch"
+    ATTRIBUTION = "attribution"
+
+
+class ConflictSeverity(StrEnum):
+    """How much a conflict should matter to an assessment."""
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class ConflictStatus(StrEnum):
+    """Triage state of a conflict.
+
+    ``UNRESOLVED`` is distinct from ``OPEN``: open means nobody has looked yet,
+    unresolved means it was examined and could not be reconciled — which is
+    itself a meaningful input to confidence.
+    """
+
+    OPEN = "open"
+    RESOLVED = "resolved"
+    UNRESOLVED = "unresolved"
+
+
+class ContributionRole(StrEnum):
+    """The role a piece of evidence played in an assessment."""
+
+    SUPPORTING = "supporting"
+    BENIGN = "benign"
+    CONTEXT = "context"

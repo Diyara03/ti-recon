@@ -55,10 +55,16 @@ class TiReconModel(BaseModel):
     # Strings are deliberately *not* auto-stripped: models record provenance,
     # so a stored value must be exactly what was recorded. Callers normalize
     # explicitly where normalization is meaningful.
+    #
+    # ``hide_input_in_errors`` matters for security, not tidiness: by default
+    # pydantic embeds the rejected input in the ValidationError message, so a
+    # field that happens to hold credential material would leak it into any log
+    # that captures the exception.
     model_config = ConfigDict(
         extra="forbid",
         validate_assignment=True,
         use_enum_values=False,
+        hide_input_in_errors=True,
     )
 
 
