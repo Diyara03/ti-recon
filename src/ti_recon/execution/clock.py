@@ -149,7 +149,7 @@ class RandomJitter:
 
     def __init__(self, rng: random.Random | None = None) -> None:
         # Not cryptographic: this only de-synchronizes retry timing.
-        self._rng = rng or random.Random()
+        self._rng = random.Random() if rng is None else rng
 
     def jitter(self, upper_bound: float) -> float:
         if upper_bound <= 0:

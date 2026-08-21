@@ -147,7 +147,7 @@ class InMemoryQuotaStore:
         if max_entries < 1:
             msg = "max_entries must be at least 1"
             raise ValueError(msg)
-        self._clock = clock or SystemClock()
+        self._clock = SystemClock() if clock is None else clock
         self._ttl = ttl_seconds
         self._max_entries = max_entries
         self._snapshots: OrderedDict[str, tuple[ProviderQuotaSnapshot, float]] = OrderedDict()
@@ -200,7 +200,7 @@ class InMemoryCooldownStore:
         if max_entries < 1:
             msg = "max_entries must be at least 1"
             raise ValueError(msg)
-        self._clock = clock or SystemClock()
+        self._clock = SystemClock() if clock is None else clock
         self._max_entries = max_entries
         self._entries: OrderedDict[tuple[str, str | None], CooldownEntry] = OrderedDict()
         self._lock = asyncio.Lock()

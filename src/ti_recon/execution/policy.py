@@ -7,17 +7,25 @@ permits. Real per-provider values arrive with each real integration.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Final
 
 from pydantic import Field, model_validator
 
 from ti_recon.enums import ActivityMode, ProviderOperation, ProviderRunStatus
+from ti_recon.execution.coordination import DEFAULT_MAX_CONCURRENCY
 from ti_recon.execution.models import CacheScope
+from ti_recon.execution.retry import RetryPolicy
 from ti_recon.models.base import FrozenTiReconModel
 from ti_recon.providers.request import ProviderRequest
 from ti_recon.providers.result import ProviderResultEnvelope
 
-__all__ = ["CACHEABLE_STATUSES", "CachePolicy"]
+__all__ = [
+    "CACHEABLE_STATUSES",
+    "CachePolicy",
+    "ProviderExecutionPolicy",
+    "ProviderPolicyRegistry",
+]
 
 #: Statuses a result may ever be cached under. Everything else is a failure or
 #: a configuration problem, and caching those would turn a transient outage
@@ -108,3 +116,74 @@ class CachePolicy(FrozenTiReconModel):
                 return self.partial_ttl_seconds
             case _:
                 return None
+
+
+class ProviderExecutionPolicy(FrozenTiReconModel):
+    """How one provider should be executed.
+
+    Every value is configuration. None of it is a claim about what a provider's
+    API actually permits — real per-provider numbers arrive with each real
+    integration, from that provider's documentation.
+    """
+
+    provider_id: str | None = Field(default=None, max_length=64)
+    cache: CachePolicy = CachePolicy()
+    retry: RetryPolicy = RetryPolicy()
+    max_concurrency: int = Field(default=DEFAULT_MAX_CONCURRENCY, ge=1, le=64)
+
+    #: Collapse identical concurrent passive requests into one provider call.
+    coalesce_requests: bool = True
+
+    #: Skip a provider whose last known quota was exhausted, instead of
+    #: spending a request to be told so again.
+    quota_precheck: bool = True
+
+    #: Cooldown applied when a response reports an exhausted rate-limit window
+    #: but no reset time.
+    rate_limit_cooldown_seconds: float = Field(default=60.0, ge=0.0, le=86_400.0)
+
+    #: Cooldown applied when a response reports exhausted quota with no reset.
+    quota_cooldown_seconds: float = Field(default=900.0, ge=0.0, le=86_400.0)
+
+
+class ProviderPolicyRegistry:
+    """Per-provider execution policy, with a default for everything else.
+
+    A provider with no registered policy gets the default rather than an error:
+    an integration should work before it is tuned.
+    """
+
+    def __init__(
+        self,
+        *,
+        default: ProviderExecutionPolicy | None = None,
+        policies: Iterable[ProviderExecutionPolicy] = (),
+    ) -> None:
+        self._default = ProviderExecutionPolicy() if default is None else default
+        self._policies: dict[str, ProviderExecutionPolicy] = {}
+        for policy in policies:
+            self.register(policy)
+
+    def register(self, policy: ProviderExecutionPolicy) -> None:
+        """Register a provider-specific policy."""
+        if policy.provider_id is None:
+            msg = "a registered policy must name the provider it applies to"
+            raise ValueError(msg)
+        self._policies[policy.provider_id] = policy
+
+    def get(self, provider_id: str) -> ProviderExecutionPolicy:
+        """The policy for ``provider_id``, falling back to the default."""
+        return self._policies.get(provider_id, self._default)
+
+    @property
+    def default(self) -> ProviderExecutionPolicy:
+        return self._default
+
+    def __contains__(self, provider_id: object) -> bool:
+        return provider_id in self._policies
+
+    def __len__(self) -> int:
+        return len(self._policies)
+
+    def __repr__(self) -> str:
+        return f"<ProviderPolicyRegistry providers={sorted(self._policies)}>"

@@ -154,7 +154,7 @@ def compute_backoff(
     if attempt < 1:
         msg = "attempt numbers are 1-based"
         raise ValueError(msg)
-    source = jitter or NoJitter()
+    source = NoJitter() if jitter is None else jitter
     # Cap the exponent before it is used, so a large max_attempts cannot
     # produce an enormous intermediate float.
     exponent = min(attempt - 1, 32)
@@ -253,7 +253,8 @@ def _decide_rate_limited(
 
     # Wait exactly as long as the provider asked, plus jitter, so a fleet of
     # workers released by the same reset does not stampede the endpoint.
-    padded = delay + (jitter or NoJitter()).jitter(delay * policy.jitter_ratio)
+    source = NoJitter() if jitter is None else jitter
+    padded = delay + source.jitter(delay * policy.jitter_ratio)
     return RetryDecision(
         should_retry=True,
         delay_seconds=min(padded, policy.max_inline_wait_seconds),

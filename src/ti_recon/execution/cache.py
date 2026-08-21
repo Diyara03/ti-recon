@@ -148,7 +148,7 @@ class InMemoryProviderCache:
         if max_entries < 1:
             msg = "max_entries must be at least 1"
             raise ValueError(msg)
-        self._clock = clock or SystemClock()
+        self._clock = SystemClock() if clock is None else clock
         self._max_entries = max_entries
         # Ordered so eviction can drop the least recently used entry rather than
         # growing without bound in a long-running process.

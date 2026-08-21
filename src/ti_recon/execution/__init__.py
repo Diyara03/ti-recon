@@ -36,6 +36,10 @@ from ti_recon.execution.coordination import (
     ConcurrencyLimiter,
     SingleFlight,
 )
+from ti_recon.execution.executor import (
+    ExecutionConfigurationError,
+    ProviderExecutor,
+)
 from ti_recon.execution.limits import (
     MAX_COOLDOWN_SECONDS,
     CooldownEntry,
@@ -47,8 +51,19 @@ from ti_recon.execution.limits import (
     cooldown_from_rate_limit,
     make_cooldown,
 )
-from ti_recon.execution.models import CacheScope, CooldownReason, ExecutionScope
-from ti_recon.execution.policy import CACHEABLE_STATUSES, CachePolicy
+from ti_recon.execution.models import (
+    CacheScope,
+    CooldownReason,
+    ExecutionContext,
+    ExecutionScope,
+    ProviderExecutionOutcome,
+)
+from ti_recon.execution.policy import (
+    CACHEABLE_STATUSES,
+    CachePolicy,
+    ProviderExecutionPolicy,
+    ProviderPolicyRegistry,
+)
 from ti_recon.execution.retry import (
     AUTOMATICALLY_RETRYABLE_CATEGORIES,
     CONDITIONALLY_RETRYABLE_CATEGORIES,
@@ -76,6 +91,8 @@ __all__ = [
     "CooldownEntry",
     "CooldownReason",
     "CooldownStore",
+    "ExecutionConfigurationError",
+    "ExecutionContext",
     "ExecutionScope",
     "FixedJitter",
     "InMemoryCooldownStore",
@@ -85,6 +102,10 @@ __all__ = [
     "ManualClock",
     "NoJitter",
     "ProviderCache",
+    "ProviderExecutionOutcome",
+    "ProviderExecutionPolicy",
+    "ProviderExecutor",
+    "ProviderPolicyRegistry",
     "QuotaStore",
     "RandomJitter",
     "RecordingSleeper",
