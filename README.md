@@ -8,7 +8,8 @@ eventually produce an explainable, auditable assessment.
 
 ## Current development state
 
-This repository currently contains the **foundation** (Jira Tasks 1-6):
+This repository currently contains the foundation plus its first provider
+(Jira Tasks 1-7):
 
 | Task | Scope | State |
 |------|-------|-------|
@@ -18,17 +19,28 @@ This repository currently contains the **foundation** (Jira Tasks 1-6):
 | 4 | Per-user provider credential foundation | Implemented (in-memory store only) |
 | 5 | Provider integration framework | Implemented (contract, registry, transport) |
 | 6 | Provider execution controls | Implemented (in-memory, single-process) |
+| 7 | Google Threat Intelligence integration | Implemented (passive enrichment) |
 
-**No real provider integration exists yet.** There is no VirusTotal / Google
-Threat Intelligence, urlscan, GreyNoise, Censys, ThreatFox, URLhaus or
-MalwareBazaar client in this repository. There is no query planner, no provider
-selection, no evidence fusion, no verdict scoring, no MCP server and no Claude
-Skill. Those are later Jira tasks.
+**One provider is integrated.** Google Threat Intelligence performs passive
+enrichment using each analyst's own VirusTotal API key. There is no urlscan,
+GreyNoise, Censys, ThreatFox, URLhaus or MalwareBazaar client yet, and there is
+no query planner, no provider selection, no evidence fusion, no verdict scoring,
+no MCP server and no Claude Skill. Those are later Jira tasks.
 
-Task 6 added the execution layer every future adapter will run behind — caching,
-retry and backoff, rate-limit and quota tracking, cooldowns, bounded concurrency
-and request coalescing. All of its state is **in-memory and single-process**: a
+Task 6 added the execution layer every adapter runs behind — caching, retry and
+backoff, rate-limit and quota tracking, cooldowns, bounded concurrency and
+request coalescing. All of its state is **in-memory and single-process**: a
 development foundation, not distributed coordination.
+
+### Providers
+
+| Provider | Status | Supported | Not yet |
+|----------|--------|-----------|---------|
+| Google Threat Intelligence | Implemented | IP / domain / URL / hash passive enrichment, GTI assessment, aggregated reputation, quota awareness, bounded relationships, selected threat associations, deep file behaviour | Intelligence Search, active scanning, sample submission, sample downloads |
+
+GTI supplies **evidence**, not verdicts. Weighing it against other providers and
+reaching a conclusion is the future evidence-fusion layer's job, and no such
+layer exists yet. See [docs/providers/gti.md](docs/providers/gti.md).
 
 ## Architecture (high level)
 
@@ -42,7 +54,7 @@ MCP connector                    (future, not in this repo)
 TI Recon backend                 <-- this repository
    |-- capability planner         (future)
    |-- provider registry          implemented
-   |-- provider adapters          contract implemented, no real adapters
+   |-- provider adapters          contract implemented; GTI is the first
    |-- provider HTTP transport    implemented (SSRF-bounded)
    |-- provider executor          implemented (cache, retry, quota, cooldown,
    |                                           concurrency, single-flight)
@@ -127,8 +139,12 @@ In production, provider credentials are held per user by the credential layer
 
 ## Current limitations
 
-- **No provider integrations.** The adapter contract, registry and HTTP
-  transport exist; no adapter for a real provider does.
+- **One provider only.** Google Threat Intelligence is integrated; every other
+  provider named above is a later task.
+- **No provider selection.** The registry returns every compatible provider;
+  nothing ranks or chooses between them.
+- **GTI is passive only.** No submission, rescanning, downloads, sandbox
+  detonation or Intelligence Search.
 - **Secret storage is in-memory only.** `InMemorySecretStore` is explicitly
   labelled *not for production*: it is process-local, unencrypted and lost on
   restart. No Vault/AWS/Azure/GCP backend is implemented.
@@ -144,8 +160,6 @@ In production, provider credentials are held per user by the credential layer
 - **No batch, pivot or active operations against a real provider.** The
   contract declares them and the default implementations raise
   `UnsupportedProviderOperation`; only test fakes implement batch lookup.
-- **No provider selection.** The registry returns every compatible provider;
-  nothing ranks, prioritizes or costs them.
 - Normalization is purely syntactic — no DNS resolution, no WHOIS, no network I/O.
 
 ## Documentation
@@ -156,3 +170,4 @@ In production, provider credentials are held per user by the credential layer
 - [docs/credential-management.md](docs/credential-management.md) — Task 4 credentials
 - [docs/provider-framework.md](docs/provider-framework.md) — Task 5 provider framework
 - [docs/provider-execution.md](docs/provider-execution.md) — Task 6 execution controls
+- [docs/providers/gti.md](docs/providers/gti.md) — Task 7 Google Threat Intelligence

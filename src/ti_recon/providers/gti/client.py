@@ -1,9 +1,13 @@
 """The GTI client boundary (Task 7).
 
-This is the **only** module in TI Recon that imports ``vt``. Everything above it
-works with :class:`GTIObject` and :class:`GTIRelationshipDescriptor` — plain
-frozen models — so vt-py's types never reach the normalizer, the adapter or the
-core, and the normalizer is testable from JSON fixtures with vt-py absent.
+The only module that touches the vt-py *client*: ``vt.Client``, ``vt.Object`` and
+``vt.url_id`` appear here and nowhere else. (``errors.py`` also imports
+``vt.error.APIError``, purely to recognize it in an ``isinstance`` check.)
+
+Everything above this module works with :class:`GTIObject` and
+:class:`GTIRelationshipDescriptor` — plain frozen models — so vt-py's types never
+reach the normalizer, the adapter or the core, and the normalizer is testable
+from JSON fixtures with vt-py absent.
 
 Why an SDK here at all
 ----------------------

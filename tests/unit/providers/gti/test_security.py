@@ -561,3 +561,26 @@ def test_no_real_looking_key_is_committed_in_the_gti_tests() -> None:
     """The fixtures use an obviously synthetic key, so a hit is unambiguous."""
     assert LEAKY_KEY.startswith("vt-key-SHOULD-NOT-LEAK")
     assert not any(character.isupper() for character in LEAKY_KEY.split("-")[-1][:2])
+
+
+def test_the_vt_sdk_is_confined_to_the_gti_package() -> None:
+    """No vt-py type may reach the normalizer, the adapter or the core."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[4] / "src" / "ti_recon"
+    importers = sorted(
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*.py")
+        if any(line.startswith(("import vt", "from vt")) for line in path.read_text().splitlines())
+    )
+    assert importers == ["providers/gti/client.py", "providers/gti/errors.py"]
+
+
+def test_only_the_client_uses_the_vt_client_itself() -> None:
+    """errors.py imports the exception type only; nothing else touches the SDK."""
+    import ti_recon.providers.gti.errors as errors_module
+
+    source = inspect.getsource(errors_module)
+    assert "from vt.error import APIError" in source
+    for symbol in ("vt.Client", "vt.Object", "vt.url_id", "get_object_async"):
+        assert symbol not in source

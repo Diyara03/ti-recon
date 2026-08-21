@@ -2,9 +2,10 @@
 
 > Task 5. Describes `src/ti_recon/providers/`.
 >
-> **No real provider integration exists.** This document describes contracts,
-> a registry and a transport. There is no VirusTotal, urlscan, GreyNoise,
-> Censys, ThreatFox, URLhaus or MalwareBazaar adapter in this repository.
+> This document describes the provider-neutral contracts, the registry and the
+> shared transport. One provider now implements them: Google Threat Intelligence
+> (Task 7, see [providers/gti.md](providers/gti.md)). urlscan, GreyNoise, Censys,
+> ThreatFox, URLhaus and MalwareBazaar are later tasks.
 >
 > Covers capabilities, descriptor, request, result envelope, error taxonomy,
 > the adapter contract, the registry and the shared HTTP transport.
@@ -245,6 +246,12 @@ NotImplementedError
 
 a provider adapter never decides a verdict
 ```
+
+Google Threat Intelligence is held to every one of these invariants by the same
+reusable suite the fakes are, which is what makes it a provider rather than a
+special case. Its one documented deviation — using the official `vt-py` SDK
+instead of the shared transport — is contained to a single module so no SDK type
+crosses into the core.
 
 `tests/fixtures/fake_providers.py` holds four fake adapters used throughout the
 test suite. They perform no network I/O and contain no vendor API details — no
