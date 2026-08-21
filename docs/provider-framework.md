@@ -6,9 +6,8 @@
 > a registry and a transport. There is no VirusTotal, urlscan, GreyNoise,
 > Censys, ThreatFox, URLhaus or MalwareBazaar adapter in this repository.
 >
-> **Coverage at this commit:** capabilities, descriptor, request, result
-> envelope, error taxonomy, the adapter contract and the registry. The shared
-> HTTP transport lands in the next commit of this series and is documented then.
+> Covers capabilities, descriptor, request, result envelope, error taxonomy,
+> the adapter contract, the registry and the shared HTTP transport.
 
 ## 1. Why the framework looks like this
 
@@ -324,3 +323,126 @@ need: ipv4-addr + SCANNER_CONTEXT
 FakeScannerProvider     (ipv4/ipv6, SCANNER_CONTEXT)    -> match
 FakeAggregatorProvider  (all types, REPUTATION)         -> no match
 ```
+
+
+## 10. `ProviderHttpClient`
+
+One client per provider, pinned to that provider's API base URL.
+
+```python
+config = TransportConfig(
+    provider_id="example_provider",
+    base_url="https://api.example-provider.test/v1/",
+    timeouts=TransportTimeouts(connect=5.0, read=20.0, write=10.0, pool=5.0),
+    auth=AuthConfig(placement=AuthPlacement.HEADER, header_name="X-Api-Key"),
+)
+
+async with ProviderHttpClient(config) as client:
+    response = await client.get("ip/198.51.100.7", credential=credential)
+```
+
+Provided:
+
+- persistent connection pooling for the client's lifetime;
+- explicit connect, read, write and pool timeouts, none of which may be zero or
+  negative — a missing read timeout is how one slow provider stalls every worker;
+- TLS verification always on, with **no configuration path to disable it** (a
+  test asserts `verify` appears in neither `TransportConfig` nor the constructor
+  signature);
+- `https`-only base URLs, with a trailing slash added if absent — a base URL
+  without one silently drops its last path segment when joined;
+- a versioned `User-Agent` (`ti-recon/<version>`) so providers can attribute and
+  rate-limit our traffic;
+- clean async shutdown via `aclose()` or `async with`, idempotent, with use after
+  close raising `ProviderTransportClosed`.
+
+Redirects are **not** followed: a redirect is a provider-controlled way to move a
+request to another host.
+
+### 10.1 The SSRF boundary
+
+TI Recon investigates suspicious URLs. If any function accepted a full URL, then
+sooner or later an analyst-submitted URL would reach it — and TI Recon would be
+fetching attacker-controlled infrastructure from its own network, with its own
+IP, on behalf of whoever submitted the URL. A suspicious URL must be handed to a
+provider API built to visit it (a URL scanner), never followed directly.
+
+So the boundary is structural, not a rule to remember:
+
+```
+known configured provider base URL  +  relative provider API path
+```
+
+- The base URL is fixed at construction.
+- `path` is always relative. A leading `/` is accepted and treated as relative to
+  the base URL.
+- Refused with `ProviderTransportSecurityError`: absolute URLs (`https://…`),
+  scheme-relative `//host`, `..` traversal, any path that resolves outside the
+  base URL, backslashes, whitespace and control characters (CR/LF in a path is a
+  request-splitting attempt).
+- Only `GET`, `POST` and `HEAD` are permitted.
+- A response whose host is not the configured host is refused — defence in depth
+  against a proxy or misconfiguration answering from elsewhere.
+
+There is deliberately **no** `fetch_arbitrary_url`, `fetch`, `open_url` or
+`browse`, and no method takes a `url` parameter. Tests assert all of this,
+including the concrete attack: handing the client the URL under investigation.
+
+### 10.2 Credential handling
+
+`AuthConfig` says *where* a credential goes (header or query parameter, with an
+optional scheme such as `Bearer`). `AuthConfig.for_auth_type(...)` gives a
+conventional placement for each `AuthType`; an adapter overrides it when its
+provider differs.
+
+The credential is attached at the last possible moment, in one method. A test
+asserts `reveal()` appears exactly once in the transport module — adapters never
+touch the raw value.
+
+An adapter that tries to pass a credential in as a plain header
+(`Authorization`, `X-Apikey`, `Auth-Key`, `Cookie`, …) is refused: credentials
+arrive as a `CredentialMaterial`, not as strings in a header dict. The same
+rejection applies to `TransportConfig.default_headers`.
+
+### 10.3 Logging
+
+An allow-list, emitted as structured `extra` fields:
+
+```
+provider   http_method   provider_path   operation   status_code   latency_ms
+```
+
+Never logged: headers, cookies, request or response bodies, and **the query
+string**. That last exclusion matters — some providers accept credentials as
+query parameters, so logging query strings would leak keys for exactly those
+providers. A test passes `params={"apikey": ...}` and asserts the value never
+reaches the log.
+
+### 10.4 Typed errors
+
+| Condition | Raised | Retryable |
+|-----------|--------|-----------|
+| would leave the base URL / illegal path / method | `ProviderTransportSecurityError` | no |
+| used after close | `ProviderTransportClosed` | no |
+| timeout | `ProviderTimeoutError` | yes |
+| connection failure | `ProviderUnavailableError` | yes |
+
+HTTP status codes are **not** interpreted here. A 429 or 403 is returned to the
+adapter, which maps its own provider's conventions in `classify_error`.
+
+## 11. Deferred to Task 6
+
+Documented so the shape is known; **not implemented**:
+
+```
+Redis response cache          retry engine
+exponential backoff           jitter
+coordinated 429 handling      quota counters
+provider cooldown             rate-limit state shared across workers
+```
+
+`ProviderHttpClient` performs exactly one HTTP attempt per call. The pieces that
+Task 6 will need are already recorded rather than invented later:
+`CacheabilityHint` on every envelope, `RateLimitSnapshot` from
+`parse_rate_limits`, `ProviderError.is_retryable` per category, and
+`ProviderRun.cache_hit`.
