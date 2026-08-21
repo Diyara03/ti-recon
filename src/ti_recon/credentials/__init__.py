@@ -18,6 +18,7 @@ from ti_recon.credentials.errors import (
 from ti_recon.credentials.groups import (
     ABUSE_CH_GROUP,
     CREDENTIAL_GROUP_MEMBERS,
+    VIRUSTOTAL_GROUP,
     credential_group_for,
     providers_in_group,
 )
@@ -37,6 +38,7 @@ from ti_recon.credentials.secret_store import InMemorySecretStore, SecretStore
 __all__ = [
     "ABUSE_CH_GROUP",
     "CREDENTIAL_GROUP_MEMBERS",
+    "VIRUSTOTAL_GROUP",
     "AuthType",
     "ConnectionNotFound",
     "ConnectionRepository",

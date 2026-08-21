@@ -15,6 +15,7 @@ from typing import Final
 __all__ = [
     "ABUSE_CH_GROUP",
     "CREDENTIAL_GROUP_MEMBERS",
+    "VIRUSTOTAL_GROUP",
     "credential_group_for",
     "providers_in_group",
 ]
@@ -22,9 +23,15 @@ __all__ = [
 #: Shared credential group for the abuse.ch service family.
 ABUSE_CH_GROUP: Final[str] = "abuse_ch"
 
+#: Shared credential group for anything authenticated by a VirusTotal API key.
+#: Google Threat Intelligence is a VirusTotal-keyed product, so an analyst who
+#: has stored that key once should not be asked for it again per brand.
+VIRUSTOTAL_GROUP: Final[str] = "virustotal"
+
 #: Provider ids that share one credential, keyed by group name.
 CREDENTIAL_GROUP_MEMBERS: Final[dict[str, frozenset[str]]] = {
     ABUSE_CH_GROUP: frozenset({"threatfox", "urlhaus", "malwarebazaar"}),
+    VIRUSTOTAL_GROUP: frozenset({"gti", "virustotal"}),
 }
 
 _PROVIDER_TO_GROUP: Final[dict[str, str]] = {
