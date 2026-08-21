@@ -16,8 +16,8 @@ Execution order
     quota pre-check         -> short-circuit, no provider call
     cache lookup            -> short-circuit, no provider call
     single-flight
-      cache re-check        (a concurrent leader may have just filled it)
       concurrency slot
+        cache re-check      (a queued duplicate may find a leader's result)
         resolve credential  (just-in-time, only now)
         attempt loop with retry/backoff
       record rate-limit / quota state, apply cooldowns
@@ -266,10 +266,14 @@ class ProviderExecutor:
             )
 
         key = build_cache_key(scope=scope, descriptor=descriptor, request=request)
-        cache_key = key if self._cache_eligible(policy, request) else None
+        # Resolved once, here: a cache is in play only if one was injected *and*
+        # this request is eligible. Keeping it in a local means no code below has
+        # to re-check both conditions.
+        cache = self._cache if policy.cache.is_request_cacheable(request) else None
+        cache_key = key if cache is not None else None
 
-        if cache_key is not None:
-            cached = await self._cache_get(cache_key)
+        if cache is not None and cache_key is not None:
+            cached = await cache.get(cache_key)
             if cached is not None:
                 return self._cached_outcome(
                     descriptor=descriptor,
@@ -282,14 +286,15 @@ class ProviderExecutor:
                 )
 
         async def perform() -> _Attempt:
-            # A concurrent leader may have populated the cache between our miss
-            # and our turn; re-checking here is what keeps a low concurrency
-            # limit from turning queued duplicates into real calls.
-            if cache_key is not None:
-                again = await self._cache_get(cache_key)
-                if again is not None:
-                    return _Attempt(envelope=again, cache_hit=True)
             async with self._limiter.acquire(scope.identity):
+                # Re-checked *after* acquiring the slot, because waiting in the
+                # queue is exactly the window in which a leader finishes and
+                # fills the cache. Checking before the slot would leave that
+                # window open and turn queued duplicates into real calls.
+                if cache is not None and cache_key is not None:
+                    again = await cache.get(cache_key)
+                    if again is not None:
+                        return _Attempt(envelope=again, cache_hit=True)
                 return await self._run_attempts(
                     adapter=adapter,
                     request=request,
@@ -297,6 +302,7 @@ class ProviderExecutor:
                     scope=scope,
                     policy=policy,
                     connection=connection,
+                    cache=cache,
                     cache_key=cache_key,
                 )
 
@@ -339,6 +345,7 @@ class ProviderExecutor:
         scope: ExecutionScope,
         policy: ProviderExecutionPolicy,
         connection: ProviderConnection | None,
+        cache: ProviderCache | None,
         cache_key: CacheKey | None,
     ) -> _Attempt:
         descriptor = adapter.descriptor
@@ -387,7 +394,7 @@ class ProviderExecutor:
             cooldown, quota = await self._record_provider_state(
                 scope=scope, request=request, envelope=envelope, policy=policy
             )
-            await self._store_result(cache_key, envelope, request, policy)
+            await self._store_result(cache, cache_key, envelope, request, policy)
             return _Attempt(envelope=envelope, attempts=attempts, cooldown=cooldown, quota=quota)
 
     async def _call_adapter(
@@ -512,26 +519,19 @@ class ProviderExecutor:
             return None
         return snapshot
 
-    async def _cache_get(self, cache_key: CacheKey) -> ProviderResultEnvelope | None:
-        if self._cache is None:
-            return None
-        return await self._cache.get(cache_key)
-
-    def _cache_eligible(self, policy: ProviderExecutionPolicy, request: ProviderRequest) -> bool:
-        return self._cache is not None and policy.cache.is_request_cacheable(request)
-
     async def _store_result(
         self,
+        cache: ProviderCache | None,
         cache_key: CacheKey | None,
         envelope: ProviderResultEnvelope,
         request: ProviderRequest,
         policy: ProviderExecutionPolicy,
     ) -> None:
-        if self._cache is None or cache_key is None:
+        if cache is None or cache_key is None:
             return
         ttl = policy.cache.ttl_for(envelope, request)
         if ttl is not None:
-            await self._cache.set(cache_key, envelope, ttl)
+            await cache.set(cache_key, envelope, ttl)
 
     async def _record_provider_state(
         self,

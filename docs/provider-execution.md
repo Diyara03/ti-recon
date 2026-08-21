@@ -36,8 +36,8 @@ exactly as the Task 5 contract describes, and receives no extra parameters.
  4. quota pre-check         -> short-circuit, provider not called
  5. cache lookup            -> short-circuit, provider not called
  6. single-flight
- 7.   cache re-check        (a concurrent leader may have just filled it)
- 8.   concurrency slot
+ 7.   concurrency slot
+ 8.     cache re-check      (a queued duplicate may find a leader's result)
  9.     resolve credential  (just-in-time — only now)
 10.     attempt loop with retry / backoff
 11.   record rate-limit and quota state, apply cooldowns
@@ -52,9 +52,12 @@ Two orderings are deliberate rather than incidental.
 waited *inside* a slot, a `max_concurrency` of 1 with two identical requests
 would serialize into two real provider calls — the exact duplication coalescing
 exists to prevent. Outside, followers hold no slot, and the limiter still bounds
-the only thing worth bounding: real calls. The cache re-check at step 7 covers
-the remaining window where a leader finished just before a queued duplicate got
-its turn.
+the only thing worth bounding: real calls.
+
+**The cache is re-checked after acquiring the slot, not before.** Waiting in the
+concurrency queue is precisely the window in which a leader finishes and fills
+the cache; checking before the slot would leave that window open and turn queued
+duplicates into real calls.
 
 **The credential is resolved last.** A request served from cache, blocked by a
 cooldown, or coalesced onto somebody else's call never causes a secret to be

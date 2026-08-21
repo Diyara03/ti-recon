@@ -769,3 +769,11 @@ def test_quota_cooldown_falls_back_to_a_default_without_a_reset() -> None:
     entry = cooldown_from_quota(snapshot, scope=make_scope(), now=NOW, default_seconds=1200.0)
     assert entry is not None
     assert entry.remaining_seconds(NOW) == pytest.approx(1200.0)
+
+
+def test_an_unreported_quota_bucket_lookup_returns_none() -> None:
+    snapshot = make_quota(
+        buckets=(QuotaBucket(name="daily", period=QuotaPeriod.DAY, allowed=10, used=1),)
+    )
+    assert snapshot.bucket("daily") is not None
+    assert snapshot.bucket("weekly") is None

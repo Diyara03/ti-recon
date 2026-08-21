@@ -253,7 +253,14 @@ class ProviderExecutionOutcome(FrozenTiReconModel):
         )
 
 
-#: Statuses that only make sense if a provider result came back. ``NO_DATA`` is
-#: absent on purpose: a normalized "not found" is a legitimate answer with no
-#: envelope behind it.
-_RESULT_REQUIRED_STATUSES = frozenset({ProviderRunStatus.SUCCESS, ProviderRunStatus.PARTIAL})
+#: Statuses that only make sense if a provider result came back.
+#:
+#: Only ``SUCCESS``. Two near-misses are deliberately excluded:
+#:
+#: * ``NO_DATA`` — a normalized "not found" is a legitimate answer with no
+#:   envelope behind it.
+#: * ``PARTIAL`` — usually an envelope carrying reduced evidence, but an adapter
+#:   may also *raise* ``PARTIAL_RESULT`` when it could not retrieve enough to
+#:   build one. Task 5 maps that category to ``PARTIAL``, so requiring a result
+#:   here would make a legal adapter behaviour unrepresentable.
+_RESULT_REQUIRED_STATUSES = frozenset({ProviderRunStatus.SUCCESS})
