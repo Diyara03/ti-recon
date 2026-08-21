@@ -352,14 +352,25 @@ async def test_file_metadata_is_preserved() -> None:
 
 
 async def test_no_file_is_downloaded_or_submitted() -> None:
-    """Task 7 is passive: the hash is the only thing that travels."""
+    """Task 7 is passive: the hash is the only thing that travels.
+
+    Every operation reached is a read, and sandbox behaviour — the one GTI read
+    that only makes sense for a deep file investigation — is not touched at the
+    default depth.
+    """
     fake = FakeGTIClient()
     fake.register_primary("files", payloads.file_object())
     adapter, client = make_adapter(fake)
 
     await adapter.lookup(request_for(file_object()), credential())
 
-    assert {call.operation for call in client.calls} <= {"primary", "quota"}
+    assert {call.operation for call in client.calls} <= {
+        "primary",
+        "quota",
+        "descriptors",
+        "objects",
+    }
+    assert client.operations("behaviour") == []
 
 
 # --------------------------------------------------------------------------- #

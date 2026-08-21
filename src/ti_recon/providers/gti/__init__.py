@@ -58,6 +58,16 @@ from ti_recon.providers.gti.quota import (
     GTIQuotaReading,
     parse_overall_quotas,
 )
+from ti_recon.providers.gti.relationships import (
+    LIMITS_BY_DEPTH,
+    RELATIONSHIP_PLANS,
+    RELATIONSHIP_SPECS,
+    GTIRelationshipDepth,
+    GTIRelationshipLimits,
+    GTIRelationshipSpec,
+    depth_for_investigation,
+    relationship_plan,
+)
 
 __all__ = [
     "DEFAULT_EXCLUDED_ATTRIBUTES",
@@ -76,6 +86,9 @@ __all__ = [
     "GTI_SOURCE_FAMILY",
     "GTI_SUPPORTED_OBJECT_TYPES",
     "GTI_X_TOOL_ENV_VAR",
+    "LIMITS_BY_DEPTH",
+    "RELATIONSHIP_PLANS",
+    "RELATIONSHIP_SPECS",
     "GTIAdapter",
     "GTIClient",
     "GTIClientFactory",
@@ -84,15 +97,20 @@ __all__ = [
     "GTIObject",
     "GTIPathError",
     "GTIQuotaReading",
+    "GTIRelationshipDepth",
     "GTIRelationshipDescriptor",
+    "GTIRelationshipLimits",
+    "GTIRelationshipSpec",
     "VtPyGTIClient",
     "VtPyGTIClientFactory",
     "build_gti_descriptor",
     "build_gti_execution_policy",
     "category_for_gti_code",
     "collection_for_object_type",
+    "depth_for_investigation",
     "gti_config_from_env",
     "parse_overall_quotas",
+    "relationship_plan",
     "translate_gti_error",
     "url_identifier",
 ]

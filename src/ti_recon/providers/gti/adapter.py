@@ -57,12 +57,25 @@ from ti_recon.providers.gti.descriptor import GTI_PROVIDER_ID, build_gti_descrip
 from ti_recon.providers.gti.normalizer import (
     GTINormalization,
     NormalizationContext,
+    RelatedItem,
     enrich_primary_object,
     normalize_analysis_stats,
     normalize_assessment,
+    normalize_inline_relationships,
+    normalize_related_items,
 )
 from ti_recon.providers.gti.policy import GTILookupPolicy, collection_for_object_type
 from ti_recon.providers.gti.quota import GTIQuotaReading, parse_overall_quotas
+from ti_recon.providers.gti.relationships import (
+    LIMITS_BY_DEPTH,
+    RELATIONSHIP_SPECS,
+    GTIRelationshipDepth,
+    GTIRelationshipLimits,
+    GTIRelationshipSpec,
+    Retrieval,
+    depth_for_investigation,
+    relationship_plan,
+)
 from ti_recon.providers.quota import ProviderQuotaSnapshot
 from ti_recon.providers.request import ProviderRequest
 from ti_recon.providers.result import NormalizedPayload, ProviderResultEnvelope
@@ -313,9 +326,12 @@ class GTIAdapter(ProviderAdapter):
                 if error.category is ProviderErrorCategory.NOT_FOUND:
                     return self._no_data_envelope(request)
                 raise
+            enrichment = await self._expand_relationships(
+                client, request, collection, object_id, gti_object
+            )
             quota = await self._refresh_quota_if_stale(client, credential)
 
-        return self._envelope(request, gti_object, quota=quota)
+        return self._envelope(request, gti_object, quota=quota, extra=enrichment)
 
     def _locate(self, intel_object: IntelObject) -> tuple[str, str]:
         """The GTI collection and object id for an observable.
@@ -352,9 +368,12 @@ class GTIAdapter(ProviderAdapter):
         gti_object: GTIObject,
         *,
         quota: ProviderQuotaSnapshot | None,
+        extra: GTINormalization | None = None,
     ) -> ProviderResultEnvelope:
         raw_reference = self._raw_reference(request, gti_object)
         normalization = self._normalize(request, gti_object, raw_reference=raw_reference)
+        if extra is not None:
+            normalization = normalization.merge(extra)
         return ProviderResultEnvelope.from_payload(
             provider=GTI_PROVIDER_ID,
             operation=request.operation,
@@ -423,6 +442,130 @@ class GTIAdapter(ProviderAdapter):
         result = GTINormalization(objects=(enriched,))
         result = result.merge(normalize_assessment(context, gti_object))
         return result.merge(normalize_analysis_stats(context, gti_object))
+
+    # ------------------------------------------------------------------ #
+    # Relationship expansion
+    # ------------------------------------------------------------------ #
+
+    async def _expand_relationships(
+        self,
+        client: GTIClient,
+        request: ProviderRequest,
+        collection: str,
+        object_id: str,
+        gti_object: GTIObject,
+    ) -> GTINormalization:
+        """Fetch and normalize the relationships this depth permits.
+
+        Bounded three ways at once: how many relationship types, how many
+        results per type, and how many related objects in total. Pagination is
+        never followed — one page per relationship, and the running total stops
+        the walk early rather than trimming afterwards, so a cap actually
+        prevents calls rather than discarding their results.
+        """
+        depth = depth_for_investigation(request.depth)
+        limits = self._limits_for(request, depth)
+        context = self._context(request)
+        subject = request.intel_object
+
+        # Free of charge: anything GTI already inlined in the primary response.
+        result = normalize_inline_relationships(
+            context,
+            subject,
+            gti_object,
+            RELATIONSHIP_SPECS,
+            max_per_relationship=limits.max_results_per_relationship,
+        )
+        if not limits.expands:
+            return result
+
+        remaining = limits.max_total_related_objects - len(result.objects)
+        for spec in relationship_plan(subject.object_type, depth, limits=limits):
+            if remaining <= 0:
+                break
+            page = min(limits.max_results_per_relationship, remaining)
+            items = await self._fetch_related(client, collection, object_id, spec, page)
+            if items is None:
+                # A plan limitation or a missing relationship: the primary
+                # lookup stays useful, so it is recorded and skipped.
+                result = result.merge(GTINormalization(warnings=(_degraded_warning(spec),)))
+                continue
+            normalized = normalize_related_items(context, subject, spec, items)
+            result = result.merge(normalized)
+            remaining -= len(normalized.objects)
+        return result
+
+    def _limits_for(
+        self, request: ProviderRequest, depth: GTIRelationshipDepth
+    ) -> GTIRelationshipLimits:
+        """Depth limits, tightened by the request's own ceilings.
+
+        ``max_results`` only ever narrows: a request asking for more than the
+        depth allows does not get to raise the provider's safety cap.
+        """
+        base = LIMITS_BY_DEPTH[depth]
+        if request.max_results is None:
+            return base
+        return base.model_copy(
+            update={
+                "max_results_per_relationship": min(
+                    base.max_results_per_relationship, request.max_results
+                ),
+                "max_total_related_objects": min(
+                    base.max_total_related_objects, request.max_results
+                ),
+            }
+        )
+
+    async def _fetch_related(
+        self,
+        client: GTIClient,
+        collection: str,
+        object_id: str,
+        spec: GTIRelationshipSpec,
+        limit: int,
+    ) -> list[RelatedItem] | None:
+        """One relationship's page, or ``None`` if GTI would not serve it.
+
+        Descriptor-first: only relationships whose target cannot be identified
+        without an attribute are fetched as full objects.
+        """
+        try:
+            if spec.retrieval is Retrieval.DESCRIPTORS:
+                descriptors = await client.get_relationship_descriptors(
+                    collection=collection,
+                    object_id=object_id,
+                    relationship=spec.name,
+                    limit=limit,
+                )
+                return [RelatedItem.from_descriptor(item) for item in descriptors]
+            objects = await client.get_relationship_objects(
+                collection=collection,
+                object_id=object_id,
+                relationship=spec.name,
+                limit=limit,
+            )
+        except ProviderError as error:
+            if error.category in _DEGRADABLE_CATEGORIES:
+                _logger.info(
+                    "GTI relationship unavailable",
+                    extra={
+                        "provider": GTI_PROVIDER_ID,
+                        "relationship": spec.name,
+                        "error_category": error.category.value,
+                    },
+                )
+                return None
+            # Anything else is Task 6's decision, not ours to swallow.
+            raise
+        return [RelatedItem.from_object(item) for item in objects]
+
+    def _context(self, request: ProviderRequest) -> NormalizationContext:
+        return NormalizationContext(
+            investigation_id=request.investigation_id,
+            subject_object_id=request.intel_object.id,
+            now=self._clock.now(),
+        )
 
     def normalize(
         self,
@@ -498,6 +641,24 @@ class _ClientScope:
         traceback: TracebackType | None,
     ) -> None:
         await self._client.close()
+
+
+#: Relationship failures that leave the primary lookup usable. An Enterprise
+#: relationship this key cannot see, or one GTI does not offer for this object,
+#: is a coverage gap rather than a failed enrichment.
+_DEGRADABLE_CATEGORIES = frozenset(
+    {
+        ProviderErrorCategory.PLAN_LIMITED,
+        ProviderErrorCategory.PERMISSION_ERROR,
+        ProviderErrorCategory.NOT_FOUND,
+        ProviderErrorCategory.INVALID_REQUEST,
+    }
+)
+
+
+def _degraded_warning(spec: GTIRelationshipSpec) -> str:
+    """A safe, greppable marker naming the relationship we could not read."""
+    return f"GTI_RELATIONSHIP_UNAVAILABLE:{spec.name}"
 
 
 def _payload_of(normalization: GTINormalization) -> NormalizedPayload:

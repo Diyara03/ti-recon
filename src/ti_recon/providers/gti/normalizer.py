@@ -21,7 +21,8 @@ provenance, an effect and a moment of observation that a property cannot carry.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import ipaddress
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Final
@@ -31,16 +32,22 @@ from ti_recon.enums import (
     EvidenceEffect,
     IntelObjectType,
     MatchScope,
+    ObjectClass,
 )
 from ti_recon.models.base import FrozenTiReconModel
 from ti_recon.models.evidence import Evidence
 from ti_recon.models.intel_object import HASH_HEX_LENGTHS, IntelObject
 from ti_recon.models.relationship import Relationship
-from ti_recon.providers.gti.client import GTIObject
+from ti_recon.providers.gti.client import GTIObject, GTIRelationshipDescriptor
 from ti_recon.providers.gti.descriptor import (
     GTI_ORIGIN_PROVIDER,
     GTI_PROVIDER_ID,
     GTI_SOURCE_FAMILY,
+)
+from ti_recon.providers.gti.relationships import (
+    Direction,
+    GTIRelationshipSpec,
+    TargetKind,
 )
 
 __all__ = [
@@ -53,10 +60,12 @@ __all__ = [
     "GTI_METADATA_FIELDS",
     "GTI_PROPERTY_NAMESPACE",
     "GTI_TIMESTAMP_FIELDS",
+    "GTI_UNRESOLVABLE_RELATED_ITEM",
     "VERDICT_EFFECTS",
     "ContributingFactor",
     "GTINormalization",
     "NormalizationContext",
+    "RelatedItem",
     "effect_for_verdict",
     "enrich_primary_object",
     "epoch_to_utc",
@@ -64,6 +73,8 @@ __all__ = [
     "gti_metadata",
     "normalize_analysis_stats",
     "normalize_assessment",
+    "normalize_inline_relationships",
+    "normalize_related_items",
 ]
 
 #: GTI-specific facts live under one key rather than being spread across
@@ -716,3 +727,320 @@ def _confidence(value: Any) -> float | None:
         return None
     number = float(value)
     return number if 0.0 <= number <= 100.0 else None
+
+
+# --------------------------------------------------------------------------- #
+# Relationships
+# --------------------------------------------------------------------------- #
+
+#: GTI object types that identify themselves through their id alone, mapped to
+#: the TI Recon object type they become.
+_DESCRIPTOR_OBJECT_TYPES: Final[dict[str, IntelObjectType]] = {
+    "domain": IntelObjectType.DOMAIN_NAME,
+    "file": IntelObjectType.FILE,
+}
+
+#: Reported when a related item could not be turned into an object. Counted
+#: rather than guessed at: inventing identity for a target we cannot name would
+#: put a fabricated observable into the graph.
+GTI_UNRESOLVABLE_RELATED_ITEM: Final[str] = "GTI_RELATED_ITEM_UNRESOLVABLE"
+
+
+@dataclass(frozen=True, slots=True)
+class RelatedItem:
+    """One related thing GTI returned, from either endpoint.
+
+    Descriptors and full objects are normalized through the same path so the
+    retrieval choice stays a policy detail rather than leaking into every
+    downstream branch.
+    """
+
+    object_type: str
+    object_id: str
+    attributes: Mapping[str, Any]
+    context_attributes: Mapping[str, Any]
+
+    @classmethod
+    def from_descriptor(cls, descriptor: GTIRelationshipDescriptor) -> RelatedItem:
+        return cls(
+            object_type=descriptor.object_type,
+            object_id=descriptor.object_id,
+            attributes={},
+            context_attributes=descriptor.context_attributes,
+        )
+
+    @classmethod
+    def from_object(cls, gti_object: GTIObject) -> RelatedItem:
+        return cls(
+            object_type=gti_object.object_type,
+            object_id=gti_object.object_id,
+            attributes=gti_object.attributes,
+            context_attributes=gti_object.context_attributes,
+        )
+
+
+def normalize_related_items(
+    context: NormalizationContext,
+    subject: IntelObject,
+    spec: GTIRelationshipSpec,
+    items: Sequence[RelatedItem],
+) -> GTINormalization:
+    """Normalize one relationship's results into objects, links and evidence.
+
+    Every relationship gets its own evidence, because "this file contacted that
+    domain" is a distinct factual claim that a later layer has to be able to
+    weigh, cite or discount on its own. The evidence is ``CONTEXT_ONLY``: a
+    contacted domain is a fact about behaviour, not an accusation, and treating
+    every observed connection as incriminating is how legitimate CDN traffic
+    becomes a verdict.
+    """
+    objects: list[IntelObject] = []
+    relationships: list[Relationship] = []
+    evidence: list[Evidence] = []
+    unresolved = 0
+
+    for item in items:
+        related = _related_object(subject, spec, item)
+        if related is None:
+            unresolved += 1
+            continue
+        if related.canonical_key == subject.canonical_key:
+            # GTI can return the subject as its own relative. Canonical keys are
+            # compared rather than object ids: two freshly built objects for the
+            # same observable have different ids but one identity, and the
+            # resulting self-relationship carries no information and would be
+            # rejected by Task 3 anyway.
+            continue
+        claim = _relationship_evidence(context, subject, spec, item, related)
+        direction = _effective_direction(subject, spec)
+        source, target = (
+            (subject, related) if direction is Direction.OUTBOUND else (related, subject)
+        )
+        relationships.append(
+            Relationship(
+                source_object_id=source.id,
+                relationship_type=spec.relationship_type,
+                target_object_id=target.id,
+                evidence_refs=(claim.id,),
+            )
+        )
+        evidence.append(claim)
+        objects.append(related)
+
+    warnings = (GTI_UNRESOLVABLE_RELATED_ITEM,) if unresolved else ()
+    return GTINormalization(
+        evidence=tuple(evidence),
+        objects=tuple(objects),
+        relationships=tuple(relationships),
+        warnings=warnings,
+    )
+
+
+def normalize_inline_relationships(
+    context: NormalizationContext,
+    subject: IntelObject,
+    gti_object: GTIObject,
+    specs: Mapping[str, GTIRelationshipSpec],
+    *,
+    max_per_relationship: int,
+) -> GTINormalization:
+    """Normalize relationships GTI already included in the primary response.
+
+    These cost no additional call, so they are taken at every depth — including
+    QUICK, whose whole point is to make exactly one request.
+    """
+    result = GTINormalization()
+    if max_per_relationship <= 0:
+        return result
+    for name, block in sorted(gti_object.relationships.items()):
+        spec = specs.get(name)
+        if spec is None or not isinstance(block, Mapping):
+            continue
+        raw = block.get("data")
+        entries = raw if isinstance(raw, list) else []
+        items = [
+            item
+            for entry in entries[:max_per_relationship]
+            if (item := _item_from_entry(entry)) is not None
+        ]
+        if items:
+            result = result.merge(normalize_related_items(context, subject, spec, items))
+    return result
+
+
+def _item_from_entry(entry: Any) -> RelatedItem | None:
+    if not isinstance(entry, Mapping):
+        return None
+    object_type = entry.get("type")
+    object_id = entry.get("id")
+    if not isinstance(object_type, str) or not isinstance(object_id, str):
+        return None
+    attributes = entry.get("attributes")
+    context_attributes = entry.get("context_attributes")
+    return RelatedItem(
+        object_type=object_type,
+        object_id=object_id,
+        attributes=attributes if isinstance(attributes, Mapping) else {},
+        context_attributes=(context_attributes if isinstance(context_attributes, Mapping) else {}),
+    )
+
+
+def _effective_direction(subject: IntelObject, spec: GTIRelationshipSpec) -> Direction:
+    """The direction this relationship actually points for this subject.
+
+    Almost always the spec's own direction. DNS resolution is the exception: it
+    is always "domain resolves to address", so which end is the source depends
+    on which end the investigation started from — GTI serves the same
+    relationship from both sides.
+    """
+    if spec.target_kind is TargetKind.RESOLUTION_OBJECT and subject.object_type in {
+        IntelObjectType.IPV4_ADDR,
+        IntelObjectType.IPV6_ADDR,
+    }:
+        return Direction.INBOUND
+    return spec.direction
+
+
+def _related_object(
+    subject: IntelObject, spec: GTIRelationshipSpec, item: RelatedItem
+) -> IntelObject | None:
+    """Build the related observable, or ``None`` if it cannot be identified."""
+    match spec.target_kind:
+        case TargetKind.IDENTITY:
+            return _identity_object(item)
+        case TargetKind.URL_OBJECT:
+            return _url_object(item)
+        case TargetKind.RESOLUTION_OBJECT:
+            return _resolution_counterpart(subject, item)
+
+
+def _identity_object(item: RelatedItem) -> IntelObject | None:
+    """An object whose descriptor id is its value."""
+    value = item.object_id.strip()
+    if not value:
+        return None
+    if item.object_type == "ip_address":
+        return _ip_object(value)
+    object_type = _DESCRIPTOR_OBJECT_TYPES.get(item.object_type)
+    if object_type is None:
+        return None
+    if object_type is IntelObjectType.FILE:
+        return _file_object(value)
+    return IntelObject(
+        object_class=ObjectClass.OBSERVABLE,
+        object_type=object_type,
+        canonical_value=value.lower(),
+        display_value=value,
+    )
+
+
+def _ip_object(value: str) -> IntelObject | None:
+    """An address object, with the version read from the value itself."""
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return None
+    object_type = IntelObjectType.IPV4_ADDR if address.version == 4 else IntelObjectType.IPV6_ADDR
+    return IntelObject(
+        object_class=ObjectClass.OBSERVABLE,
+        object_type=object_type,
+        canonical_value=str(address),
+        display_value=str(address),
+    )
+
+
+def _file_object(value: str) -> IntelObject | None:
+    """A file object keyed by the hash GTI used as its id."""
+    digest = value.strip().lower()
+    algorithm = next(
+        (name for name, length in HASH_HEX_LENGTHS.items() if len(digest) == length),
+        None,
+    )
+    if algorithm is None or any(character not in "0123456789abcdef" for character in digest):
+        return None
+    return IntelObject(
+        object_class=ObjectClass.OBSERVABLE,
+        object_type=IntelObjectType.FILE,
+        canonical_value=digest,
+        display_value=digest,
+        properties={"hashes": {algorithm: digest}},
+    )
+
+
+def _url_object(item: RelatedItem) -> IntelObject | None:
+    """A URL object, which needs the ``url`` attribute to exist at all.
+
+    GTI's URL id is an opaque base64 identifier. Without the attribute there is
+    no way to recover the URL, and putting the identifier in as if it were one
+    would fabricate an observable.
+    """
+    for source in (item.attributes, item.context_attributes):
+        value = source.get("url")
+        if isinstance(value, str) and value.strip():
+            url = value.strip()
+            return IntelObject(
+                object_class=ObjectClass.OBSERVABLE,
+                object_type=IntelObjectType.URL,
+                canonical_value=url,
+                display_value=url,
+            )
+    return None
+
+
+def _resolution_counterpart(subject: IntelObject, item: RelatedItem) -> IntelObject | None:
+    """The other end of a DNS resolution.
+
+    A GTI resolution's id concatenates an address and a hostname, so both are
+    read from attributes. Whichever side is not the subject becomes the related
+    object.
+    """
+    address = item.attributes.get("ip_address")
+    hostname = item.attributes.get("host_name")
+    if subject.object_type is IntelObjectType.DOMAIN_NAME:
+        return _ip_object(address.strip()) if isinstance(address, str) else None
+    if subject.object_type in {IntelObjectType.IPV4_ADDR, IntelObjectType.IPV6_ADDR}:
+        if not isinstance(hostname, str) or not hostname.strip():
+            return None
+        name = hostname.strip().lower()
+        return IntelObject(
+            object_class=ObjectClass.OBSERVABLE,
+            object_type=IntelObjectType.DOMAIN_NAME,
+            canonical_value=name,
+            display_value=name,
+        )
+    return None
+
+
+def _relationship_evidence(
+    context: NormalizationContext,
+    subject: IntelObject,
+    spec: GTIRelationshipSpec,
+    item: RelatedItem,
+    related: IntelObject,
+) -> Evidence:
+    attributes: dict[str, Any] = {
+        "relationship": spec.name,
+        "gti_target_type": item.object_type,
+        "gti_target_id": item.object_id,
+        "direction": spec.direction.value,
+    }
+    if item.context_attributes:
+        attributes["context"] = _plain(dict(item.context_attributes))
+    return Evidence(
+        investigation_id=context.investigation_id,
+        subject_object_id=subject.id,
+        evidence_class=EvidenceClass.RELATIONSHIP,
+        claim_type=f"gti.relationship.{spec.name.replace('_', '-')}",
+        # A connection is a behavioural fact, not an accusation. Treating every
+        # observed connection as incriminating is how legitimate CDN traffic
+        # turns into a verdict.
+        effect=EvidenceEffect.CONTEXT_ONLY,
+        transport_provider=GTI_PROVIDER_ID,
+        origin_provider=GTI_ORIGIN_PROVIDER,
+        source_family=GTI_SOURCE_FAMILY,
+        match_scope=MatchScope.EXACT_OBSERVABLE,
+        retrieved_at=context.now,
+        lineage_group_id=GTI_LINEAGE_GROUP,
+        attributes=attributes,
+        raw_reference_id=context.raw_reference_id,
+    )
