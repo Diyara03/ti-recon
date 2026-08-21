@@ -78,6 +78,30 @@ class CredentialResolver:
             secret=secret,
         )
 
+    async def resolve_connection(
+        self,
+        *,
+        authenticated_user_id: str,
+        provider_id: str,
+        credential_group: str | None = None,
+    ) -> ProviderConnection | None:
+        """Return this user's connection metadata, without touching the secret.
+
+        Exists so a caller can establish *which credential* work will be done
+        with — for cache and quota scoping — before deciding whether a provider
+        call is needed at all. A request served from cache should never cause a
+        secret to be read out of the store.
+
+        Returns ``None`` when this user has no connection, identically to a
+        connection that belongs to somebody else.
+        """
+        group = credential_group or credential_group_for(provider_id)
+        connection = await self._repository.find_by_group(authenticated_user_id, group)
+        if connection is None:
+            return None
+        self._assert_ownership(connection, authenticated_user_id)
+        return connection
+
     async def has_credential(
         self,
         *,

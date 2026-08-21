@@ -8,7 +8,7 @@ eventually produce an explainable, auditable assessment.
 
 ## Current development state
 
-This repository currently contains the **foundation only** (Jira Tasks 1-5):
+This repository currently contains the **foundation** (Jira Tasks 1-6):
 
 | Task | Scope | State |
 |------|-------|-------|
@@ -17,11 +17,18 @@ This repository currently contains the **foundation only** (Jira Tasks 1-5):
 | 3 | Common TI data model | Implemented |
 | 4 | Per-user provider credential foundation | Implemented (in-memory store only) |
 | 5 | Provider integration framework | Implemented (contract, registry, transport) |
+| 6 | Provider execution controls | Implemented (in-memory, single-process) |
 
-**No real provider integration exists yet.** There is no VirusTotal, urlscan,
-GreyNoise, Censys, ThreatFox, URLhaus or MalwareBazaar client in this
-repository. There is no query planner, no evidence fusion, no verdict scoring,
-no caching, no MCP server and no Claude Skill. Those are later Jira tasks.
+**No real provider integration exists yet.** There is no VirusTotal / Google
+Threat Intelligence, urlscan, GreyNoise, Censys, ThreatFox, URLhaus or
+MalwareBazaar client in this repository. There is no query planner, no provider
+selection, no evidence fusion, no verdict scoring, no MCP server and no Claude
+Skill. Those are later Jira tasks.
+
+Task 6 added the execution layer every future adapter will run behind — caching,
+retry and backoff, rate-limit and quota tracking, cooldowns, bounded concurrency
+and request coalescing. All of its state is **in-memory and single-process**: a
+development foundation, not distributed coordination.
 
 ## Architecture (high level)
 
@@ -37,6 +44,8 @@ TI Recon backend                 <-- this repository
    |-- provider registry          implemented
    |-- provider adapters          contract implemented, no real adapters
    |-- provider HTTP transport    implemented (SSRF-bounded)
+   |-- provider executor          implemented (cache, retry, quota, cooldown,
+   |                                           concurrency, single-flight)
    |-- normalized evidence        implemented (Task 3 models)
    |-- lineage / correlation      models implemented, engine future
    |-- evidence fusion            (future)
@@ -59,6 +68,12 @@ Design principles that shape every layer:
   separate future path requiring explicit approval.
 - **No direct IOC fetching** — TI Recon never browses a submitted URL. The HTTP
   transport can only talk to a configured provider API host.
+- **Execution decides how, not what** — the executor runs a *selected* provider
+  safely under caching, retry, quota and concurrency controls. Choosing which
+  provider to call is a later task, and nothing in this layer computes a verdict.
+- **Per-user execution isolation** — cache entries, quota state, cooldowns,
+  concurrency slots and request coalescing are all keyed by the analyst's
+  credential, never shared between users.
 
 See [docs/architecture.md](docs/architecture.md) for detail.
 
@@ -99,8 +114,7 @@ uv run pytest -q
 uv run pytest -q --cov=ti_recon --cov-report=term-missing
 ```
 
-719 tests pass with 100% statement coverage of `src/ti_recon` (99% including
-branches).
+All tests pass with high statement coverage of `src/ti_recon`.
 
 ## Configuration
 
@@ -121,7 +135,12 @@ In production, provider credentials are held per user by the credential layer
 - **No persistence.** Nothing is stored in a database; models are in-memory only.
 - **No verdict engine.** `Assessment` / `AssessmentContribution` models exist,
   but nothing computes a verdict, risk score or confidence.
-- **No caching, retries, backoff or quota coordination** (Task 6).
+- **All execution state is in-memory and single-process.** With N workers each
+  has its own cache, each discovers a throttled provider independently, and
+  effective provider concurrency is `max_concurrency x N`. No Redis or other
+  shared store is implemented.
+- **No real quota API calls.** The quota models and stores exist; nothing
+  queries a provider for its quota.
 - **No batch, pivot or active operations against a real provider.** The
   contract declares them and the default implementations raise
   `UnsupportedProviderOperation`; only test fakes implement batch lookup.
@@ -136,3 +155,4 @@ In production, provider credentials are held per user by the credential layer
 - [docs/data-model.md](docs/data-model.md) — Task 3 data model and normalization
 - [docs/credential-management.md](docs/credential-management.md) — Task 4 credentials
 - [docs/provider-framework.md](docs/provider-framework.md) — Task 5 provider framework
+- [docs/provider-execution.md](docs/provider-execution.md) — Task 6 execution controls

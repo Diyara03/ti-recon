@@ -16,6 +16,7 @@ __all__ = [
     "REDACTED",
     "SENSITIVE_KEY_PATTERN",
     "contains_credential_like_key",
+    "redact_sensitive_text",
     "reject_credential_like_keys",
 ]
 
@@ -66,3 +67,44 @@ def reject_credential_like_keys(data: Mapping[str, Any], *, where: str) -> None:
     if offending is not None:
         msg = f"{where} must not contain credential-like key {offending!r}"
         raise ValueError(msg)
+
+
+# ``key=value`` / ``key: value`` where the key names credential material. The
+# whole assignment is replaced, key included: leaving ``api_key=[REDACTED]``
+# behind would still trip every guard that looks for credential-like text.
+_SENSITIVE_ASSIGNMENT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"[A-Za-z0-9_.\-\[\]]*"
+    + SENSITIVE_KEY_PATTERN.pattern
+    + r"[A-Za-z0-9_.\-]*\s*[:=]\s*"
+    # An already-redacted value is matched first, so redaction is idempotent
+    # and cannot leave a stray bracket behind.
+    + r"(?:\[REDACTED\]|\"[^\"]*\"|'[^']*'|[^\s,;&)\]}]*)",
+    re.IGNORECASE,
+)
+
+# An HTTP authentication scheme followed by its token.
+_SENSITIVE_SCHEME_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"\b(?:bearer|basic|token|apikey)\s+\S+",
+    re.IGNORECASE,
+)
+
+
+def redact_sensitive_text(text: str, *, max_length: int = 500) -> str:
+    """Remove credential material from free text, then bound its length.
+
+    Best-effort, and deliberately blunt: it replaces the whole
+    ``key=value`` assignment rather than just the value, because leaving the
+    key behind would still look like a credential to every downstream guard.
+
+    Used on provider and transport error text before it is recorded. It is a
+    second line of defence — the first is that adapters must not build messages
+    from response bodies or request headers in the first place.
+    """
+    # Scheme first: "Authorization: Bearer <token>" must lose the token before
+    # the assignment rule collapses the header name, or the token survives.
+    redacted = _SENSITIVE_SCHEME_PATTERN.sub(REDACTED, text)
+    redacted = _SENSITIVE_ASSIGNMENT_PATTERN.sub(REDACTED, redacted)
+    redacted = redacted.strip()
+    if len(redacted) <= max_length:
+        return redacted
+    return redacted[: max_length - 1].rstrip() + "\u2026"

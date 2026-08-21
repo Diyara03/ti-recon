@@ -32,6 +32,7 @@ from ti_recon.providers.errors import (
     ProviderUnknownError,
     UnsupportedProviderOperation,
 )
+from ti_recon.providers.quota import ProviderQuotaSnapshot, QuotaBucket, QuotaPeriod
 from ti_recon.providers.registry import (
     DuplicateProviderId,
     ProviderRegistry,
@@ -44,6 +45,7 @@ from ti_recon.providers.result import (
     NormalizedPayload,
     ProviderResultEnvelope,
     RateLimitSnapshot,
+    RateLimitWindow,
 )
 from ti_recon.providers.transport import (
     DEFAULT_USER_AGENT,
@@ -86,6 +88,7 @@ __all__ = [
     "ProviderPermissionError",
     "ProviderPlanLimitedError",
     "ProviderQuotaExceededError",
+    "ProviderQuotaSnapshot",
     "ProviderRateLimitedError",
     "ProviderRegistry",
     "ProviderRegistryError",
@@ -99,7 +102,10 @@ __all__ = [
     "ProviderTransportSecurityError",
     "ProviderUnavailableError",
     "ProviderUnknownError",
+    "QuotaBucket",
+    "QuotaPeriod",
     "RateLimitSnapshot",
+    "RateLimitWindow",
     "TransportConfig",
     "TransportTimeouts",
     "UnknownProvider",
