@@ -18,6 +18,7 @@ from ti_recon.credentials.enums import AuthType
 from ti_recon.credentials.models import CredentialMaterial
 from ti_recon.enums import (
     ActivityMode,
+    EvidenceEffect,
     IntelObjectType,
     InvestigationDepth,
     ObjectClass,
@@ -170,8 +171,10 @@ async def test_ip_metadata_is_preserved_as_context() -> None:
     assert gti["network"] == "198.51.100.0/24"
     assert gti["country"] == "NL"
     assert gti["regional_internet_registry"] == "RIPE NCC"
-    # Nothing about hosting infrastructure asserts maliciousness.
-    assert outcome.evidence == ()
+    # Infrastructure ownership is context: a hosting company's name is not a
+    # claim about the IP, and nothing here points toward malicious.
+    assert "as_owner" not in {e.claim_type for e in outcome.evidence}
+    assert not [e for e in outcome.evidence if e.effect is EvidenceEffect.SUPPORTS_MALICIOUS]
 
 
 # --------------------------------------------------------------------------- #

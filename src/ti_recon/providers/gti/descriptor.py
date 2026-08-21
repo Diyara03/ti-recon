@@ -40,11 +40,20 @@ __all__ = [
 
 GTI_PROVIDER_ID: Final[str] = "gti"
 
-#: Who produced the intelligence, as opposed to whose API carried it. Identical
-#: in meaning to the provider here, but recorded separately because a relayed
-#: signal from another vendor would differ — and evidence lineage depends on
-#: that distinction being explicit rather than assumed.
-GTI_ORIGIN_PROVIDER: Final[str] = "google_threat_intelligence"
+#: Who produced the intelligence, as opposed to whose API carried it.
+#:
+#: Equal to :data:`GTI_PROVIDER_ID` on purpose. GTI both produces and serves its
+#: assessments, so ``Evidence.is_relayed`` — which is ``transport != origin`` —
+#: must be false for them. Giving the origin a different spelling of the same
+#: source would mark GTI's own judgement as second-hand and let a future fusion
+#: layer discount it as relayed corroboration, which is the opposite of the
+#: truth.
+#:
+#: It is still a separate constant because the two fields are genuinely
+#: different, and a sibling adapter reading the same API under a different
+#: provider id (a VirusTotal-branded integration, say) would set transport to
+#: itself and origin to this — correctly marking that evidence as relayed.
+GTI_ORIGIN_PROVIDER: Final[str] = GTI_PROVIDER_ID
 
 GTI_SOURCE_FAMILY: Final[str] = "google_ti"
 GTI_CREDENTIAL_GROUP: Final[str] = "virustotal"

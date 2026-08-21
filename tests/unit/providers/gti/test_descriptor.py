@@ -36,11 +36,20 @@ def test_identity_matches_the_documented_naming() -> None:
     assert descriptor.adapter_version == GTI_ADAPTER_VERSION
 
 
-def test_transport_and_origin_are_recorded_separately() -> None:
-    """Whose API we called versus who produced the intelligence."""
+def test_gti_evidence_is_its_own_data_not_relayed() -> None:
+    """GTI both produces and serves its assessments, so origin equals transport.
+
+    ``Evidence.is_relayed`` is ``transport != origin``. Spelling the origin
+    differently would mark GTI's own judgement as second-hand and let a future
+    fusion layer discount it as relayed corroboration.
+    """
     assert GTI_PROVIDER_ID == "gti"
-    assert GTI_ORIGIN_PROVIDER == "google_threat_intelligence"
-    assert GTI_PROVIDER_ID != GTI_ORIGIN_PROVIDER
+    assert GTI_ORIGIN_PROVIDER == GTI_PROVIDER_ID
+
+
+def test_the_human_readable_name_lives_on_the_descriptor() -> None:
+    """ "Google Threat Intelligence" is a display name, not a lineage key."""
+    assert build_gti_descriptor().display_name == "Google Threat Intelligence"
 
 
 def test_the_source_family_groups_every_gti_signal() -> None:

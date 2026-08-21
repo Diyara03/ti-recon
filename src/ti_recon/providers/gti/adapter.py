@@ -54,7 +54,13 @@ from ti_recon.providers.gti.client import (
 )
 from ti_recon.providers.gti.config import GTIConfig
 from ti_recon.providers.gti.descriptor import GTI_PROVIDER_ID, build_gti_descriptor
-from ti_recon.providers.gti.normalizer import enrich_primary_object
+from ti_recon.providers.gti.normalizer import (
+    GTINormalization,
+    NormalizationContext,
+    enrich_primary_object,
+    normalize_analysis_stats,
+    normalize_assessment,
+)
 from ti_recon.providers.gti.policy import GTILookupPolicy, collection_for_object_type
 from ti_recon.providers.gti.quota import GTIQuotaReading, parse_overall_quotas
 from ti_recon.providers.quota import ProviderQuotaSnapshot
@@ -348,14 +354,20 @@ class GTIAdapter(ProviderAdapter):
         quota: ProviderQuotaSnapshot | None,
     ) -> ProviderResultEnvelope:
         raw_reference = self._raw_reference(request, gti_object)
-        payload = self._normalize_object(request, gti_object, raw_reference=raw_reference)
+        normalization = self._normalize(request, gti_object, raw_reference=raw_reference)
         return ProviderResultEnvelope.from_payload(
             provider=GTI_PROVIDER_ID,
             operation=request.operation,
-            status=ProviderRunStatus.SUCCESS,
+            # A recognized field that would not parse degrades the result to
+            # PARTIAL rather than failing it. The evidence that did parse is
+            # still worth having, and Task 6 keeps a partial result's evidence
+            # while declining to cache it.
+            status=(
+                ProviderRunStatus.PARTIAL if normalization.degraded else ProviderRunStatus.SUCCESS
+            ),
             adapter_version=self._descriptor.adapter_version,
             api_version=self._descriptor.api_version,
-            payload=payload,
+            payload=_payload_of(normalization),
             raw_reference=raw_reference,
             quota=quota,
         )
@@ -388,20 +400,29 @@ class GTIAdapter(ProviderAdapter):
             retrieved_at=self._clock.now(),
         )
 
-    def _normalize_object(
+    def _normalize(
         self,
         request: ProviderRequest,
         gti_object: GTIObject,
         *,
         raw_reference: RawEvidenceReference | None,
-    ) -> NormalizedPayload:
+    ) -> GTINormalization:
         """Normalize one GTI object into Task 3 models.
 
-        Evidence normalization arrives in the next commits; for now the primary
-        object is enriched with the identity and metadata GTI reported.
+        The assessment and the analysis statistics are normalized
+        independently, so a missing or unreadable assessment still leaves the
+        aggregated reputation, and vice versa. Neither produces a verdict.
         """
+        context = NormalizationContext(
+            investigation_id=request.investigation_id,
+            subject_object_id=request.intel_object.id,
+            now=self._clock.now(),
+            raw_reference_id=raw_reference.id if raw_reference else None,
+        )
         enriched = enrich_primary_object(request.intel_object, gti_object)
-        return NormalizedPayload(objects=(enriched,))
+        result = GTINormalization(objects=(enriched,))
+        result = result.merge(normalize_assessment(context, gti_object))
+        return result.merge(normalize_analysis_stats(context, gti_object))
 
     def normalize(
         self,
@@ -423,7 +444,7 @@ class GTIAdapter(ProviderAdapter):
             relationships=_mapping(payload.get("relationships")),
             context_attributes=_mapping(payload.get("context_attributes")),
         )
-        return self._normalize_object(request, gti_object, raw_reference=raw_reference)
+        return _payload_of(self._normalize(request, gti_object, raw_reference=raw_reference))
 
     def classify_error(self, error: Exception) -> ProviderErrorCategory:
         """Normalize an exception the client did not already translate.
@@ -477,6 +498,16 @@ class _ClientScope:
         traceback: TracebackType | None,
     ) -> None:
         await self._client.close()
+
+
+def _payload_of(normalization: GTINormalization) -> NormalizedPayload:
+    """Project a GTI normalization onto the Task 5 payload shape."""
+    return NormalizedPayload(
+        evidence=normalization.evidence,
+        objects=normalization.objects,
+        relationships=normalization.relationships,
+        warnings=normalization.warnings,
+    )
 
 
 def _mapping(value: object) -> dict[str, object]:

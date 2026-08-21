@@ -175,8 +175,15 @@ def ip_object(
         "gti_confidence_score": 30,
     }
     if with_assessment:
+        # No contributing factors: an undetected IP with clean statistics is
+        # the realistic shape, and it keeps "context does not become malicious"
+        # testable without a threat association muddying it.
         attributes["gti_assessment"] = assessment(
-            verdict, severity="SEVERITY_NONE", threat_score=4, description=None
+            verdict,
+            severity="SEVERITY_NONE",
+            threat_score=4,
+            description=None,
+            contributing_factors={},
         )
     if extra_attributes:
         attributes.update(extra_attributes)
