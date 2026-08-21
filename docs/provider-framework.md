@@ -430,19 +430,22 @@ reaches the log.
 HTTP status codes are **not** interpreted here. A 429 or 403 is returned to the
 adapter, which maps its own provider's conventions in `classify_error`.
 
-## 11. Deferred to Task 6
+## 11. Execution controls (Task 6)
 
-Documented so the shape is known; **not implemented**:
+`ProviderHttpClient` performs exactly one HTTP attempt per call, and an adapter
+interprets exactly one response. Everything around that — caching, retry and
+backoff, rate-limit and quota tracking, cooldowns, bounded concurrency,
+request coalescing — lives in `ti_recon.execution` and is documented in
+[provider-execution.md](provider-execution.md).
 
-```
-Redis response cache          retry engine
-exponential backoff           jitter
-coordinated 429 handling      quota counters
-provider cooldown             rate-limit state shared across workers
-```
+The seams this framework left for it are the ones that layer now uses:
+`CacheabilityHint` on every envelope, `RateLimitSnapshot` (extended in Task 6
+with per-window `RateLimitWindow` entries) from `parse_rate_limits`, the
+optional `quota` snapshot on an envelope, `ProviderError.is_retryable` and its
+`reset_at` / `retry_after_seconds` metadata, and `ProviderRun.cache_hit`.
 
-`ProviderHttpClient` performs exactly one HTTP attempt per call. The pieces that
-Task 6 will need are already recorded rather than invented later:
-`CacheabilityHint` on every envelope, `RateLimitSnapshot` from
-`parse_rate_limits`, `ProviderError.is_retryable` per category, and
-`ProviderRun.cache_hit`.
+An adapter needs no awareness of any of it: the executor calls
+`lookup` / `pivot` / `active_action` exactly as this contract describes.
+
+Still **not implemented**: Redis or any distributed coordination, shared
+rate-limit state across workers, and real quota API calls.

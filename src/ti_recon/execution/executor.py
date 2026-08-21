@@ -69,6 +69,13 @@ from ti_recon.execution.limits import (
     cooldown_from_rate_limit,
     make_cooldown,
 )
+from ti_recon.execution.metrics import (
+    ExecutionMetric,
+    ExecutionMetricsSink,
+    NoOpExecutionMetricsSink,
+    ProviderAttemptMetric,
+    scope_digest,
+)
 from ti_recon.execution.models import (
     CacheScope,
     CooldownReason,
@@ -154,9 +161,11 @@ class ProviderExecutor:
         limiter: ConcurrencyLimiter | None = None,
         single_flight: SingleFlight | None = None,
         policies: ProviderPolicyRegistry | None = None,
+        metrics: ExecutionMetricsSink | None = None,
         clock: Clock | None = None,
         sleeper: Sleeper | None = None,
         jitter: JitterSource | None = None,
+        emit_scope_digest: bool = False,
     ) -> None:
         # Every default uses an explicit ``is None`` test rather than ``or``.
         # Several of these collaborators define ``__len__`` — an empty registry
@@ -172,6 +181,10 @@ class ProviderExecutor:
         self._clock = SystemClock() if clock is None else clock
         self._sleeper = AsyncioSleeper() if sleeper is None else sleeper
         self._jitter = RandomJitter() if jitter is None else jitter
+        self._metrics = NoOpExecutionMetricsSink() if metrics is None else metrics
+        # Opt-in: recording even an opaque per-user grouping key is a collection
+        # decision, so it is made by whoever builds the executor.
+        self._emit_scope_digest = emit_scope_digest
 
     # ------------------------------------------------------------------ #
     # Entry point
@@ -334,6 +347,7 @@ class ProviderExecutor:
 
         while True:
             attempts += 1
+            attempt_start = self._clock.monotonic()
             try:
                 envelope = await self._call_adapter(adapter, request, credential)
             except ProviderError as error:
@@ -348,12 +362,28 @@ class ProviderExecutor:
                 cooldown = await self._apply_decision_cooldown(
                     scope=scope, request=request, error=error, decision=decision
                 )
+                self._record_attempt(
+                    descriptor=descriptor,
+                    request=request,
+                    attempt=attempts,
+                    started=attempt_start,
+                    error_category=error.category,
+                    retried=decision.should_retry,
+                )
                 if decision.should_retry:
                     _log_retry(descriptor, request, attempts, decision.delay_seconds)
                     await self._sleeper.sleep(decision.delay_seconds)
                     continue
                 return _Attempt(error=error, attempts=attempts, cooldown=cooldown)
 
+            self._record_attempt(
+                descriptor=descriptor,
+                request=request,
+                attempt=attempts,
+                started=attempt_start,
+                error_category=None,
+                retried=False,
+            )
             cooldown, quota = await self._record_provider_state(
                 scope=scope, request=request, envelope=envelope, policy=policy
             )
@@ -571,6 +601,27 @@ class ProviderExecutor:
         await self._store_cooldown(entry)
         return entry
 
+    def _record_attempt(
+        self,
+        *,
+        descriptor: ProviderDescriptor,
+        request: ProviderRequest,
+        attempt: int,
+        started: float,
+        error_category: ProviderErrorCategory | None,
+        retried: bool,
+    ) -> None:
+        self._metrics.record_attempt(
+            ProviderAttemptMetric(
+                provider_id=descriptor.provider_id,
+                operation=request.operation,
+                attempt=attempt,
+                duration_ms=max(0.0, (self._clock.monotonic() - started) * 1000.0),
+                error_category=error_category,
+                retried=retried,
+            )
+        )
+
     # ------------------------------------------------------------------ #
     # Outcome construction
     # ------------------------------------------------------------------ #
@@ -690,6 +741,26 @@ class ProviderExecutor:
     ) -> ProviderExecutionOutcome:
         completed_at = self._clock.now()
         duration_ms = max(0.0, (self._clock.monotonic() - timing.monotonic_start) * 1000.0)
+        # Every outcome path funnels through here, so one metric per logical
+        # execution is emitted exactly once — including the paths that never
+        # called the provider, which are the ones worth counting.
+        self._metrics.record_execution(
+            ExecutionMetric(
+                provider_id=descriptor.provider_id,
+                operation=request.operation,
+                status=status,
+                # The object *type*, never its value: a metrics pipeline must not
+                # become a log of everything anyone has investigated.
+                object_type=request.intel_object.object_type,
+                duration_ms=duration_ms,
+                attempts=attempts,
+                cache_hit=cache_hit,
+                coalesced=coalesced,
+                cooldown_applied=cooldown is not None,
+                error_category=error_category,
+                scope_digest=(scope_digest(scope_identity) if self._emit_scope_digest else None),
+            )
+        )
         return ProviderExecutionOutcome(
             provider_id=descriptor.provider_id,
             operation=request.operation,

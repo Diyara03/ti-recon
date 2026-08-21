@@ -51,6 +51,14 @@ from ti_recon.execution.limits import (
     cooldown_from_rate_limit,
     make_cooldown,
 )
+from ti_recon.execution.metrics import (
+    ExecutionMetric,
+    ExecutionMetricsSink,
+    InMemoryExecutionMetricsSink,
+    NoOpExecutionMetricsSink,
+    ProviderAttemptMetric,
+    scope_digest,
+)
 from ti_recon.execution.models import (
     CacheScope,
     CooldownReason,
@@ -93,14 +101,19 @@ __all__ = [
     "CooldownStore",
     "ExecutionConfigurationError",
     "ExecutionContext",
+    "ExecutionMetric",
+    "ExecutionMetricsSink",
     "ExecutionScope",
     "FixedJitter",
     "InMemoryCooldownStore",
+    "InMemoryExecutionMetricsSink",
     "InMemoryProviderCache",
     "InMemoryQuotaStore",
     "JitterSource",
     "ManualClock",
     "NoJitter",
+    "NoOpExecutionMetricsSink",
+    "ProviderAttemptMetric",
     "ProviderCache",
     "ProviderExecutionOutcome",
     "ProviderExecutionPolicy",
@@ -121,4 +134,5 @@ __all__ = [
     "cooldown_from_rate_limit",
     "decide_retry",
     "make_cooldown",
+    "scope_digest",
 ]

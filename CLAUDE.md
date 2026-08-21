@@ -20,21 +20,31 @@ Analyst -> Claude + TI Analyst Skill -> MCP -> TI Recon backend
 
 ## Current implementation boundary
 
-Implemented (Jira Tasks 1-5 foundation only):
+Implemented (Jira Tasks 1-6):
 
 - Task 1 — product scope + investigation workflow foundation (docs, enums)
 - Task 2 — architecture foundation (docs, module boundaries)
 - Task 3 — common TI data model (`models/`, `normalization/`)
 - Task 4 — per-user provider credential foundation (`credentials/`)
 - Task 5 — provider integration framework (`providers/`)
+- Task 6 — provider execution controls (`execution/`): cache, retry/backoff,
+  quota + cooldown, bounded concurrency, single-flight, executor, metrics
+
+**No real provider adapter exists yet.** Task 6 built the layer every future
+adapter runs behind; the adapters themselves are Task 7 onwards.
 
 **Not implemented — do not add without an explicit request:**
 
-- Any real provider API integration (VirusTotal, urlscan, GreyNoise, Censys,
-  ThreatFox, URLhaus, MalwareBazaar, SecurityTrails, AbuseIPDB, Shodan, IPinfo)
-- Query/capability planner, adaptive enrichment, evidence fusion, verdict scoring
-- Caching, retry/backoff, quota coordination, provider cooldown (Task 6)
-- PostgreSQL, Redis, production secret vault, Kafka, Celery, Neo4j
+- Any real provider API integration (VirusTotal / Google Threat Intelligence,
+  urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar,
+  SecurityTrails, AbuseIPDB, Shodan, IPinfo)
+- Query/capability planner, provider selection, adaptive enrichment, evidence
+  fusion, verdict scoring
+- Redis or any distributed coordination: every execution store is in-memory and
+  single-process
+- Real quota API calls (the models and stores exist; nothing queries a provider
+  for quota)
+- PostgreSQL, production secret vault, Kafka, Celery, Neo4j
 - MCP server, Claude connector, Claude Skill, web frontend
 - Active actions: URL/file submission, rescan, sandboxing, sample download
 
@@ -66,6 +76,15 @@ Implemented (Jira Tasks 1-5 foundation only):
    classifies; it must not emit a verdict or risk score.
 9. **Unsupported operations are explicit.** Optional adapter operations raise
    `UnsupportedProviderOperation`, never bare `NotImplementedError`.
+10. **Execution decides how, not what.** `execution/` runs a *selected*
+    provider safely. It never chooses a provider (planner, later task) and never
+    computes a verdict, risk score or confidence.
+11. **Execution reacts to normalized categories, not HTTP.** Retry, cooldown and
+    quota decisions read `ProviderErrorCategory`. No `if status_code == 403`
+    outside an adapter.
+12. **Execution state is user-isolated by construction.** Cache, quota,
+    cooldowns, concurrency slots and request coalescing are all keyed by
+    `ExecutionScope`, whose identity is built from ids only.
 
 ## Security rules
 
@@ -113,10 +132,17 @@ src/ti_recon/
   credentials/       Task 4: per-user provider connections, secret store
                      abstraction, credential manager + user-scoped resolver
   providers/         Task 5: capabilities, descriptor, request/result envelope,
-                     normalized errors, adapter contract, registry, HTTP transport
+                     quota models, normalized errors, adapter contract,
+                     registry, HTTP transport
+  execution/         Task 6: clock/sleeper/jitter seams, cache, retry+backoff,
+                     quota + cooldown stores, concurrency + single-flight,
+                     policy, bounded executor, metrics
+  security.py        credential-key guards and text redaction
+  versions.py        ENGINE_VERSION / POLICY_VERSION audit stamps
 tests/unit/          unit + contract tests
 tests/fixtures/      model-only and fake-adapter fixtures (no network)
-docs/                scope, architecture, data model, credentials, provider framework
+docs/                scope, architecture, data model, credentials, provider
+                     framework, provider execution
 ```
 
 ## Conventions
@@ -127,6 +153,12 @@ docs/                scope, architecture, data model, credentials, provider fram
   `ti_recon.models.base.utc_now`.
 - Enums are `str`-valued with STIX-friendly serialized names
   (`ipv4-addr`, `domain-name`, `file`, ...).
+- Time, sleeping and jitter are injected in `execution/` (`Clock`, `Sleeper`,
+  `JitterSource`). Never call `datetime.now()` or `asyncio.sleep()` directly
+  there — tests must stay instant.
+- Prefer `x if y is None else y` over `y or x` for optional collaborators:
+  several define `__len__`, so an empty one is falsy and `or` silently discards
+  it along with its configuration.
 - File hashes are **properties of a `file` object**, not object types of
   their own.
 - Docs must describe what exists. Never document planned work as done.

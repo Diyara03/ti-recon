@@ -21,6 +21,9 @@
            |
      Provider Registry             IMPLEMENTED — capability/object-type lookup
            |
+     Provider Executor             IMPLEMENTED — cache, retry, quota, cooldown,
+           |                                     concurrency, single-flight
+           |
      Provider Adapters             CONTRACT IMPLEMENTED — no real adapters yet
            |  (via Provider HTTP Transport — IMPLEMENTED)
            |  (auth via Credential Resolver — IMPLEMENTED)
@@ -226,22 +229,48 @@ src/ti_recon/
     capabilities.py   ProviderCapability, ProviderHealth
     descriptor.py     ProviderDescriptor
     request.py        ProviderRequest
-    result.py         ProviderResultEnvelope, RateLimitSnapshot, cacheability
+    result.py         ProviderResultEnvelope, RateLimitSnapshot/Window
+    quota.py          ProviderQuotaSnapshot, QuotaBucket, QuotaPeriod
     errors.py         ProviderErrorCategory, ProviderError hierarchy
     adapter.py        ProviderAdapter ABC
     registry.py       ProviderRegistry
     transport.py      ProviderHttpClient (+ TransportConfig)
+  execution/
+    clock.py          Clock / Sleeper / JitterSource injection seams
+    models.py         ExecutionScope, ExecutionContext, outcome, CacheScope
+    cache.py          ProviderCache protocol, key builder, in-memory cache
+    policy.py         CachePolicy, ProviderExecutionPolicy + registry
+    retry.py          RetryPolicy, retry matrix, exponential backoff
+    limits.py         quota + cooldown stores, cooldown derivation
+    coordination.py   ConcurrencyLimiter, SingleFlight
+    metrics.py        ExecutionMetricsSink + no-op / in-memory sinks
+    executor.py       ProviderExecutor
 ```
 
-## 10. Deferred architecture (Task 6+)
+## 10. Provider execution (Task 6)
+
+Between the future planner and each adapter sits `ProviderExecutor`, which runs
+a *selected* provider under caching, retry/backoff, rate-limit and quota
+tracking, cooldowns, bounded concurrency and in-flight request coalescing. It
+decides how to call a provider safely and never what to call or what a result
+means. Every control is keyed by an `ExecutionScope` built from the analyst's
+identity and credential connection, so no state is shared between users.
+
+All of that state is in-memory and single-process — a development foundation.
+The protocols are the seams distributed implementations will slot into.
+
+Full detail: [provider-execution.md](provider-execution.md).
+
+## 11. Deferred architecture (Task 7+)
 
 Documented so the shape is known; not implemented:
 
-- **Task 6** — response caching (Redis), retry engine with exponential backoff
-  and jitter, coordinated 429 handling, quota counters, provider cooldown,
-  shared rate-limit state across workers.
-- Capability planner and adaptive enrichment (widen capabilities when evidence
-  is thin).
+- Distributed execution state: Redis-backed cache, quota and cooldown stores,
+  shared rate-limit state and cross-worker concurrency limits.
+- Real provider adapters, and the real quota API calls that populate quota
+  snapshots.
+- Capability planner, provider selection and adaptive enrichment (widen
+  capabilities when evidence is thin).
 - Lineage-aware correlation, evidence fusion and verdict scoring.
 - Persistence (PostgreSQL), raw-response object storage, production secret vault.
 - MCP server, Claude connector, TI Analyst Skill, web frontend.
