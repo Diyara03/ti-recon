@@ -26,7 +26,13 @@ from types import TracebackType
 
 from ti_recon.credentials.enums import CredentialStatus
 from ti_recon.credentials.models import CredentialMaterial
-from ti_recon.enums import IntelObjectType, ProviderErrorCategory, ProviderRunStatus
+from ti_recon.enums import (
+    IntelObjectType,
+    InvestigationDepth,
+    ProviderCapability,
+    ProviderErrorCategory,
+    ProviderRunStatus,
+)
 from ti_recon.execution.clock import Clock, SystemClock
 from ti_recon.execution.limits import QuotaStore
 from ti_recon.execution.models import ExecutionScope
@@ -61,6 +67,7 @@ from ti_recon.providers.gti.normalizer import (
     enrich_primary_object,
     normalize_analysis_stats,
     normalize_assessment,
+    normalize_file_behavior,
     normalize_inline_relationships,
     normalize_related_items,
 )
@@ -73,6 +80,7 @@ from ti_recon.providers.gti.relationships import (
     GTIRelationshipLimits,
     GTIRelationshipSpec,
     Retrieval,
+    TargetKind,
     depth_for_investigation,
     relationship_plan,
 )
@@ -329,6 +337,7 @@ class GTIAdapter(ProviderAdapter):
             enrichment = await self._expand_relationships(
                 client, request, collection, object_id, gti_object
             )
+            enrichment = enrichment.merge(await self._file_behavior(client, request, object_id))
             quota = await self._refresh_quota_if_stale(client, credential)
 
         return self._envelope(request, gti_object, quota=quota, extra=enrichment)
@@ -480,11 +489,17 @@ class GTIAdapter(ProviderAdapter):
             return result
 
         remaining = limits.max_total_related_objects - len(result.objects)
-        for spec in relationship_plan(subject.object_type, depth, limits=limits):
+        plan = relationship_plan(
+            subject.object_type,
+            depth,
+            limits=limits,
+            capabilities=request.requested_capabilities,
+        )
+        for spec in plan:
             if remaining <= 0:
                 break
-            page = min(limits.max_results_per_relationship, remaining)
-            items = await self._fetch_related(client, collection, object_id, spec, page)
+            page = min(self._page_size(spec, limits, depth), remaining)
+            items = await self._fetch_related(client, collection, object_id, spec, page, depth)
             if items is None:
                 # A plan limitation or a missing relationship: the primary
                 # lookup stays useful, so it is recorded and skipped.
@@ -517,6 +532,23 @@ class GTIAdapter(ProviderAdapter):
             }
         )
 
+    @staticmethod
+    def _page_size(
+        spec: GTIRelationshipSpec,
+        limits: GTIRelationshipLimits,
+        depth: GTIRelationshipDepth,
+    ) -> int:
+        """How many results to ask for, tighter for expanded threat objects."""
+        if (
+            spec.target_kind is TargetKind.THREAT_OBJECT
+            and spec.retrieval_at(depth) is Retrieval.OBJECTS
+        ):
+            return min(
+                limits.max_results_per_relationship,
+                limits.max_threat_objects_per_relationship,
+            )
+        return limits.max_results_per_relationship
+
     async def _fetch_related(
         self,
         client: GTIClient,
@@ -524,14 +556,16 @@ class GTIAdapter(ProviderAdapter):
         object_id: str,
         spec: GTIRelationshipSpec,
         limit: int,
+        depth: GTIRelationshipDepth,
     ) -> list[RelatedItem] | None:
         """One relationship's page, or ``None`` if GTI would not serve it.
 
-        Descriptor-first: only relationships whose target cannot be identified
-        without an attribute are fetched as full objects.
+        Descriptor-first: full objects only where the target cannot be
+        identified without an attribute, or where a DEEP investigation is paying
+        to name a threat collection.
         """
         try:
-            if spec.retrieval is Retrieval.DESCRIPTORS:
+            if spec.retrieval_at(depth) is Retrieval.DESCRIPTORS:
                 descriptors = await client.get_relationship_descriptors(
                     collection=collection,
                     object_id=object_id,
@@ -559,6 +593,47 @@ class GTIAdapter(ProviderAdapter):
             # Anything else is Task 6's decision, not ours to swallow.
             raise
         return [RelatedItem.from_object(item) for item in objects]
+
+    async def _file_behavior(
+        self, client: GTIClient, request: ProviderRequest, object_id: str
+    ) -> GTINormalization:
+        """Sandbox behaviour, for deep file investigations only.
+
+        Three conditions, all required: the observable is a file, the
+        investigation is DEEP, and the caller asked for FILE_BEHAVIOR. Detonation
+        data is the most expensive and most entitlement-sensitive thing GTI
+        offers, so it is never pulled speculatively.
+
+        Only the aggregated summary is read — never the individual sandbox
+        reports, of which there can be many per sample.
+        """
+        if request.intel_object.object_type is not IntelObjectType.FILE:
+            return GTINormalization()
+        if request.depth is not InvestigationDepth.DEEP:
+            return GTINormalization()
+        if ProviderCapability.FILE_BEHAVIOR not in request.requested_capabilities:
+            return GTINormalization()
+
+        limits = LIMITS_BY_DEPTH[GTIRelationshipDepth.DEEP]
+        try:
+            summary = await client.get_file_behavior_summary(file_id=object_id)
+        except ProviderError as error:
+            if error.category in _DEGRADABLE_CATEGORIES:
+                _logger.info(
+                    "GTI file behaviour unavailable",
+                    extra={
+                        "provider": GTI_PROVIDER_ID,
+                        "error_category": error.category.value,
+                    },
+                )
+                return GTINormalization(warnings=("GTI_FILE_BEHAVIOR_UNAVAILABLE",))
+            raise
+        return normalize_file_behavior(
+            self._context(request),
+            request.intel_object,
+            summary,
+            max_per_source=limits.max_results_per_relationship,
+        )
 
     def _context(self, request: ProviderRequest) -> NormalizationContext:
         return NormalizationContext(

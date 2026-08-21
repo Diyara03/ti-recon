@@ -119,11 +119,17 @@ def test_the_three_depths_differ_meaningfully() -> None:
     assert standard_limits.max_total_related_objects < deep_limits.max_total_related_objects
 
 
-def test_the_file_standard_profile_prioritizes_what_a_sample_did() -> None:
+def test_the_file_standard_profile_prioritizes_behaviour_and_attribution() -> None:
     names = [
         spec.name for spec in relationship_plan(IntelObjectType.FILE, GTIRelationshipDepth.STANDARD)
     ]
-    assert names == ["contacted_domains", "contacted_ips", "contacted_urls"]
+    assert names == [
+        "contacted_domains",
+        "contacted_ips",
+        "contacted_urls",
+        "malware_families",
+        "associations",
+    ]
 
 
 def test_the_domain_and_ip_standard_profiles_prioritize_infrastructure() -> None:
@@ -131,14 +137,19 @@ def test_the_domain_and_ip_standard_profiles_prioritize_infrastructure() -> None
         names = [
             spec.name for spec in relationship_plan(object_type, GTIRelationshipDepth.STANDARD)
         ]
-        assert names == ["resolutions", "communicating_files"]
+        assert names == ["resolutions", "communicating_files", "associations"]
 
 
 def test_the_url_standard_profile_prioritizes_served_and_communicating_files() -> None:
     names = [
         spec.name for spec in relationship_plan(IntelObjectType.URL, GTIRelationshipDepth.STANDARD)
     ]
-    assert names == ["downloaded_files", "communicating_files"]
+    assert names == [
+        "downloaded_files",
+        "communicating_files",
+        "redirecting_urls",
+        "associations",
+    ]
 
 
 def test_ipv6_shares_the_ipv4_profile() -> None:

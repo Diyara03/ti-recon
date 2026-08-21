@@ -33,6 +33,7 @@ from ti_recon.enums import (
     IntelObjectType,
     MatchScope,
     ObjectClass,
+    RelationshipType,
 )
 from ti_recon.models.base import FrozenTiReconModel
 from ti_recon.models.evidence import Evidence
@@ -73,6 +74,7 @@ __all__ = [
     "gti_metadata",
     "normalize_analysis_stats",
     "normalize_assessment",
+    "normalize_file_behavior",
     "normalize_inline_relationships",
     "normalize_related_items",
 ]
@@ -794,6 +796,9 @@ def normalize_related_items(
     every observed connection as incriminating is how legitimate CDN traffic
     becomes a verdict.
     """
+    if spec.target_kind is TargetKind.THREAT_OBJECT:
+        return _normalize_threat_items(context, subject, spec, items)
+
     objects: list[IntelObject] = []
     relationships: list[Relationship] = []
     evidence: list[Evidence] = []
@@ -885,6 +890,131 @@ def _item_from_entry(entry: Any) -> RelatedItem | None:
     )
 
 
+# --------------------------------------------------------------------------- #
+# Threat associations
+# --------------------------------------------------------------------------- #
+
+#: GTI collection types that map onto a Task 3 object type. Only malware
+#: families do: Task 3 has a ``malware`` object and no threat-actor, campaign or
+#: report object, and inventing three new first-class types to hold a GTI id
+#: would be a data-model decision made for one provider's convenience. Everything
+#: else is recorded as an association claim, which loses nothing an analyst
+#: needs and leaves the graph honest.
+_NAMED_THREAT_COLLECTIONS: Final[frozenset[str]] = frozenset({"malware-family"})
+
+
+def _normalize_threat_items(
+    context: NormalizationContext,
+    subject: IntelObject,
+    spec: GTIRelationshipSpec,
+    items: Sequence[RelatedItem],
+) -> GTINormalization:
+    """Normalize curated threat attribution.
+
+    Every item produces an association claim carrying the collection type and
+    id. Where GTI also gave a readable name *and* the collection is one Task 3
+    models — today only a malware family — the association additionally becomes
+    a real object and relationship.
+
+    Names are never invented. A descriptor's id is an internal collection
+    identifier, and turning ``collection--1a2b3c`` into a threat actor called
+    "1a2b3c" would put a fabricated actor into the graph. Without a name, the
+    association is still recorded; it simply stays a claim rather than a node.
+    """
+    objects: list[IntelObject] = []
+    relationships: list[Relationship] = []
+    evidence: list[Evidence] = []
+
+    for item in items:
+        collection_type = _collection_type(item)
+        name = item.attributes.get("name")
+        readable = name.strip() if isinstance(name, str) and name.strip() else None
+
+        claim = _association_evidence(context, subject, spec, item, collection_type, readable)
+        evidence.append(claim)
+
+        if readable is None or collection_type not in _NAMED_THREAT_COLLECTIONS:
+            continue
+        malware = IntelObject(
+            object_class=ObjectClass.THREAT,
+            object_type=IntelObjectType.MALWARE,
+            canonical_value=readable.lower(),
+            display_value=readable,
+            properties={GTI_PROPERTY_NAMESPACE: {"collection_id": item.object_id}},
+        )
+        if malware.canonical_key == subject.canonical_key:
+            continue
+        objects.append(malware)
+        relationships.append(
+            Relationship(
+                source_object_id=subject.id,
+                relationship_type=RelationshipType.ASSOCIATED_WITH_MALWARE,
+                target_object_id=malware.id,
+                evidence_refs=(claim.id,),
+            )
+        )
+
+    return GTINormalization(
+        evidence=tuple(evidence),
+        objects=tuple(objects),
+        relationships=tuple(relationships),
+    )
+
+
+def _collection_type(item: RelatedItem) -> str | None:
+    """GTI's own label for what kind of collection this is."""
+    value = item.attributes.get("collection_type")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    value = item.context_attributes.get("collection_type")
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _association_evidence(
+    context: NormalizationContext,
+    subject: IntelObject,
+    spec: GTIRelationshipSpec,
+    item: RelatedItem,
+    collection_type: str | None,
+    name: str | None,
+) -> Evidence:
+    """One curated association claim.
+
+    Directional: GTI tying an observable to a malware family, actor, campaign or
+    threat report is an assertion that it is threat-relevant, not neutral
+    context. The collection type travels in the attributes so a fusion layer can
+    weigh a report mention differently from an actor attribution.
+    """
+    attributes: dict[str, Any] = {
+        "relationship": spec.name,
+        "gti_collection_id": item.object_id,
+        "gti_target_type": item.object_type,
+    }
+    if collection_type is not None:
+        attributes["gti_collection_type"] = collection_type
+    if name is not None:
+        attributes["name"] = name
+    else:
+        # Explicit, so a reader can tell "GTI did not name it" apart from
+        # "nobody looked".
+        attributes["name_available"] = False
+    return Evidence(
+        investigation_id=context.investigation_id,
+        subject_object_id=subject.id,
+        evidence_class=EvidenceClass.CURATED_THREAT_ASSERTION,
+        claim_type=f"gti.threat_association.{spec.name.replace('_', '-')}",
+        effect=EvidenceEffect.SUPPORTS_MALICIOUS,
+        transport_provider=GTI_PROVIDER_ID,
+        origin_provider=GTI_ORIGIN_PROVIDER,
+        source_family=GTI_SOURCE_FAMILY,
+        match_scope=MatchScope.EXACT_OBSERVABLE,
+        retrieved_at=context.now,
+        lineage_group_id=GTI_LINEAGE_GROUP,
+        attributes=attributes,
+        raw_reference_id=context.raw_reference_id,
+    )
+
+
 def _effective_direction(subject: IntelObject, spec: GTIRelationshipSpec) -> Direction:
     """The direction this relationship actually points for this subject.
 
@@ -912,6 +1042,8 @@ def _related_object(
             return _url_object(item)
         case TargetKind.RESOLUTION_OBJECT:
             return _resolution_counterpart(subject, item)
+        case TargetKind.THREAT_OBJECT:  # pragma: no cover - routed before here
+            return None
 
 
 def _identity_object(item: RelatedItem) -> IntelObject | None:
@@ -1034,6 +1166,174 @@ def _relationship_evidence(
         # A connection is a behavioural fact, not an accusation. Treating every
         # observed connection as incriminating is how legitimate CDN traffic
         # turns into a verdict.
+        effect=EvidenceEffect.CONTEXT_ONLY,
+        transport_provider=GTI_PROVIDER_ID,
+        origin_provider=GTI_ORIGIN_PROVIDER,
+        source_family=GTI_SOURCE_FAMILY,
+        match_scope=MatchScope.EXACT_OBSERVABLE,
+        retrieved_at=context.now,
+        lineage_group_id=GTI_LINEAGE_GROUP,
+        attributes=attributes,
+        raw_reference_id=context.raw_reference_id,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# File behaviour (DEEP only)
+# --------------------------------------------------------------------------- #
+
+#: Which behaviour-summary lists yield which kind of observable, and the
+#: attribute that carries the identity inside each entry.
+#:
+#: An explicit table again: a sandbox report contains a great deal that TI Recon
+#: does not model, and iterating whatever GTI happens to send would turn every
+#: schema addition into unreviewed evidence.
+_BEHAVIOR_SOURCES: Final[tuple[tuple[str, str, RelationshipType, str], ...]] = (
+    ("dns_lookups", "hostname", RelationshipType.CONTACTS, "domain"),
+    ("ip_traffic", "destination_ip", RelationshipType.CONTACTS, "ip_address"),
+    ("http_conversations", "url", RelationshipType.CONTACTS, "url"),
+    ("files_dropped", "sha256", RelationshipType.DROPS, "file"),
+)
+
+#: High-level summary fields kept as one context claim rather than expanded.
+_BEHAVIOR_SUMMARY_FIELDS: Final[tuple[str, ...]] = (
+    "tags",
+    "verdicts",
+    "calls_highlighted",
+    "mutexes_created",
+    "processes_created",
+    "attack_techniques",
+)
+
+
+def normalize_file_behavior(
+    context: NormalizationContext,
+    subject: IntelObject,
+    summary: Mapping[str, Any],
+    *,
+    max_per_source: int,
+) -> GTINormalization:
+    """Normalize an aggregated sandbox behaviour summary.
+
+    What a sample *did* when detonated is a direct observation, so contacted
+    infrastructure and dropped files become evidence of class
+    ``DIRECT_OBSERVATION`` — someone genuinely watched it happen, unlike a
+    curated assertion or a reputation roll-up.
+
+    It is still not a verdict. Contacting a domain during detonation is a fact
+    about behaviour; deciding what that means about the sample belongs to the
+    fusion layer, so every claim here is ``CONTEXT_ONLY``.
+
+    Only the aggregated summary is read. Individual sandbox reports are not
+    fetched: there can be many per sample, they duplicate each other heavily,
+    and the summary is what an analyst actually reads.
+    """
+    if not summary or max_per_source <= 0:
+        return GTINormalization()
+
+    objects: list[IntelObject] = []
+    relationships: list[Relationship] = []
+    evidence: list[Evidence] = []
+
+    for source_field, identity_field, relationship_type, gti_type in _BEHAVIOR_SOURCES:
+        entries = summary.get(source_field)
+        if not isinstance(entries, list):
+            continue
+        seen: set[str] = set()
+        for entry in entries:
+            if len(seen) >= max_per_source:
+                break
+            value = entry.get(identity_field) if isinstance(entry, Mapping) else None
+            if not isinstance(value, str) or not value.strip():
+                continue
+            item = RelatedItem(
+                object_type=gti_type,
+                object_id=value.strip(),
+                attributes={"url": value.strip()} if gti_type == "url" else {},
+                context_attributes={},
+            )
+            related = _url_object(item) if gti_type == "url" else _identity_object(item)
+            if related is None or related.canonical_key in seen:
+                continue
+            if related.canonical_key == subject.canonical_key:
+                continue
+            seen.add(related.canonical_key)
+
+            claim = _behavior_evidence(context, subject, source_field, related, entry)
+            evidence.append(claim)
+            objects.append(related)
+            relationships.append(
+                Relationship(
+                    source_object_id=subject.id,
+                    relationship_type=relationship_type,
+                    target_object_id=related.id,
+                    evidence_refs=(claim.id,),
+                )
+            )
+
+    overview = _behavior_summary_evidence(context, subject, summary)
+    if overview is not None:
+        evidence.append(overview)
+
+    return GTINormalization(
+        evidence=tuple(evidence),
+        objects=tuple(objects),
+        relationships=tuple(relationships),
+    )
+
+
+def _behavior_evidence(
+    context: NormalizationContext,
+    subject: IntelObject,
+    source_field: str,
+    related: IntelObject,
+    entry: Any,
+) -> Evidence:
+    attributes: dict[str, Any] = {
+        "behavior_source": source_field,
+        "target": related.canonical_value,
+    }
+    if isinstance(entry, Mapping):
+        for detail in ("destination_port", "transport_layer_protocol", "path"):
+            if detail in entry:
+                attributes[detail] = _plain(entry[detail])
+    return Evidence(
+        investigation_id=context.investigation_id,
+        subject_object_id=subject.id,
+        # Something actually watched this happen in a sandbox.
+        evidence_class=EvidenceClass.DIRECT_OBSERVATION,
+        claim_type=f"gti.behavior.{source_field.replace('_', '-')}",
+        # A behavioural fact, not an accusation.
+        effect=EvidenceEffect.CONTEXT_ONLY,
+        transport_provider=GTI_PROVIDER_ID,
+        origin_provider=GTI_ORIGIN_PROVIDER,
+        source_family=GTI_SOURCE_FAMILY,
+        match_scope=MatchScope.EXACT_OBSERVABLE,
+        retrieved_at=context.now,
+        lineage_group_id=GTI_LINEAGE_GROUP,
+        attributes=attributes,
+        raw_reference_id=context.raw_reference_id,
+    )
+
+
+def _behavior_summary_evidence(
+    context: NormalizationContext, subject: IntelObject, summary: Mapping[str, Any]
+) -> Evidence | None:
+    """One context claim carrying the high-level behaviour overview."""
+    attributes: dict[str, Any] = {}
+    for field in _BEHAVIOR_SUMMARY_FIELDS:
+        value = summary.get(field)
+        if isinstance(value, list) and value:
+            # Bounded: a sandbox can highlight hundreds of calls, and an
+            # unbounded list would dwarf the evidence it belongs to.
+            attributes[field] = [_plain(item) for item in value[:20]]
+    if not attributes:
+        return None
+    return Evidence(
+        investigation_id=context.investigation_id,
+        subject_object_id=subject.id,
+        evidence_class=EvidenceClass.CONTEXT,
+        claim_type="gti.behavior.summary",
         effect=EvidenceEffect.CONTEXT_ONLY,
         transport_provider=GTI_PROVIDER_ID,
         origin_provider=GTI_ORIGIN_PROVIDER,

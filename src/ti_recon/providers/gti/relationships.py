@@ -41,7 +41,12 @@ from typing import Final
 
 from pydantic import Field
 
-from ti_recon.enums import IntelObjectType, InvestigationDepth, RelationshipType
+from ti_recon.enums import (
+    IntelObjectType,
+    InvestigationDepth,
+    ProviderCapability,
+    RelationshipType,
+)
 from ti_recon.models.base import FrozenTiReconModel
 
 __all__ = [
@@ -93,6 +98,11 @@ class TargetKind(StrEnum):
     #: A GTI ``resolution``, whose address and hostname live in attributes
     #: because its id concatenates the two.
     RESOLUTION_OBJECT = "resolution_object"
+    #: A high-level threat collection — malware family, actor, campaign, report.
+    #: Its descriptor id is an internal collection identifier with no readable
+    #: name, so a descriptor yields an association claim and only a DEEP
+    #: expansion can name the thing.
+    THREAT_OBJECT = "threat_object"
 
 
 class Retrieval(StrEnum):
@@ -125,6 +135,10 @@ class GTIRelationshipSpec:
     relationship_type: RelationshipType
     target_kind: TargetKind
     direction: Direction = Direction.OUTBOUND
+    #: Which intelligence capability this relationship serves. A lookup only
+    #: requests relationships whose capability the caller actually asked for, so
+    #: a reputation query does not quietly spend quota on a pivot graph.
+    capability: ProviderCapability = ProviderCapability.RELATIONSHIPS
     #: True when an Enterprise/GTI entitlement gates the relationship, so a
     #: refusal reads as a plan limitation rather than a permission problem.
     entitlement_sensitive: bool = False
@@ -133,8 +147,23 @@ class GTIRelationshipSpec:
     def retrieval(self) -> Retrieval:
         """Descriptors unless the target's identity needs an attribute."""
         return (
-            Retrieval.DESCRIPTORS if self.target_kind is TargetKind.IDENTITY else Retrieval.OBJECTS
+            Retrieval.DESCRIPTORS
+            if self.target_kind in {TargetKind.IDENTITY, TargetKind.THREAT_OBJECT}
+            else Retrieval.OBJECTS
         )
+
+    def retrieval_at(self, depth: GTIRelationshipDepth) -> Retrieval:
+        """How to fetch this relationship at a given depth.
+
+        Threat collections are the one depth-dependent case: STANDARD takes
+        descriptors, which is enough to record *that* an association exists,
+        while DEEP pays for the full object so the thing can actually be named.
+        """
+        if self.target_kind is TargetKind.THREAT_OBJECT:
+            return (
+                Retrieval.OBJECTS if depth is GTIRelationshipDepth.DEEP else Retrieval.DESCRIPTORS
+            )
+        return self.retrieval
 
 
 #: Every relationship this integration knows how to normalize.
@@ -193,6 +222,42 @@ RELATIONSHIP_SPECS: Final[dict[str, GTIRelationshipSpec]] = {
         TargetKind.URL_OBJECT,
         Direction.INBOUND,
     ),
+    # --- curated threat attribution (Enterprise/GTI) ----------------------
+    "malware_families": GTIRelationshipSpec(
+        "malware_families",
+        RelationshipType.ASSOCIATED_WITH_MALWARE,
+        TargetKind.THREAT_OBJECT,
+        capability=ProviderCapability.MALWARE_INTELLIGENCE,
+        entitlement_sensitive=True,
+    ),
+    "associations": GTIRelationshipSpec(
+        "associations",
+        RelationshipType.RELATED_TO,
+        TargetKind.THREAT_OBJECT,
+        capability=ProviderCapability.THREAT_ASSOCIATIONS,
+        entitlement_sensitive=True,
+    ),
+    "related_threat_actors": GTIRelationshipSpec(
+        "related_threat_actors",
+        RelationshipType.RELATED_TO,
+        TargetKind.THREAT_OBJECT,
+        capability=ProviderCapability.THREAT_ASSOCIATIONS,
+        entitlement_sensitive=True,
+    ),
+    "related_reports": GTIRelationshipSpec(
+        "related_reports",
+        RelationshipType.RELATED_TO,
+        TargetKind.THREAT_OBJECT,
+        capability=ProviderCapability.THREAT_ASSOCIATIONS,
+        entitlement_sensitive=True,
+    ),
+    "campaigns": GTIRelationshipSpec(
+        "campaigns",
+        RelationshipType.RELATED_TO,
+        TargetKind.THREAT_OBJECT,
+        capability=ProviderCapability.THREAT_ASSOCIATIONS,
+        entitlement_sensitive=True,
+    ),
 }
 
 #: Which relationships each depth requests, per observable type.
@@ -208,6 +273,8 @@ RELATIONSHIP_PLANS: Final[dict[IntelObjectType, dict[GTIRelationshipDepth, tuple
             "contacted_domains",
             "contacted_ips",
             "contacted_urls",
+            "malware_families",
+            "associations",
         ),
         GTIRelationshipDepth.DEEP: (
             "contacted_domains",
@@ -216,37 +283,67 @@ RELATIONSHIP_PLANS: Final[dict[IntelObjectType, dict[GTIRelationshipDepth, tuple
             "dropped_files",
             "embedded_domains",
             "itw_urls",
+            "malware_families",
+            "associations",
+            "related_threat_actors",
+            "related_reports",
+            "campaigns",
         ),
     },
     IntelObjectType.DOMAIN_NAME: {
         GTIRelationshipDepth.QUICK: (),
-        GTIRelationshipDepth.STANDARD: ("resolutions", "communicating_files"),
+        GTIRelationshipDepth.STANDARD: (
+            "resolutions",
+            "communicating_files",
+            "associations",
+        ),
         GTIRelationshipDepth.DEEP: (
             "resolutions",
             "communicating_files",
             "downloaded_files",
             "referrer_files",
+            "associations",
+            "related_threat_actors",
+            "related_reports",
+            "campaigns",
         ),
     },
     IntelObjectType.IPV4_ADDR: {
         GTIRelationshipDepth.QUICK: (),
-        GTIRelationshipDepth.STANDARD: ("resolutions", "communicating_files"),
+        GTIRelationshipDepth.STANDARD: (
+            "resolutions",
+            "communicating_files",
+            "associations",
+        ),
         GTIRelationshipDepth.DEEP: (
             "resolutions",
             "communicating_files",
             "downloaded_files",
             "referrer_files",
+            "associations",
+            "related_threat_actors",
+            "related_reports",
+            "campaigns",
         ),
     },
     IntelObjectType.URL: {
         GTIRelationshipDepth.QUICK: (),
-        GTIRelationshipDepth.STANDARD: ("downloaded_files", "communicating_files"),
+        GTIRelationshipDepth.STANDARD: (
+            "downloaded_files",
+            "communicating_files",
+            "redirecting_urls",
+            "associations",
+        ),
         GTIRelationshipDepth.DEEP: (
             "downloaded_files",
             "communicating_files",
             "redirecting_urls",
             "contacted_domains",
             "contacted_ips",
+            "associations",
+            "related_threat_actors",
+            "related_reports",
+            "campaigns",
         ),
     },
 }
@@ -265,6 +362,11 @@ class GTIRelationshipLimits(FrozenTiReconModel):
     max_results_per_relationship: int = Field(ge=0, le=40)
     max_total_related_objects: int = Field(ge=0, le=200)
 
+    #: Full threat collections are the most expensive thing to expand and the
+    #: least useful in bulk, so they get their own much tighter cap. Five actor
+    #: or campaign objects is context; fifty is a research project.
+    max_threat_objects_per_relationship: int = Field(default=3, ge=0, le=20)
+
     @property
     def expands(self) -> bool:
         return (
@@ -282,14 +384,16 @@ LIMITS_BY_DEPTH: Final[dict[GTIRelationshipDepth, GTIRelationshipLimits]] = {
         max_total_related_objects=0,
     ),
     GTIRelationshipDepth.STANDARD: GTIRelationshipLimits(
-        max_relationship_types=3,
+        max_relationship_types=5,
         max_results_per_relationship=5,
         max_total_related_objects=15,
+        max_threat_objects_per_relationship=3,
     ),
     GTIRelationshipDepth.DEEP: GTIRelationshipLimits(
-        max_relationship_types=6,
+        max_relationship_types=10,
         max_results_per_relationship=10,
         max_total_related_objects=40,
+        max_threat_objects_per_relationship=5,
     ),
 }
 
@@ -299,16 +403,26 @@ def relationship_plan(
     depth: GTIRelationshipDepth,
     *,
     limits: GTIRelationshipLimits | None = None,
+    capabilities: frozenset[ProviderCapability] | None = None,
 ) -> tuple[GTIRelationshipSpec, ...]:
-    """The relationships to request, already truncated to the type limit.
+    """The relationships to request, filtered and truncated.
 
     Returns specs rather than names, so a caller cannot request something the
     table does not describe. An unknown name in a plan is skipped rather than
     passed through — a typo must not become an API call.
+
+    ``capabilities`` restricts the plan to what the request actually asked for.
+    A reputation lookup should not quietly spend an analyst's quota building a
+    pivot graph nobody wanted.
     """
     effective = LIMITS_BY_DEPTH[depth] if limits is None else limits
     if not effective.expands:
         return ()
     names = RELATIONSHIP_PLANS.get(object_type, {}).get(depth, ())
-    specs = [spec for name in names if (spec := RELATIONSHIP_SPECS.get(name)) is not None]
+    specs = [
+        spec
+        for name in names
+        if (spec := RELATIONSHIP_SPECS.get(name)) is not None
+        and (capabilities is None or spec.capability in capabilities)
+    ]
     return tuple(specs[: effective.max_relationship_types])
