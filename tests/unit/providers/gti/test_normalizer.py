@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 
 from fixtures.gti import payloads
-from ti_recon.enums import EvidenceClass, EvidenceEffect, MatchScope
+from ti_recon.enums import EvidenceClass, EvidenceEffect, IntelObjectType, MatchScope
 from ti_recon.models.intel_object import IntelObject
 from ti_recon.normalization import normalize_observable
 from ti_recon.providers.gti.client import GTIObject
@@ -59,6 +59,7 @@ def gti_object(payload: dict[str, Any]) -> GTIObject:
         object_type=str(payload["type"]),
         object_id=str(payload["id"]),
         attributes=dict(payload.get("attributes", {})),
+        relationships=dict(payload.get("relationships", {})),
     )
 
 
@@ -655,3 +656,402 @@ def test_an_intel_object_with_gti_properties_serializes() -> None:
     )
     assert isinstance(enriched, IntelObject)
     enriched.model_dump_json()
+
+
+# --------------------------------------------------------------------------- #
+# Defensive paths
+# --------------------------------------------------------------------------- #
+
+
+def test_a_null_metadata_value_is_omitted_rather_than_stored() -> None:
+    """An explicit null is absence, not a value worth recording."""
+    from ti_recon.providers.gti.normalizer import gti_metadata
+
+    payload = payloads.domain_object(extra_attributes={"registrar": None})
+    metadata = gti_metadata(IntelObjectType.DOMAIN_NAME, gti_object(payload))
+    assert "registrar" not in metadata
+
+
+def test_an_implausible_timestamp_is_omitted_rather_than_stored() -> None:
+    from ti_recon.providers.gti.normalizer import gti_metadata
+
+    payload = payloads.domain_object(extra_attributes={"creation_date": "yesterday"})
+    metadata = gti_metadata(IntelObjectType.DOMAIN_NAME, gti_object(payload))
+    assert "creation_date" not in metadata
+
+
+def test_a_file_with_no_readable_hashes_keeps_what_it_had() -> None:
+    payload = payloads.file_object()
+    for attribute in ("md5", "sha1", "sha256"):
+        payload["attributes"][attribute] = "nonsense"
+    submitted = normalize_observable(payloads.EMPTY_FILE_SHA256).intel_object
+    enriched = enrich_primary_object(submitted, gti_object(payload))
+    assert enriched.hashes == submitted.hashes
+
+
+def test_an_assessment_without_a_confidence_score_omits_it() -> None:
+    payload = payloads.file_object(confidence=None)
+    evidence = core(normalize_assessment(context(), gti_object(payload)))
+    assert evidence.provider_confidence is None
+    assert "gti_confidence_score" not in evidence.attributes
+
+
+def test_stats_without_a_reputation_omit_it() -> None:
+    payload = payloads.file_object()
+    payload["attributes"].pop("reputation")
+    evidence = normalize_analysis_stats(context(), gti_object(payload)).evidence[0]
+    assert "reputation" not in evidence.attributes
+
+
+# --------------------------------------------------------------------------- #
+# Relationship item edge cases
+# --------------------------------------------------------------------------- #
+
+
+def related(object_type: str, object_id: str, **extra: Any) -> Any:
+    from ti_recon.providers.gti.normalizer import RelatedItem
+
+    return RelatedItem(
+        object_type=object_type,
+        object_id=object_id,
+        attributes=extra.get("attributes", {}),
+        context_attributes=extra.get("context_attributes", {}),
+    )
+
+
+def subject_file() -> Any:
+    return normalize_observable(payloads.EMPTY_FILE_SHA256).intel_object
+
+
+@pytest.mark.parametrize(
+    ("object_type", "object_id"),
+    [
+        ("collection", "c-1"),  # not a descriptor-identifiable type
+        ("domain", "   "),  # blank identity
+        ("file", "not-a-hash"),  # wrong length
+        ("file", "z" * 64),  # right length, not hex
+        ("ip_address", "999.999.999.999"),
+    ],
+)
+def test_an_unidentifiable_descriptor_target_is_counted_not_invented(
+    object_type: str, object_id: str
+) -> None:
+    from ti_recon.providers.gti.normalizer import normalize_related_items
+    from ti_recon.providers.gti.relationships import RELATIONSHIP_SPECS
+
+    result = normalize_related_items(
+        context(),
+        subject_file(),
+        RELATIONSHIP_SPECS["contacted_ips"],
+        [related(object_type, object_id)],
+    )
+    assert result.objects == ()
+    assert result.warnings == ("GTI_RELATED_ITEM_UNRESOLVABLE",)
+
+
+def test_a_url_target_can_be_recovered_from_context_attributes() -> None:
+    """GTI puts the URL in either place depending on the endpoint."""
+    from ti_recon.providers.gti.normalizer import normalize_related_items
+    from ti_recon.providers.gti.relationships import RELATIONSHIP_SPECS
+
+    result = normalize_related_items(
+        context(),
+        subject_file(),
+        RELATIONSHIP_SPECS["contacted_urls"],
+        [
+            related(
+                "url",
+                "u-opaque",
+                context_attributes={"url": "http://c2.evil.example/gate"},
+            )
+        ],
+    )
+    assert result.objects[0].canonical_value == "http://c2.evil.example/gate"
+
+
+def test_relationship_context_attributes_are_preserved_on_the_evidence() -> None:
+    from ti_recon.providers.gti.normalizer import normalize_related_items
+    from ti_recon.providers.gti.relationships import RELATIONSHIP_SPECS
+
+    result = normalize_related_items(
+        context(),
+        subject_file(),
+        RELATIONSHIP_SPECS["contacted_domains"],
+        [related("domain", "c2.evil.example", context_attributes={"timestamp": 1})],
+    )
+    assert result.evidence[0].attributes["context"] == {"timestamp": 1}
+
+
+def test_a_resolution_without_usable_attributes_is_counted() -> None:
+    from ti_recon.providers.gti.normalizer import normalize_related_items
+    from ti_recon.providers.gti.relationships import RELATIONSHIP_SPECS
+
+    domain = normalize_observable("evil.example").intel_object
+    result = normalize_related_items(
+        context(),
+        domain,
+        RELATIONSHIP_SPECS["resolutions"],
+        [related("resolution", "x", attributes={})],
+    )
+    assert result.objects == ()
+    assert result.warnings == ("GTI_RELATED_ITEM_UNRESOLVABLE",)
+
+
+def test_a_resolution_for_an_unexpected_subject_type_is_skipped() -> None:
+    """Only domains and addresses have a counterpart in a resolution."""
+    from ti_recon.providers.gti.normalizer import normalize_related_items
+    from ti_recon.providers.gti.relationships import RELATIONSHIP_SPECS
+
+    result = normalize_related_items(
+        context(),
+        subject_file(),
+        RELATIONSHIP_SPECS["resolutions"],
+        [related("resolution", "x", attributes={"ip_address": "198.51.100.7"})],
+    )
+    assert result.objects == ()
+
+
+def test_a_resolution_from_an_ip_without_a_hostname_is_skipped() -> None:
+    from ti_recon.providers.gti.normalizer import normalize_related_items
+    from ti_recon.providers.gti.relationships import RELATIONSHIP_SPECS
+
+    address = normalize_observable("198.51.100.7").intel_object
+    result = normalize_related_items(
+        context(),
+        address,
+        RELATIONSHIP_SPECS["resolutions"],
+        [related("resolution", "x", attributes={"ip_address": "198.51.100.7"})],
+    )
+    assert result.objects == ()
+
+
+def test_inline_relationships_are_ignored_when_expansion_is_off() -> None:
+    from ti_recon.providers.gti.normalizer import normalize_inline_relationships
+    from ti_recon.providers.gti.relationships import RELATIONSHIP_SPECS
+
+    payload = payloads.file_object(
+        relationships={"contacted_domains": {"data": [{"type": "domain", "id": "a.example"}]}}
+    )
+    result = normalize_inline_relationships(
+        context(),
+        subject_file(),
+        gti_object(payload),
+        RELATIONSHIP_SPECS,
+        max_per_relationship=0,
+    )
+    assert result.objects == ()
+
+
+def test_inline_relationships_skip_unknown_names_and_malformed_blocks() -> None:
+    from ti_recon.providers.gti.normalizer import normalize_inline_relationships
+    from ti_recon.providers.gti.relationships import RELATIONSHIP_SPECS
+
+    payload = payloads.file_object(
+        relationships={
+            "not_a_relationship": {"data": [{"type": "domain", "id": "a.example"}]},
+            "contacted_domains": "not-a-mapping",
+            "contacted_ips": {"data": [{"type": "ip_address"}, "junk"]},
+        }
+    )
+    result = normalize_inline_relationships(
+        context(),
+        subject_file(),
+        gti_object(payload),
+        RELATIONSHIP_SPECS,
+        max_per_relationship=5,
+    )
+    # An unknown name, a non-mapping block and malformed entries all yield
+    # nothing without taking the rest of the response down with them.
+    assert result.objects == ()
+    assert result.evidence == ()
+
+
+# --------------------------------------------------------------------------- #
+# Threat association edge cases
+# --------------------------------------------------------------------------- #
+
+
+def test_a_malware_family_matching_the_subject_is_not_self_related() -> None:
+    from ti_recon.enums import ObjectClass
+    from ti_recon.models.intel_object import IntelObject as Obj
+    from ti_recon.providers.gti.normalizer import normalize_related_items
+    from ti_recon.providers.gti.relationships import RELATIONSHIP_SPECS
+
+    malware_subject = Obj(
+        object_class=ObjectClass.THREAT,
+        object_type=IntelObjectType.MALWARE,
+        canonical_value="syntheticrat",
+        display_value="SyntheticRAT",
+    )
+    result = normalize_related_items(
+        context(),
+        malware_subject,
+        RELATIONSHIP_SPECS["malware_families"],
+        [
+            related(
+                "collection",
+                "c-1",
+                attributes={"name": "SyntheticRAT", "collection_type": "malware-family"},
+            )
+        ],
+    )
+    assert result.objects == ()
+    assert result.relationships == ()
+    # The association claim survives; only the duplicate node is dropped.
+    assert len(result.evidence) == 1
+
+
+def test_a_collection_type_can_come_from_context_attributes() -> None:
+    from ti_recon.providers.gti.normalizer import normalize_related_items
+    from ti_recon.providers.gti.relationships import RELATIONSHIP_SPECS
+
+    result = normalize_related_items(
+        context(),
+        subject_file(),
+        RELATIONSHIP_SPECS["associations"],
+        [
+            related(
+                "collection",
+                "c-1",
+                context_attributes={"collection_type": "campaign"},
+            )
+        ],
+    )
+    assert result.evidence[0].attributes["gti_collection_type"] == "campaign"
+
+
+def test_a_named_collection_of_an_unmodelled_type_stays_a_claim() -> None:
+    from ti_recon.providers.gti.normalizer import normalize_related_items
+    from ti_recon.providers.gti.relationships import RELATIONSHIP_SPECS
+
+    result = normalize_related_items(
+        context(),
+        subject_file(),
+        RELATIONSHIP_SPECS["campaigns"],
+        [
+            related(
+                "collection",
+                "c-1",
+                attributes={"name": "Operation Synthetic", "collection_type": "campaign"},
+            )
+        ],
+    )
+    assert result.objects == ()
+    assert result.evidence[0].attributes["name"] == "Operation Synthetic"
+
+
+# --------------------------------------------------------------------------- #
+# Behaviour edge cases
+# --------------------------------------------------------------------------- #
+
+
+def test_behaviour_normalization_of_nothing_yields_nothing() -> None:
+    from ti_recon.providers.gti.normalizer import normalize_file_behavior
+
+    assert normalize_file_behavior(context(), subject_file(), {}, max_per_source=5).evidence == ()
+    assert (
+        normalize_file_behavior(
+            context(),
+            subject_file(),
+            payloads.behaviour_summary_payload()["data"],
+            max_per_source=0,
+        ).evidence
+        == ()
+    )
+
+
+def test_behaviour_ignores_malformed_entries() -> None:
+    from ti_recon.providers.gti.normalizer import normalize_file_behavior
+
+    summary = {
+        "dns_lookups": "not-a-list",
+        "ip_traffic": [{"destination_ip": None}, "junk", {"destination_ip": "  "}],
+        "files_dropped": [{"sha256": "not-a-hash"}],
+    }
+    result = normalize_file_behavior(context(), subject_file(), summary, max_per_source=5)
+    assert result.objects == ()
+
+
+def test_behaviour_skips_a_dropped_file_identical_to_the_sample() -> None:
+    from ti_recon.providers.gti.normalizer import normalize_file_behavior
+
+    summary = {"files_dropped": [{"sha256": payloads.EMPTY_FILE_SHA256}]}
+    result = normalize_file_behavior(context(), subject_file(), summary, max_per_source=5)
+    assert result.objects == ()
+
+
+def test_behaviour_records_connection_details_when_present() -> None:
+    from ti_recon.providers.gti.normalizer import normalize_file_behavior
+
+    summary = {"ip_traffic": [{"destination_ip": "198.51.100.9", "destination_port": 8443}]}
+    result = normalize_file_behavior(context(), subject_file(), summary, max_per_source=5)
+    assert result.evidence[0].attributes["destination_port"] == 8443
+
+
+def test_inline_relationships_are_normalized_when_present() -> None:
+    """The path that makes QUICK still useful when GTI volunteers data."""
+    from ti_recon.providers.gti.normalizer import normalize_inline_relationships
+    from ti_recon.providers.gti.relationships import RELATIONSHIP_SPECS
+
+    payload = payloads.file_object(
+        relationships={
+            "contacted_domains": {
+                "data": [
+                    {"type": "domain", "id": "inline-a.example"},
+                    {"type": "domain", "id": "inline-b.example"},
+                ]
+            }
+        }
+    )
+    result = normalize_inline_relationships(
+        context(),
+        subject_file(),
+        gti_object(payload),
+        RELATIONSHIP_SPECS,
+        max_per_relationship=5,
+    )
+    assert {obj.canonical_value for obj in result.objects} == {
+        "inline-a.example",
+        "inline-b.example",
+    }
+
+
+def test_inline_relationships_respect_the_per_relationship_cap() -> None:
+    from ti_recon.providers.gti.normalizer import normalize_inline_relationships
+    from ti_recon.providers.gti.relationships import RELATIONSHIP_SPECS
+
+    payload = payloads.file_object(
+        relationships={
+            "contacted_domains": {
+                "data": [{"type": "domain", "id": f"host{index}.example"} for index in range(20)]
+            }
+        }
+    )
+    result = normalize_inline_relationships(
+        context(),
+        subject_file(),
+        gti_object(payload),
+        RELATIONSHIP_SPECS,
+        max_per_relationship=3,
+    )
+    assert len(result.objects) == 3
+
+
+def test_the_adapter_and_client_expose_their_configuration() -> None:
+    """Readable configuration, with no credential anywhere in it."""
+    from pydantic import SecretStr
+
+    from fixtures.gti.fake_client import FakeGTIClient, FakeGTIClientFactory
+    from ti_recon.execution import ManualClock
+    from ti_recon.providers.gti import DEFAULT_X_TOOL, GTIAdapter
+    from ti_recon.providers.gti.client import VtPyGTIClient
+
+    adapter = GTIAdapter(
+        client_factory=FakeGTIClientFactory(client=FakeGTIClient()), clock=ManualClock()
+    )
+    assert adapter.config.x_tool == DEFAULT_X_TOOL
+    assert adapter.lookup_policy.excluded_attributes == ("last_analysis_results",)
+
+    client = VtPyGTIClient(SecretStr("vt-key-SHOULD-NOT-LEAK-12345"))
+    assert client.config.x_tool == DEFAULT_X_TOOL
+    assert "vt-key" not in client.config.model_dump_json()

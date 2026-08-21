@@ -27,10 +27,12 @@ from types import TracebackType
 from ti_recon.credentials.enums import CredentialStatus
 from ti_recon.credentials.models import CredentialMaterial
 from ti_recon.enums import (
+    ActivityMode,
     IntelObjectType,
     InvestigationDepth,
     ProviderCapability,
     ProviderErrorCategory,
+    ProviderOperation,
     ProviderRunStatus,
 )
 from ti_recon.execution.clock import Clock, SystemClock
@@ -321,6 +323,15 @@ class GTIAdapter(ProviderAdapter):
                 message="GTI requires a credential",
                 operation="lookup",
             )
+        if (
+            request.activity_mode is ActivityMode.ACTIVE
+            or request.operation is ProviderOperation.ACTIVE_ACTION
+        ):
+            # Task 6 routes active operations to ``active_action``, which this
+            # adapter does not implement. Refusing here as well means a caller
+            # bypassing the executor still cannot turn a passive integration
+            # into an active one.
+            raise UnsupportedProviderOperation(GTI_PROVIDER_ID, operation="active_action")
         collection, object_id = self._locate(request.intel_object)
 
         async with self._client_for(credential) as client:
