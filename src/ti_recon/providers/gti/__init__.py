@@ -11,6 +11,7 @@ risk score or confidence.
 Passive only. No submission, no rescanning, no downloads, no sandbox detonation.
 """
 
+from ti_recon.providers.gti.adapter import GTIAdapter
 from ti_recon.providers.gti.client import (
     FORBIDDEN_VT_METHODS,
     GTI_COLLECTIONS,
@@ -46,11 +47,24 @@ from ti_recon.providers.gti.errors import (
     category_for_gti_code,
     translate_gti_error,
 )
+from ti_recon.providers.gti.policy import (
+    DEFAULT_EXCLUDED_ATTRIBUTES,
+    GTILookupPolicy,
+    build_gti_execution_policy,
+    collection_for_object_type,
+)
+from ti_recon.providers.gti.quota import (
+    GATING_QUOTA_PREFIX,
+    GTIQuotaReading,
+    parse_overall_quotas,
+)
 
 __all__ = [
+    "DEFAULT_EXCLUDED_ATTRIBUTES",
     "DEFAULT_GTI_HOST",
     "DEFAULT_X_TOOL",
     "FORBIDDEN_VT_METHODS",
+    "GATING_QUOTA_PREFIX",
     "GTI_ADAPTER_VERSION",
     "GTI_API_VERSION",
     "GTI_CAPABILITIES",
@@ -62,17 +76,23 @@ __all__ = [
     "GTI_SOURCE_FAMILY",
     "GTI_SUPPORTED_OBJECT_TYPES",
     "GTI_X_TOOL_ENV_VAR",
+    "GTIAdapter",
     "GTIClient",
     "GTIClientFactory",
     "GTIConfig",
+    "GTILookupPolicy",
     "GTIObject",
     "GTIPathError",
+    "GTIQuotaReading",
     "GTIRelationshipDescriptor",
     "VtPyGTIClient",
     "VtPyGTIClientFactory",
     "build_gti_descriptor",
+    "build_gti_execution_policy",
     "category_for_gti_code",
+    "collection_for_object_type",
     "gti_config_from_env",
+    "parse_overall_quotas",
     "translate_gti_error",
     "url_identifier",
 ]
