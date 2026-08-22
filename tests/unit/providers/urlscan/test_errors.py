@@ -20,8 +20,8 @@ from ti_recon.providers.errors import (
 )
 from ti_recon.providers.urlscan import (
     category_for_status,
-    parse_reset_at,
     parse_retry_after,
+    parse_utc_timestamp,
     scrub_detail,
     translate_status_error,
 )
@@ -171,11 +171,11 @@ def test_retry_after_is_capped() -> None:
     ],
 )
 def test_reset_parsing(raw: str | None, expected: datetime | None) -> None:
-    assert parse_reset_at(raw) == expected
+    assert parse_utc_timestamp(raw) == expected
 
 
 def test_a_naive_reset_is_read_as_utc_not_local_time() -> None:
-    parsed = parse_reset_at("2026-08-22T10:15:00")
+    parsed = parse_utc_timestamp("2026-08-22T10:15:00")
     assert parsed == datetime(2026, 8, 22, 10, 15, tzinfo=UTC)
 
 

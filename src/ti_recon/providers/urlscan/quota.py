@@ -32,7 +32,7 @@ from ti_recon.models.base import FrozenTiReconModel, utc_now
 from ti_recon.providers.quota import ProviderQuotaSnapshot, QuotaBucket, QuotaPeriod
 from ti_recon.providers.result import RateLimitSnapshot, RateLimitWindow
 from ti_recon.providers.urlscan.descriptor import URLSCAN_PROVIDER_ID
-from ti_recon.providers.urlscan.errors import parse_reset_at
+from ti_recon.providers.urlscan.errors import parse_utc_timestamp
 
 __all__ = [
     "GATING_ACTIONS",
@@ -162,7 +162,7 @@ def parse_rate_limit_headers(
     limit = _non_negative_int(lowered.get(_HEADER_LIMIT))
     remaining = _non_negative_int(lowered.get(_HEADER_REMAINING))
     reset_after = _reset_seconds(lowered.get(_HEADER_RESET_AFTER))
-    reset_at = parse_reset_at(lowered.get(_HEADER_RESET))
+    reset_at = parse_utc_timestamp(lowered.get(_HEADER_RESET))
     if reset_at is None and reset_after is not None:
         reset_at = (now or utc_now()) + timedelta(seconds=reset_after)
     scope = _short_text(lowered.get(_HEADER_SCOPE))
@@ -225,7 +225,7 @@ def _reset_instant(value: Any, *, now: datetime) -> datetime | None:
         offset = _reset_seconds(value)
         if offset is not None:
             return now + timedelta(seconds=offset)
-        return parse_reset_at(value)
+        return parse_utc_timestamp(value)
     return None
 
 

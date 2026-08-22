@@ -44,8 +44,8 @@ __all__ = [
     "category_for_status",
     "credential_status_for",
     "credential_validation_for",
-    "parse_reset_at",
     "parse_retry_after",
+    "parse_utc_timestamp",
     "scrub_detail",
     "translate_status_error",
 ]
@@ -153,7 +153,7 @@ def parse_retry_after(value: str | None) -> float | None:
     """Read a ``Retry-After`` offset in seconds.
 
     Only the numeric form is accepted. The HTTP-date form is left to
-    :func:`parse_reset_at`'s caller: an absolute instant from the provider can
+    :func:`parse_utc_timestamp`'s caller: an absolute instant from the provider can
     be skewed against our clock, and the execution layer already prefers an
     offset when it has one.
     """
@@ -168,11 +168,12 @@ def parse_retry_after(value: str | None) -> float | None:
     return min(seconds, _MAX_SANE_RETRY_AFTER_SECONDS)
 
 
-def parse_reset_at(value: str | None) -> datetime | None:
-    """Read urlscan's ``X-Rate-Limit-Reset`` as a timezone-aware instant.
+def parse_utc_timestamp(value: str | None) -> datetime | None:
+    """Read an urlscan ISO-8601 timestamp as a timezone-aware instant.
 
-    urlscan sends an ISO-8601 timestamp. A naive value is read as UTC rather
-    than as local time, because the provider is not reporting our timezone.
+    Used for ``X-Rate-Limit-Reset`` and for the scan times in search hits: both
+    are the same format. A naive value is read as UTC rather than as local time,
+    because the provider is not reporting our timezone.
     """
     if value is None:
         return None
@@ -231,7 +232,7 @@ def translate_status_error(
         message=detail,
         operation=operation,
         retry_after_seconds=parse_retry_after(response.headers.get("Retry-After")),
-        reset_at=parse_reset_at(response.headers.get("X-Rate-Limit-Reset")),
+        reset_at=parse_utc_timestamp(response.headers.get("X-Rate-Limit-Reset")),
         # The status code, not a body. Safe to log and enough to diagnose.
         provider_error_code=str(response.status_code),
     )
