@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Mapping
+from dataclasses import dataclass
 from typing import Any, Final, Protocol
 
 from ti_recon.artifacts.models import ArtifactKind, ArtifactScope, StoredArtifact
@@ -84,6 +85,12 @@ from ti_recon.providers.urlscan.descriptor import (
     build_urlscan_descriptor,
 )
 from ti_recon.providers.urlscan.errors import credential_validation_for
+from ti_recon.providers.urlscan.forensics import (
+    analyze_dom,
+    analyze_script,
+    forensic_evidence,
+    select_response_bodies,
+)
 from ti_recon.providers.urlscan.normalizer import (
     NormalizationContext,
     ScanDocument,
@@ -145,6 +152,19 @@ URLSCAN_ARTIFACTS_UNAVAILABLE: Final[str] = "URLSCAN_ARTIFACTS_UNAVAILABLE"
 #: depth was not DEEP, or the deployment has forensics switched off. Recorded
 #: so a caller sees why an artifact-backed answer did not arrive.
 URLSCAN_FORENSICS_NOT_REQUESTED: Final[str] = "URLSCAN_WEB_FORENSICS_NOT_PERFORMED"
+
+
+@dataclass(frozen=True, slots=True)
+class _ForensicCapture:
+    """What one forensic stage produced, and how much of it it actually kept.
+
+    The count is separate from the evidence because a stage can produce
+    observations without capturing anything, and "we retrieved nothing" is what
+    the caller has to report.
+    """
+
+    normalization: UrlscanNormalization
+    captured: int
 
 
 class UrlscanClientFactory(Protocol):
@@ -399,16 +419,19 @@ class UrlscanAdapter(ProviderAdapter):
                 )
 
             normalization = UrlscanNormalization()
+            documents: dict[str, ScanDocument] = {}
             for candidate in candidates:
-                result, candidate_warning = await self._normalize_candidate(
+                result, document, candidate_warning = await self._normalize_candidate(
                     client, request, candidate, credential
                 )
                 normalization = normalization.merge(result)
+                if document is not None:
+                    documents[candidate.scan_id] = document
                 if candidate_warning is not None:
                     warnings.append(candidate_warning)
 
             normalization = normalization.merge(
-                await self._web_forensics(client, request, candidates, credential)
+                await self._web_forensics(client, request, candidates, documents, credential)
             )
             quota = await self._refresh_quota_if_stale(client, credential)
         finally:
@@ -431,7 +454,7 @@ class UrlscanAdapter(ProviderAdapter):
         request: ProviderRequest,
         candidate: ScanCandidate,
         credential: CredentialMaterial,
-    ) -> tuple[UrlscanNormalization, str | None]:
+    ) -> tuple[UrlscanNormalization, ScanDocument | None, str | None]:
         """Fetch and normalize one stored scan.
 
         A scan that cannot be retrieved — deleted, or private to another team —
@@ -450,9 +473,9 @@ class UrlscanAdapter(ProviderAdapter):
                     "operation": "urlscan.result",
                 },
             )
-            return UrlscanNormalization(), URLSCAN_SCAN_UNRETRIEVABLE
+            return UrlscanNormalization(), None, URLSCAN_SCAN_UNRETRIEVABLE
         document = ScanDocument(result.payload)
-        return self._normalize_document(request, document), None
+        return self._normalize_document(request, document), document, None
 
     def _normalize_document(
         self,
@@ -497,6 +520,7 @@ class UrlscanAdapter(ProviderAdapter):
         client: UrlscanClient,
         request: ProviderRequest,
         candidates: tuple[ScanCandidate, ...],
+        documents: Mapping[str, ScanDocument],
         credential: CredentialMaterial,
     ) -> UrlscanNormalization:
         """Retrieve stored artifacts, but only when explicitly asked to.
@@ -521,40 +545,111 @@ class UrlscanAdapter(ProviderAdapter):
 
         candidate = candidates[0]
         scope = ArtifactScope(user_id=credential.user_id, investigation_id=request.investigation_id)
-        captured: list[StoredArtifact] = []
-        for kind, fetch in (
-            (ArtifactKind.SCREENSHOT, self._fetch_screenshot),
-            (ArtifactKind.DOM, self._fetch_dom),
-        ):
-            if not self._lookup_policy.allows(kind):
-                continue
-            artifact = await fetch(client, candidate, credential)
-            if artifact is None:
-                continue
-            stored = self._store_artifact(self._artifact_store, scope, kind, artifact, candidate)
+        result = UrlscanNormalization()
+        captured = 0
+
+        if self._lookup_policy.allows(ArtifactKind.SCREENSHOT):
+            screenshot = await self._fetch_artifact(
+                client.get_screenshot(scan_id=candidate.scan_id, credential=credential)
+            )
+            stored = self._keep(scope, ArtifactKind.SCREENSHOT, screenshot, candidate)
             if stored is not None:
-                captured.append(stored)
+                # A screenshot is for a human to look at. There is nothing this
+                # module would trust itself to extract from pixels.
+                captured += 1
+                result = result.merge(self._captured_evidence(request, candidate, stored))
+
+        if self._lookup_policy.allows(ArtifactKind.DOM):
+            dom = await self._fetch_artifact(
+                client.get_dom(scan_id=candidate.scan_id, credential=credential)
+            )
+            stored = self._keep(scope, ArtifactKind.DOM, dom, candidate)
+            if stored is not None and dom is not None:
+                captured += 1
+                result = result.merge(self._captured_evidence(request, candidate, stored))
+                result = result.merge(
+                    forensic_evidence(
+                        self._forensic_context(request),
+                        analyze_dom(dom.content, page_url=candidate.final_url),
+                        artifact_id=stored.id,
+                    )
+                )
+
+        bodies = await self._response_body_forensics(
+            client, request, candidate, documents.get(candidate.scan_id), scope, credential
+        )
+        captured += bodies.captured
+        result = result.merge(bodies.normalization)
 
         if not captured:
             return UrlscanNormalization(warnings=(URLSCAN_ARTIFACTS_UNAVAILABLE,))
-        return UrlscanNormalization(
-            evidence=tuple(
-                self._artifact_evidence(request, candidate, artifact) for artifact in captured
+        return result
+
+    async def _response_body_forensics(
+        self,
+        client: UrlscanClient,
+        request: ProviderRequest,
+        candidate: ScanCandidate,
+        document: ScanDocument | None,
+        scope: ArtifactScope,
+        credential: CredentialMaterial,
+    ) -> _ForensicCapture:
+        """Retrieve and statically analyse a few stored response bodies.
+
+        Only textual ones, only up to the policy's budget, and only bodies
+        urlscan already holds. Nothing is fetched from the original site, and
+        nothing retrieved is ever executed — see
+        :mod:`ti_recon.providers.urlscan.forensics`.
+        """
+        if document is None or not self._lookup_policy.allows(ArtifactKind.RESPONSE_BODY):
+            return _ForensicCapture(UrlscanNormalization(), 0)
+        digests = select_response_bodies(document, self._lookup_policy.max_response_bodies)
+
+        result = UrlscanNormalization()
+        captured = 0
+        for digest in digests:
+            body = await self._fetch_artifact(
+                client.get_response_body(body_sha256=digest, credential=credential)
             )
+            stored = self._keep(scope, ArtifactKind.RESPONSE_BODY, body, candidate)
+            if stored is None or body is None:
+                continue
+            captured += 1
+            result = result.merge(self._captured_evidence(request, candidate, stored))
+            result = result.merge(
+                forensic_evidence(
+                    self._forensic_context(request),
+                    analyze_script(body.content),
+                    artifact_id=stored.id,
+                    claim_type="urlscan_response_forensics",
+                )
+            )
+        return _ForensicCapture(result, captured)
+
+    def _keep(
+        self,
+        scope: ArtifactScope,
+        kind: ArtifactKind,
+        artifact: UrlscanArtifact | None,
+        candidate: ScanCandidate,
+    ) -> StoredArtifact | None:
+        """Store one fetched artifact, if there was one and it fits."""
+        if artifact is None or self._artifact_store is None:
+            return None
+        return self._store_artifact(self._artifact_store, scope, kind, artifact, candidate)
+
+    def _captured_evidence(
+        self, request: ProviderRequest, candidate: ScanCandidate, artifact: StoredArtifact
+    ) -> UrlscanNormalization:
+        return UrlscanNormalization(
+            evidence=(self._artifact_evidence(request, candidate, artifact),)
         )
 
-    async def _fetch_screenshot(
-        self, client: UrlscanClient, candidate: ScanCandidate, credential: CredentialMaterial
-    ) -> UrlscanArtifact | None:
-        return await self._fetch_artifact(
-            client.get_screenshot(scan_id=candidate.scan_id, credential=credential)
-        )
-
-    async def _fetch_dom(
-        self, client: UrlscanClient, candidate: ScanCandidate, credential: CredentialMaterial
-    ) -> UrlscanArtifact | None:
-        return await self._fetch_artifact(
-            client.get_dom(scan_id=candidate.scan_id, credential=credential)
+    def _forensic_context(self, request: ProviderRequest) -> NormalizationContext:
+        return NormalizationContext(
+            investigation_id=request.investigation_id,
+            subject_object_id=request.intel_object.id,
+            now=self._clock.now(),
         )
 
     @staticmethod

