@@ -62,6 +62,7 @@ __all__ = [
     "NormalizationContext",
     "ScanDocument",
     "UrlscanNormalization",
+    "build_evidence",
     "enrich_primary_object",
     "match_scope_for_scan",
     "normalize_page_context",
@@ -345,7 +346,7 @@ def _urlscan_verdict_evidence(
     if tags:
         attributes["tags"] = tags
 
-    return _evidence(
+    return build_evidence(
         context,
         evidence_class=EvidenceClass.CURATED_THREAT_ASSERTION,
         claim_type="urlscan_verdict",
@@ -392,7 +393,7 @@ def _engine_aggregate_evidence(
     if score is not None:
         attributes["score"] = score
 
-    return _evidence(
+    return build_evidence(
         context,
         evidence_class=EvidenceClass.AGGREGATED_REPUTATION,
         claim_type="urlscan_engine_aggregate",
@@ -429,7 +430,7 @@ def _community_evidence(context: NormalizationContext, document: ScanDocument) -
     if score is not None:
         attributes["score"] = score
 
-    return _evidence(
+    return build_evidence(
         context,
         evidence_class=EvidenceClass.AGGREGATED_REPUTATION,
         claim_type="urlscan_community_votes",
@@ -478,7 +479,7 @@ def normalize_scan_observation(
     if len(attributes) <= 1:
         return UrlscanNormalization(warnings=(URLSCAN_SCAN_UNREADABLE,), degraded=True)
 
-    evidence = _evidence(
+    evidence = build_evidence(
         context,
         evidence_class=EvidenceClass.DIRECT_OBSERVATION,
         claim_type="urlscan_scan_observation",
@@ -521,7 +522,7 @@ def normalize_page_context(
     if not attributes:
         return UrlscanNormalization()
 
-    evidence = _evidence(
+    evidence = build_evidence(
         context,
         evidence_class=EvidenceClass.CONTEXT,
         claim_type="urlscan_page_context",
@@ -568,7 +569,7 @@ def enrich_primary_object(submitted: IntelObject, document: ScanDocument) -> Int
 # --------------------------------------------------------------------------- #
 
 
-def _evidence(
+def build_evidence(
     context: NormalizationContext,
     *,
     evidence_class: EvidenceClass,
