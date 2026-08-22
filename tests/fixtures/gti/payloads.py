@@ -24,6 +24,7 @@ __all__ = [
     "ip_object",
     "object_page",
     "overall_quotas_payload",
+    "threat_severity",
     "url_object",
 ]
 
@@ -68,6 +69,44 @@ def assessment(
     return block
 
 
+def threat_severity(
+    level: str | None = "SEVERITY_HIGH",
+    *,
+    description: str | None = "Severity HIGH because it was considered malware.",
+    last_analysis_date: str | int | None = _T0 - 3_600,
+    data: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """A top-level ``threat_severity`` block.
+
+    Distinct from ``gti_assessment.severity``: this is the graded description
+    GTI derives from detections and relationships, with no verdict attached.
+    ``last_analysis_date`` defaults to a string because that is the shape GTI
+    documents here, unlike the integer epochs elsewhere on the object.
+    """
+    block: dict[str, Any] = {}
+    if level is not None:
+        block["threat_severity_level"] = level
+    if description is not None:
+        block["level_description"] = description
+    if last_analysis_date is not None:
+        block["last_analysis_date"] = str(last_analysis_date)
+    block["threat_severity_data"] = (
+        data
+        if data is not None
+        else {
+            "popular_threat_category": "trojan",
+            "num_gav_detections": 3,
+            "belongs_to_bad_collection": True,
+            "can_be_detonated": True,
+            "type_tag": "peexe",
+            "has_bad_contacted_domains": True,
+            "has_bad_dropped_files": True,
+            "has_bad_referring_files": False,
+        }
+    )
+    return block
+
+
 def _analysis_stats(
     malicious: int = 12,
     suspicious: int = 3,
@@ -90,6 +129,7 @@ def file_object(
     object_id: str = EMPTY_FILE_SHA256,
     with_assessment: bool = True,
     with_stats: bool = True,
+    with_threat_severity: bool = True,
     confidence: int | None = 91,
     relationships: dict[str, Any] | None = None,
     extra_attributes: dict[str, Any] | None = None,
@@ -113,6 +153,8 @@ def file_object(
         attributes["last_analysis_stats"] = _analysis_stats()
     if with_assessment:
         attributes["gti_assessment"] = assessment()
+    if with_threat_severity:
+        attributes["threat_severity"] = threat_severity()
     if confidence is not None:
         attributes["gti_confidence_score"] = confidence
     if extra_attributes:

@@ -60,8 +60,10 @@ __all__ = [
     "GTI_LINEAGE_GROUP",
     "GTI_METADATA_FIELDS",
     "GTI_PROPERTY_NAMESPACE",
+    "GTI_THREAT_SEVERITY_UNREADABLE",
     "GTI_TIMESTAMP_FIELDS",
     "GTI_UNRESOLVABLE_RELATED_ITEM",
+    "THREAT_SEVERITY_DATA_FIELDS",
     "VERDICT_EFFECTS",
     "ContributingFactor",
     "GTINormalization",
@@ -77,6 +79,7 @@ __all__ = [
     "normalize_file_behavior",
     "normalize_inline_relationships",
     "normalize_related_items",
+    "normalize_threat_severity",
 ]
 
 #: GTI-specific facts live under one key rather than being spread across
@@ -305,6 +308,9 @@ GTI_ASSESSMENT_UNREADABLE: Final[str] = "GTI_ASSESSMENT_UNREADABLE"
 
 #: Reported when analysis statistics were present but unusable.
 GTI_ANALYSIS_STATS_UNREADABLE: Final[str] = "GTI_ANALYSIS_STATS_UNREADABLE"
+
+#: Reported when a ``threat_severity`` block was present but unusable.
+GTI_THREAT_SEVERITY_UNREADABLE: Final[str] = "GTI_THREAT_SEVERITY_UNREADABLE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -729,6 +735,144 @@ def _confidence(value: Any) -> float | None:
         return None
     number = float(value)
     return number if 0.0 <= number <= 100.0 else None
+
+
+# --------------------------------------------------------------------------- #
+# threat_severity
+# --------------------------------------------------------------------------- #
+
+#: Named scalars inside ``threat_severity_data`` that TI Recon keeps.
+#:
+#: An allow-list rather than a copy of the block: GTI adds signals to it over
+#: time, and a wholesale copy would grow every piece of evidence without anyone
+#: deciding that it should. Unrecognized keys are still reported — by name — so
+#: adding one later is a table entry rather than a discovery exercise.
+THREAT_SEVERITY_DATA_FIELDS: Final[tuple[str, ...]] = (
+    "popular_threat_category",
+    "num_gav_detections",
+    "belongs_to_bad_collection",
+    "can_be_detonated",
+    "type_tag",
+)
+
+#: ``threat_severity_data`` also carries a family of ``has_bad_*`` booleans, one
+#: per relationship GTI found something bad on. They are collected by prefix
+#: rather than enumerated: the set changes as GTI adds relationship types, and
+#: listing the names we happened to know would silently drop the rest. Only the
+#: *names GTI actually sent* are recorded, so nothing is invented either.
+_BAD_RELATIONSHIP_PREFIX: Final[str] = "has_bad_"
+
+#: Caps on the two list-valued attributes, so one severity claim cannot grow
+#: without bound if GTI expands either family.
+_MAX_SEVERITY_LIST: Final[int] = 30
+
+
+def normalize_threat_severity(
+    context: NormalizationContext, gti_object: GTIObject
+) -> GTINormalization:
+    """Normalize the top-level ``threat_severity`` block into one context claim.
+
+    This is **not** ``gti_assessment.severity``. The two are easy to conflate and
+    mean different things:
+
+    * ``gti_assessment`` is GTI's curated judgement, with a verdict that points
+      somewhere — it is a threat assertion;
+    * ``threat_severity`` is a graded description of *how serious this would be*,
+      derived largely from detection and relationship signals, with no verdict
+      attached.
+
+    So this is ``CONTEXT``: directionless by construction. A severity rating on
+    its own says nothing about whether the observable is malicious, and letting
+    ``SEVERITY_HIGH`` imply "malicious" would be the same mistake as reading a
+    CVSS score as proof of exploitation. The level travels in the attributes,
+    where the fusion layer can weigh it against evidence that *does* have a
+    direction.
+
+    Absent for most objects, and absence is not reported — unlike a missing
+    assessment, it carries no entitlement signal worth surfacing.
+    """
+    block = gti_object.mapping("threat_severity")
+    if not block:
+        return GTINormalization()
+
+    attributes: dict[str, Any] = {}
+
+    level = block.get("threat_severity_level")
+    if isinstance(level, str) and level.strip():
+        attributes["threat_severity_level"] = level.strip()
+
+    description = block.get("level_description")
+    if isinstance(description, str) and description.strip():
+        attributes["level_description"] = description.strip()[:2000]
+
+    # GTI sends this one as a string of epoch seconds, unlike the integer epochs
+    # elsewhere in the object. Handled locally rather than by relaxing
+    # ``epoch_to_utc``, so every other call site keeps rejecting a string as the
+    # schema change it would be there.
+    analysed_at = _epoch_from_scalar(block.get("last_analysis_date"))
+    if analysed_at is not None:
+        attributes["last_analysis_date"] = analysed_at.isoformat()
+
+    data = block.get("threat_severity_data")
+    data_block = dict(data) if isinstance(data, Mapping) else {}
+    attributes.update(_threat_severity_data(data_block))
+
+    if not attributes:
+        return GTINormalization(warnings=(GTI_THREAT_SEVERITY_UNREADABLE,), degraded=True)
+
+    evidence = Evidence(
+        investigation_id=context.investigation_id,
+        subject_object_id=context.subject_object_id,
+        evidence_class=EvidenceClass.CONTEXT,
+        claim_type="gti_threat_severity",
+        effect=EvidenceEffect.CONTEXT_ONLY,
+        transport_provider=GTI_PROVIDER_ID,
+        origin_provider=GTI_ORIGIN_PROVIDER,
+        source_family=GTI_SOURCE_FAMILY,
+        match_scope=MatchScope.EXACT_OBSERVABLE,
+        last_seen=analysed_at,
+        retrieved_at=context.now,
+        lineage_group_id=GTI_LINEAGE_GROUP,
+        attributes=attributes,
+        raw_reference_id=context.raw_reference_id,
+    )
+    return GTINormalization(evidence=(evidence,))
+
+
+def _threat_severity_data(block: Mapping[str, Any]) -> dict[str, Any]:
+    """The bounded, recognized parts of ``threat_severity_data``."""
+    attributes: dict[str, Any] = {}
+    flagged: list[str] = []
+    unmapped: list[str] = []
+
+    for name, value in sorted(block.items()):
+        if name in THREAT_SEVERITY_DATA_FIELDS:
+            if value is not None:
+                attributes[name] = _plain(value)
+            continue
+        if name.startswith(_BAD_RELATIONSHIP_PREFIX):
+            # A false flag means GTI looked and found nothing bad there, which
+            # is the common case and not worth recording once per relationship.
+            if value:
+                flagged.append(name)
+            continue
+        unmapped.append(name)
+
+    if flagged:
+        attributes["bad_relationship_flags"] = flagged[:_MAX_SEVERITY_LIST]
+    if unmapped:
+        attributes["unmapped_threat_severity_fields"] = unmapped[:_MAX_SEVERITY_LIST]
+    return attributes
+
+
+def _epoch_from_scalar(value: Any) -> datetime | None:
+    """An epoch that GTI may send as a number or as a numeric string."""
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate.isdigit():
+            return None
+        return epoch_to_utc(int(candidate))
+    return epoch_to_utc(value)
 
 
 # --------------------------------------------------------------------------- #

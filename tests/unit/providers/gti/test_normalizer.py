@@ -1055,3 +1055,205 @@ def test_the_adapter_and_client_expose_their_configuration() -> None:
     client = VtPyGTIClient(SecretStr("vt-key-SHOULD-NOT-LEAK-12345"))
     assert client.config.x_tool == DEFAULT_X_TOOL
     assert "vt-key" not in client.config.model_dump_json()
+
+
+# --------------------------------------------------------------------------- #
+# Top-level threat_severity
+# --------------------------------------------------------------------------- #
+
+
+def severity_result(*args: Any, **overrides: Any) -> GTINormalization:
+    from ti_recon.providers.gti.normalizer import normalize_threat_severity
+
+    payload = payloads.file_object()
+    payload["attributes"]["threat_severity"] = payloads.threat_severity(*args, **overrides)
+    return normalize_threat_severity(context(), gti_object(payload))
+
+
+def severity_evidence(*args: Any, **overrides: Any) -> Any:
+    return severity_result(*args, **overrides).evidence[0]
+
+
+def test_threat_severity_becomes_one_context_claim() -> None:
+    result = severity_result()
+    assert len(result.evidence) == 1
+    evidence = result.evidence[0]
+    assert evidence.evidence_class is EvidenceClass.CONTEXT
+    assert evidence.claim_type == "gti_threat_severity"
+    assert evidence.effect is EvidenceEffect.CONTEXT_ONLY
+
+
+def test_a_high_severity_does_not_point_toward_malicious() -> None:
+    """A severity rating says how bad it would be, not that it is bad."""
+    for level in ("SEVERITY_HIGH", "SEVERITY_MEDIUM", "SEVERITY_LOW", "SEVERITY_NONE"):
+        evidence = severity_evidence(level)
+        assert evidence.effect is EvidenceEffect.CONTEXT_ONLY
+        assert evidence.attributes["threat_severity_level"] == level
+
+
+def test_the_documented_attributes_are_preserved() -> None:
+    evidence = severity_evidence()
+    assert evidence.attributes["threat_severity_level"] == "SEVERITY_HIGH"
+    assert evidence.attributes["level_description"].startswith("Severity HIGH")
+    assert evidence.attributes["last_analysis_date"].endswith("+00:00")
+    assert evidence.attributes["popular_threat_category"] == "trojan"
+
+
+def test_a_string_epoch_is_accepted_here_because_gti_sends_one() -> None:
+    """Unlike the integer epochs elsewhere on the object."""
+    evidence = severity_evidence(last_analysis_date="1785322800")
+    assert evidence.attributes["last_analysis_date"].startswith("20")
+    assert evidence.last_seen is not None
+
+
+def test_a_non_numeric_analysis_date_reads_as_absent() -> None:
+    evidence = severity_evidence(last_analysis_date="last tuesday")
+    assert "last_analysis_date" not in evidence.attributes
+    assert evidence.last_seen is None
+
+
+def test_epoch_strictness_elsewhere_is_unchanged() -> None:
+    """The local coercion must not relax the shared helper."""
+    assert epoch_to_utc("1785322800") is None
+
+
+def test_bounded_severity_data_keeps_the_recognized_scalars() -> None:
+    evidence = severity_evidence()
+    assert evidence.attributes["num_gav_detections"] == 3
+    assert evidence.attributes["belongs_to_bad_collection"] is True
+    assert evidence.attributes["can_be_detonated"] is True
+    assert evidence.attributes["type_tag"] == "peexe"
+
+
+def test_truthy_bad_relationship_flags_are_collected_by_name() -> None:
+    evidence = severity_evidence()
+    assert evidence.attributes["bad_relationship_flags"] == [
+        "has_bad_contacted_domains",
+        "has_bad_dropped_files",
+    ]
+
+
+def test_a_false_bad_flag_is_not_recorded() -> None:
+    """GTI looked and found nothing there; that is the common case."""
+    evidence = severity_evidence()
+    assert "has_bad_referring_files" not in str(
+        evidence.attributes.get("bad_relationship_flags", [])
+    )
+
+
+def test_an_unrecognized_severity_field_is_named_but_not_expanded() -> None:
+    evidence = severity_evidence(
+        data={"popular_threat_category": "trojan", "some_new_google_signal": 42}
+    )
+    assert evidence.attributes["unmapped_threat_severity_fields"] == ["some_new_google_signal"]
+    assert "some_new_google_signal" not in {
+        key for key in evidence.attributes if key != "unmapped_threat_severity_fields"
+    }
+
+
+def test_the_severity_data_lists_are_bounded() -> None:
+    evidence = severity_evidence(
+        data={
+            **{f"has_bad_thing_{index}": True for index in range(60)},
+            **{f"unknown_{index}": index for index in range(60)},
+        }
+    )
+    assert len(evidence.attributes["bad_relationship_flags"]) == 30
+    assert len(evidence.attributes["unmapped_threat_severity_fields"]) == 30
+
+
+def test_threat_severity_is_kept_separate_from_the_assessment_severity() -> None:
+    """Two different things that are easy to conflate."""
+    from ti_recon.providers.gti.normalizer import normalize_threat_severity
+
+    payload = payloads.file_object()
+    payload["attributes"]["gti_assessment"] = payloads.assessment(
+        "VERDICT_MALICIOUS", severity="SEVERITY_CRITICAL"
+    )
+    payload["attributes"]["threat_severity"] = payloads.threat_severity("SEVERITY_LOW")
+    obj = gti_object(payload)
+
+    assessment_evidence = core(normalize_assessment(context(), obj))
+    severity = normalize_threat_severity(context(), obj).evidence[0]
+
+    assert assessment_evidence.attributes["severity"] == "SEVERITY_CRITICAL"
+    assert severity.attributes["threat_severity_level"] == "SEVERITY_LOW"
+    assert assessment_evidence.effect is EvidenceEffect.SUPPORTS_MALICIOUS
+    assert severity.effect is EvidenceEffect.CONTEXT_ONLY
+
+
+def test_threat_severity_shares_the_gti_lineage_group() -> None:
+    evidence = severity_evidence()
+    assert evidence.lineage_group_id == GTI_LINEAGE_GROUP
+    assert evidence.transport_provider == GTI_PROVIDER_ID
+    assert evidence.source_family == GTI_SOURCE_FAMILY
+    assert evidence.is_relayed is False
+
+
+def test_threat_severity_applies_to_the_exact_observable() -> None:
+    evidence = severity_evidence()
+    assert evidence.match_scope is MatchScope.EXACT_OBSERVABLE
+    assert evidence.retrieved_at == NOW
+    assert evidence.raw_reference_id == "raw-1"
+
+
+def test_no_admiralty_grade_or_confidence_is_invented_for_severity() -> None:
+    evidence = severity_evidence()
+    assert evidence.source_reliability is None
+    assert evidence.information_credibility is None
+    assert evidence.provider_confidence is None
+
+
+def test_an_absent_threat_severity_is_silent() -> None:
+    """Unlike a missing assessment, absence carries no entitlement signal."""
+    from ti_recon.providers.gti.normalizer import normalize_threat_severity
+
+    payload = payloads.file_object(with_threat_severity=False)
+    result = normalize_threat_severity(context(), gti_object(payload))
+    assert result.evidence == ()
+    assert result.warnings == ()
+    assert result.degraded is False
+
+
+def test_an_unreadable_threat_severity_degrades_rather_than_failing() -> None:
+    from ti_recon.providers.gti.normalizer import (
+        GTI_THREAT_SEVERITY_UNREADABLE,
+        normalize_threat_severity,
+    )
+
+    payload = payloads.file_object()
+    payload["attributes"]["threat_severity"] = {"threat_severity_level": ["unexpected"]}
+    result = normalize_threat_severity(context(), gti_object(payload))
+    assert result.evidence == ()
+    assert result.warnings == (GTI_THREAT_SEVERITY_UNREADABLE,)
+    assert result.degraded is True
+
+
+def test_a_partial_threat_severity_keeps_what_parsed() -> None:
+    from ti_recon.providers.gti.normalizer import normalize_threat_severity
+
+    payload = payloads.file_object()
+    payload["attributes"]["threat_severity"] = {
+        "threat_severity_level": "SEVERITY_MEDIUM",
+        "level_description": 42,
+        "threat_severity_data": "not-a-mapping",
+    }
+    evidence = normalize_threat_severity(context(), gti_object(payload)).evidence[0]
+    assert evidence.attributes == {"threat_severity_level": "SEVERITY_MEDIUM"}
+
+
+def test_a_blank_level_or_description_is_omitted() -> None:
+    evidence = severity_evidence("   ", description="  ")
+    assert "threat_severity_level" not in evidence.attributes
+    assert "level_description" not in evidence.attributes
+    # Still usable, because the data block parsed.
+    assert evidence.attributes["popular_threat_category"] == "trojan"
+
+
+def test_a_long_description_is_truncated() -> None:
+    evidence = severity_evidence(description="x" * 5_000)
+    assert len(evidence.attributes["level_description"]) == 2_000
+
+
+def test_the_severity_claim_serializes() -> None:
+    severity_evidence().model_dump_json()

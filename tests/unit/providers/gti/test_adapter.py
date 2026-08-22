@@ -658,3 +658,74 @@ async def test_a_passive_request_stays_passive() -> None:
 
     assert client.operations("behaviour") == []
     assert adapter.descriptor.supports_active is False
+
+
+# --------------------------------------------------------------------------- #
+# Top-level threat severity, through a real lookup
+# --------------------------------------------------------------------------- #
+
+
+async def test_threat_severity_reaches_the_envelope_as_context() -> None:
+    fake = FakeGTIClient()
+    fake.register_primary("files", payloads.file_object())
+    adapter, _ = make_adapter(fake)
+
+    outcome = await adapter.lookup(request_for(file_object()), credential())
+
+    severity = [e for e in outcome.evidence if e.claim_type == "gti_threat_severity"]
+    assert len(severity) == 1
+    assert severity[0].effect is EvidenceEffect.CONTEXT_ONLY
+    assert severity[0].attributes["threat_severity_level"] == "SEVERITY_HIGH"
+    assert severity[0].attributes["popular_threat_category"] == "trojan"
+
+
+async def test_threat_severity_and_the_assessment_are_separate_claims() -> None:
+    fake = FakeGTIClient()
+    fake.register_primary("files", payloads.file_object())
+    adapter, _ = make_adapter(fake)
+
+    outcome = await adapter.lookup(request_for(file_object()), credential())
+
+    claims = {e.claim_type for e in outcome.evidence}
+    assert {"gti_assessment", "gti_threat_severity", "gti_analysis_stats"} <= claims
+
+
+async def test_a_missing_assessment_still_yields_threat_severity() -> None:
+    """Each block is normalized independently of the others."""
+    fake = FakeGTIClient()
+    fake.register_primary("files", payloads.file_object(with_assessment=False))
+    adapter, _ = make_adapter(fake)
+
+    outcome = await adapter.lookup(request_for(file_object()), credential())
+
+    assert not [e for e in outcome.evidence if e.claim_type == "gti_assessment"]
+    assert [e for e in outcome.evidence if e.claim_type == "gti_threat_severity"]
+    assert outcome.status is ProviderRunStatus.SUCCESS
+
+
+async def test_an_object_without_threat_severity_is_unaffected() -> None:
+    fake = FakeGTIClient()
+    fake.register_primary("domains", payloads.domain_object())
+    adapter, _ = make_adapter(fake)
+
+    outcome = await adapter.lookup(request_for(observable("evil.example")), credential())
+
+    assert not [e for e in outcome.evidence if e.claim_type == "gti_threat_severity"]
+    assert outcome.status is ProviderRunStatus.SUCCESS
+    assert outcome.warnings == ()
+
+
+async def test_an_unreadable_threat_severity_degrades_the_result_to_partial() -> None:
+    payload = payloads.file_object()
+    payload["attributes"]["threat_severity"] = {"threat_severity_level": {"bad": True}}
+    fake = FakeGTIClient()
+    fake.register_primary("files", payload)
+    adapter, _ = make_adapter(fake)
+
+    outcome = await adapter.lookup(request_for(file_object()), credential())
+
+    assert outcome.status is ProviderRunStatus.PARTIAL
+    assert "GTI_THREAT_SEVERITY_UNREADABLE" in outcome.warnings
+    # The evidence that did parse survives.
+    assert [e for e in outcome.evidence if e.claim_type == "gti_assessment"]
+    assert [e for e in outcome.evidence if e.claim_type == "gti_analysis_stats"]

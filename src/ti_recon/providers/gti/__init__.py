@@ -47,6 +47,11 @@ from ti_recon.providers.gti.errors import (
     category_for_gti_code,
     translate_gti_error,
 )
+from ti_recon.providers.gti.normalizer import (
+    GTI_THREAT_SEVERITY_UNREADABLE,
+    THREAT_SEVERITY_DATA_FIELDS,
+    normalize_threat_severity,
+)
 from ti_recon.providers.gti.policy import (
     DEFAULT_EXCLUDED_ATTRIBUTES,
     GTILookupPolicy,
@@ -85,10 +90,12 @@ __all__ = [
     "GTI_PROVIDER_ID",
     "GTI_SOURCE_FAMILY",
     "GTI_SUPPORTED_OBJECT_TYPES",
+    "GTI_THREAT_SEVERITY_UNREADABLE",
     "GTI_X_TOOL_ENV_VAR",
     "LIMITS_BY_DEPTH",
     "RELATIONSHIP_PLANS",
     "RELATIONSHIP_SPECS",
+    "THREAT_SEVERITY_DATA_FIELDS",
     "GTIAdapter",
     "GTIClient",
     "GTIClientFactory",
@@ -109,6 +116,7 @@ __all__ = [
     "collection_for_object_type",
     "depth_for_investigation",
     "gti_config_from_env",
+    "normalize_threat_severity",
     "parse_overall_quotas",
     "relationship_plan",
     "translate_gti_error",

@@ -36,7 +36,7 @@ development foundation, not distributed coordination.
 
 | Provider | Status | Supported | Not yet |
 |----------|--------|-----------|---------|
-| Google Threat Intelligence | Implemented | IP / domain / URL / hash passive enrichment, GTI assessment, aggregated reputation, quota awareness, bounded relationships, selected threat associations, deep file behaviour | Intelligence Search, active scanning, sample submission, sample downloads |
+| Google Threat Intelligence | Implemented | IP / domain / URL / hash passive enrichment, GTI assessment, threat severity, aggregated reputation, quota awareness, bounded relationships, selected threat associations, deep file behaviour | Intelligence Search, active scanning, sample submission, sample downloads |
 
 GTI supplies **evidence**, not verdicts. Weighing it against other providers and
 reaching a conclusion is the future evidence-fusion layer's job, and no such

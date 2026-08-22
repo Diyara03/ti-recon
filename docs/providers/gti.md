@@ -204,7 +204,71 @@ evidence would be a guess with real consequences.
 
 Every factor points at its parent assessment through `upstream_evidence_refs`.
 
-## 8. Aggregated reputation
+## 8. Top-level `threat_severity`
+
+GTI also returns a top-level `threat_severity` block, separate from the
+assessment. It becomes one context claim:
+
+```
+evidence_class : CONTEXT
+claim_type     : gti_threat_severity
+effect         : CONTEXT_ONLY
+attributes     : threat_severity_level, level_description, last_analysis_date,
+                 popular_threat_category, bounded threat_severity_data
+```
+
+### Why it is context, not a threat assertion
+
+`threat_severity` and `gti_assessment.severity` are easy to conflate and mean
+different things:
+
+| | |
+|---|---|
+| `gti_assessment` | GTI's curated judgement, with a **verdict** that points somewhere |
+| `threat_severity` | a graded description of **how serious this would be**, derived largely from detection and relationship signals, with no verdict attached |
+
+So this claim is directionless by construction. A severity rating on its own says
+nothing about whether the observable is malicious, and letting `SEVERITY_HIGH`
+imply "malicious" would be the same mistake as reading a CVSS score as proof of
+exploitation. The level travels in the attributes, where the fusion layer can
+weigh it against evidence that *does* have a direction.
+
+Both are normalized, independently — a missing or unreadable assessment still
+leaves the severity claim, and vice versa.
+
+### Bounded `threat_severity_data`
+
+The nested data block is not copied wholesale. GTI adds signals to it over time,
+and a wholesale copy would grow every piece of evidence without anyone deciding
+that it should.
+
+- **Recognized scalars** are kept by name: `popular_threat_category`,
+  `num_gav_detections`, `belongs_to_bad_collection`, `can_be_detonated`,
+  `type_tag`.
+- The **`has_bad_*` family** — one boolean per relationship GTI found something
+  bad on — is collected by prefix into `bad_relationship_flags`. Collected by
+  prefix rather than enumerated because the set grows as GTI adds relationship
+  types, and only the names GTI actually sent are recorded, so nothing is
+  invented either. A `false` flag is not recorded: it means GTI looked and found
+  nothing there, which is the common case.
+- **Anything else** is reported by name in `unmapped_threat_severity_fields`, so
+  adding one later is a table entry rather than a discovery exercise.
+
+Both lists are capped, so one severity claim cannot grow without bound.
+
+### Timestamps
+
+`threat_severity.last_analysis_date` arrives as a *string* of epoch seconds,
+unlike the integer epochs elsewhere on the object. That is handled locally
+rather than by relaxing the shared `epoch_to_utc` helper, so every other call
+site keeps rejecting a string as the schema change it would be there.
+
+Absence is not reported. Unlike a missing assessment, a missing
+`threat_severity` carries no entitlement signal worth surfacing. A block that is
+present but unusable warns `GTI_THREAT_SEVERITY_UNREADABLE` and degrades the
+result to `PARTIAL`, keeping whatever else parsed.
+
+## 9. Aggregated reputation
 
 `last_analysis_stats` becomes **exactly one** piece of evidence:
 
@@ -228,7 +292,7 @@ The direction is deliberately asymmetric:
 No ratio, no threshold, no score. The counters travel in the attributes so the
 fusion layer can weigh them with context this layer does not have.
 
-## 9. Relationships
+## 10. Relationships
 
 ### Depth profiles
 
@@ -317,7 +381,7 @@ infrastructure. Neither quietly spends an analyst's quota on a pivot graph.
 | `associations`, actors, reports, campaigns | `THREAT_ASSOCIATIONS` |
 | sandbox behaviour summary | `FILE_BEHAVIOR` |
 
-## 10. Threat associations
+## 11. Threat associations
 
 Curated attribution becomes association claims:
 
@@ -341,7 +405,7 @@ first-class object types to hold a GTI identifier would be a data-model decision
 made for one integration's convenience, and it loses nothing an analyst needs to
 keep them as claims. Full threat-object modelling belongs to a later task.
 
-## 11. File behaviour (DEEP only)
+## 12. File behaviour (DEEP only)
 
 Sandbox behaviour requires three conditions at once: the observable is a **file**,
 the investigation is **DEEP**, and **`FILE_BEHAVIOR`** was requested. Detonation
@@ -366,7 +430,7 @@ happen — but stays `CONTEXT_ONLY`. Contacting a domain during detonation is a
 fact about behaviour; deciding what it means about the sample belongs to fusion.
 A test asserts behaviour alone produces no malicious-leaning evidence.
 
-## 12. Quota
+## 13. Quota
 
 Quota is read from `/users/{apikey}/overall_quotas` and mapped onto the generic
 Task 6 `ProviderQuotaSnapshot`:
@@ -404,7 +468,7 @@ freshness. The default TTL is 5 minutes and is configurable. A failed refresh is
 swallowed: quota is useful context, and losing it must not turn a successful IOC
 lookup into a failed one.
 
-## 13. Credential validation
+## 14. Credential validation
 
 Validation reuses the quota endpoint — the cheapest authenticated call available,
 touching no IOC and consuming no lookup allowance.
@@ -422,7 +486,7 @@ request and still be a guess, since entitlement differs per object type and per
 relationship. What a key may actually do is discovered at request time, where a
 refusal becomes `PLAN_LIMITED` for that one operation.
 
-## 14. Errors
+## 15. Errors
 
 vt-py's `APIError.code` values map onto Task 5 categories:
 
@@ -447,7 +511,7 @@ than one per investigation that asks about it.
 Error messages are scrubbed of the known key literal, then generically redacted,
 then dropped entirely if they still resemble credential material.
 
-## 15. Partial results
+## 16. Partial results
 
 A recognized field that will not parse degrades the result to `PARTIAL` and keeps
 whatever did parse — losing a whole useful response because one optional
@@ -459,7 +523,7 @@ A **missing** `gti_assessment` is different: it warns `GTI_ASSESSMENT_UNAVAILABL
 and stays `SUCCESS`. It is common and benign — an entitlement, or simply no
 assessment yet — and nothing here guesses which.
 
-## 16. Caching and isolation
+## 17. Caching and isolation
 
 Task 6's cache is used unchanged, so isolation is per user and per provider
 connection by construction:
@@ -475,7 +539,7 @@ There is no cross-user GTI cache sharing, and no Redis in Task 7 — all executi
 state remains in-memory and single-process, as documented in
 [provider-execution.md](../provider-execution.md).
 
-## 17. Data-use boundary — read before connecting an AI layer
+## 18. Data-use boundary — read before connecting an AI layer
 
 GTI data is **provider-policy-sensitive**. Task 7 deliberately does not connect
 GTI to Claude, MCP, or any other AI layer, and nothing here should be taken as
@@ -492,7 +556,7 @@ The architectural boundary that makes this reviewable already exists: the core
 engine is Claude-independent, and the MCP and Skill layers sit above TI Recon as
 separate future components. Task 7 preserves it and adds no policy engine.
 
-## 18. Optional live tests
+## 19. Optional live tests
 
 Disabled by default. Enable explicitly:
 
@@ -512,7 +576,7 @@ verdict for any object. Provider data changes, and a test that fails because
 Google reclassified something teaches people to ignore failures. The smoke
 object is `8.8.8.8`: well-known, public, and not infrastructure that may vanish.
 
-## 19. Not implemented
+## 20. Not implemented
 
 Deliberately out of scope for Task 7:
 

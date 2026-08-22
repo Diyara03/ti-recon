@@ -72,6 +72,7 @@ from ti_recon.providers.gti.normalizer import (
     normalize_file_behavior,
     normalize_inline_relationships,
     normalize_related_items,
+    normalize_threat_severity,
 )
 from ti_recon.providers.gti.policy import GTILookupPolicy, collection_for_object_type
 from ti_recon.providers.gti.quota import GTIQuotaReading, parse_overall_quotas
@@ -448,9 +449,9 @@ class GTIAdapter(ProviderAdapter):
     ) -> GTINormalization:
         """Normalize one GTI object into Task 3 models.
 
-        The assessment and the analysis statistics are normalized
-        independently, so a missing or unreadable assessment still leaves the
-        aggregated reputation, and vice versa. Neither produces a verdict.
+        The assessment, the top-level threat severity and the analysis
+        statistics are normalized independently, so one being missing or
+        unreadable still leaves the others. None of them produces a verdict.
         """
         context = NormalizationContext(
             investigation_id=request.investigation_id,
@@ -461,6 +462,7 @@ class GTIAdapter(ProviderAdapter):
         enriched = enrich_primary_object(request.intel_object, gti_object)
         result = GTINormalization(objects=(enriched,))
         result = result.merge(normalize_assessment(context, gti_object))
+        result = result.merge(normalize_threat_severity(context, gti_object))
         return result.merge(normalize_analysis_stats(context, gti_object))
 
     # ------------------------------------------------------------------ #
