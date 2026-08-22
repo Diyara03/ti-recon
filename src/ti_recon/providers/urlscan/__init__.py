@@ -18,6 +18,14 @@ scan's visibility, deletes anything or downloads a stored sample — urlscan can
 do all of those, and this integration deliberately cannot.
 """
 
+from ti_recon.providers.urlscan.adapter import (
+    URLSCAN_ARTIFACTS_UNAVAILABLE,
+    URLSCAN_FORENSICS_NOT_REQUESTED,
+    URLSCAN_NOT_SEARCHABLE,
+    URLSCAN_SCAN_UNRETRIEVABLE,
+    UrlscanAdapter,
+    UrlscanClientFactory,
+)
 from ti_recon.providers.urlscan.client import (
     MAX_SEARCH_SIZE,
     UrlscanArtifact,
@@ -80,6 +88,14 @@ from ti_recon.providers.urlscan.observations import (
     normalize_served_bodies,
     normalize_traffic_summary,
 )
+from ti_recon.providers.urlscan.policy import (
+    DEFAULT_FORENSIC_ARTIFACTS,
+    FORENSICS_DEPTH,
+    UrlscanLookupPolicy,
+    build_urlscan_execution_policy,
+    forensics_requested,
+    search_limits_for,
+)
 from ti_recon.providers.urlscan.quota import (
     GATING_ACTIONS,
     QUOTA_PERIODS,
@@ -103,8 +119,10 @@ from ti_recon.providers.urlscan.search import (
 
 __all__ = [
     "CREDENTIAL_STATUS_BY_CATEGORY",
+    "DEFAULT_FORENSIC_ARTIFACTS",
     "DEPTH_SEARCH_LIMITS",
     "ENGINE_AGGREGATE_FAMILY",
+    "FORENSICS_DEPTH",
     "GATING_ACTIONS",
     "MAX_CONTACTED_ASNS",
     "MAX_CONTACTED_DOMAINS",
@@ -116,15 +134,19 @@ __all__ = [
     "URLSCAN_ADAPTER_VERSION",
     "URLSCAN_API_KEY_HEADER",
     "URLSCAN_API_VERSION",
+    "URLSCAN_ARTIFACTS_UNAVAILABLE",
     "URLSCAN_AUTH_TYPE",
     "URLSCAN_CAPABILITIES",
     "URLSCAN_CREDENTIAL_GROUP",
     "URLSCAN_ENGINES_ORIGIN",
+    "URLSCAN_FORENSICS_NOT_REQUESTED",
     "URLSCAN_HOST",
     "URLSCAN_LINEAGE_GROUP",
+    "URLSCAN_NOT_SEARCHABLE",
     "URLSCAN_ORIGIN_PROVIDER",
     "URLSCAN_PROPERTY_NAMESPACE",
     "URLSCAN_PROVIDER_ID",
+    "URLSCAN_SCAN_UNRETRIEVABLE",
     "URLSCAN_SOURCE_FAMILY",
     "URLSCAN_STATUS_CATEGORIES",
     "URLSCAN_SUPPORTED_OBJECT_TYPES",
@@ -133,11 +155,14 @@ __all__ = [
     "ScanDocument",
     "SearchLimits",
     "SearchTerm",
+    "UrlscanAdapter",
     "UrlscanArtifact",
     "UrlscanClient",
+    "UrlscanClientFactory",
     "UrlscanConfig",
     "UrlscanHttpClient",
     "UrlscanJsonResult",
+    "UrlscanLookupPolicy",
     "UrlscanNormalization",
     "UrlscanOperation",
     "UrlscanQuotaReading",
@@ -146,11 +171,13 @@ __all__ = [
     "build_query",
     "build_transport_config",
     "build_urlscan_descriptor",
+    "build_urlscan_execution_policy",
     "category_for_status",
     "credential_status_for",
     "credential_validation_for",
     "cursor_for_hit",
     "enrich_primary_object",
+    "forensics_requested",
     "match_scope_for_scan",
     "normalize_contacted_infrastructure",
     "normalize_page_context",
@@ -166,6 +193,7 @@ __all__ = [
     "parse_utc_timestamp",
     "plan_search",
     "scrub_detail",
+    "search_limits_for",
     "select_candidates",
     "translate_status_error",
 ]
