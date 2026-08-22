@@ -62,8 +62,10 @@ __all__ = [
     "ProviderTransportClosed",
     "ProviderTransportError",
     "ProviderTransportSecurityError",
+    "QueryStringRedactingFilter",
     "TransportConfig",
     "TransportTimeouts",
+    "install_transport_log_redaction",
 ]
 
 _logger = logging.getLogger(__name__)
@@ -72,6 +74,61 @@ _logger = logging.getLogger(__name__)
 DEFAULT_USER_AGENT: Final[str] = f"ti-recon/{__version__}"
 
 _SAFE_METHODS: Final[frozenset[str]] = frozenset({"GET", "POST", "HEAD"})
+
+
+# --------------------------------------------------------------------------- #
+# Third-party logging
+# --------------------------------------------------------------------------- #
+
+
+class QueryStringRedactingFilter(logging.Filter):
+    """Strips query strings out of another library's log records.
+
+    httpx logs every request at INFO with the full URL, query string included.
+    This module's own logging deliberately omits the query string, because
+    :class:`AuthPlacement.QUERY` exists and some providers do take their key as
+    a query parameter — for those, httpx's line would print the credential on
+    every request, at default log level, in whatever aggregator the deployment
+    ships logs to.
+
+    Silencing httpx entirely would lose a genuinely useful record, so the query
+    string is removed and everything else is kept.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.args and isinstance(record.args, tuple):
+            record.args = tuple(_strip_query(argument) for argument in record.args)
+        return True
+
+
+def _strip_query(argument: object) -> object:
+    """Redact one log argument if it is a URL carrying a query string.
+
+    The argument is not necessarily a string — httpx passes an ``httpx.URL`` —
+    so the check is on its rendered form, and the redacted value replaces the
+    object entirely rather than being formatted from it.
+    """
+    rendered = argument if isinstance(argument, str) else str(argument)
+    if "://" not in rendered or "?" not in rendered:
+        return argument
+    head, _, _ = rendered.partition("?")
+    return f"{head}?[REDACTED]"
+
+
+def install_transport_log_redaction() -> None:
+    """Attach :class:`QueryStringRedactingFilter` to httpx's logger, once.
+
+    Called at import rather than left to the caller: a credential leak that
+    depends on somebody remembering to configure logging is a credential leak.
+    """
+    httpx_logger = logging.getLogger("httpx")
+    if not any(
+        isinstance(existing, QueryStringRedactingFilter) for existing in httpx_logger.filters
+    ):
+        httpx_logger.addFilter(QueryStringRedactingFilter())
+
+
+install_transport_log_redaction()
 
 
 # --------------------------------------------------------------------------- #

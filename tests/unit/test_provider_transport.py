@@ -30,6 +30,10 @@ from ti_recon.providers import (
     TransportConfig,
     TransportTimeouts,
 )
+from ti_recon.providers.transport import (
+    QueryStringRedactingFilter,
+    install_transport_log_redaction,
+)
 
 BASE_URL = "https://api.fake-provider.test/v1/"
 OTHER_HOST = "https://evil.example/"
@@ -596,3 +600,48 @@ async def test_bounded_get_normalizes_an_unreachable_provider(client: ProviderHt
     respx.get(f"{BASE_URL}artifact").mock(side_effect=httpx.ConnectError("refused"))
     with pytest.raises(ProviderUnavailableError):
         await client.get_bounded("artifact", max_bytes=16)
+
+
+# --------------------------------------------------------------------------- #
+# Third-party logging
+#
+# httpx logs every request at INFO with the full URL. `AuthPlacement.QUERY`
+# exists, so for a provider that takes its key as a query parameter that line
+# would print the credential on every request, at default level.
+# --------------------------------------------------------------------------- #
+
+
+@respx.mock
+async def test_a_query_parameter_credential_never_reaches_an_httpx_log_line(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = ProviderHttpClient(
+        make_config(auth=AuthConfig(placement=AuthPlacement.QUERY, query_param="apikey"))
+    )
+    respx.get(f"{BASE_URL}ip/1.2.3.4").mock(return_value=httpx.Response(200))
+    try:
+        with caplog.at_level(logging.DEBUG):
+            await client.get("ip/1.2.3.4", credential=make_credential())
+    finally:
+        await client.aclose()
+
+    rendered = "\n".join(record.getMessage() for record in caplog.records)
+    assert SECRET not in rendered
+    assert "[REDACTED]" in rendered
+
+
+def test_the_redaction_filter_is_installed_once() -> None:
+    install_transport_log_redaction()
+    install_transport_log_redaction()
+    installed = [
+        existing
+        for existing in logging.getLogger("httpx").filters
+        if isinstance(existing, QueryStringRedactingFilter)
+    ]
+    assert len(installed) == 1
+
+
+def test_the_filter_leaves_a_record_without_a_url_alone() -> None:
+    record = logging.LogRecord("httpx", logging.INFO, __file__, 1, "plain %s", ("message",), None)
+    assert QueryStringRedactingFilter().filter(record) is True
+    assert record.args == ("message",)
