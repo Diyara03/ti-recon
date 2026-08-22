@@ -31,14 +31,19 @@ from typing import Any, Final
 
 import httpx
 
+from ti_recon.credentials.enums import CredentialStatus
 from ti_recon.enums import ProviderErrorCategory
+from ti_recon.providers.adapter import CredentialValidation
 from ti_recon.providers.errors import ProviderError, provider_error_for
 from ti_recon.security import SENSITIVE_KEY_PATTERN, redact_sensitive_text
 
 __all__ = [
+    "CREDENTIAL_STATUS_BY_CATEGORY",
     "RATE_LIMIT_SCOPE_HEADER",
     "URLSCAN_STATUS_CATEGORIES",
     "category_for_status",
+    "credential_status_for",
+    "credential_validation_for",
     "parse_reset_at",
     "parse_retry_after",
     "scrub_detail",
@@ -229,4 +234,50 @@ def translate_status_error(
         reset_at=parse_reset_at(response.headers.get("X-Rate-Limit-Reset")),
         # The status code, not a body. Safe to log and enough to diagnose.
         provider_error_code=str(response.status_code),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# What a failure says about the credential itself
+# --------------------------------------------------------------------------- #
+
+#: How a failed call reflects on the key that made it.
+#:
+#: Only a rejected key is ``INVALID``. A permission refusal, an exhausted
+#: allowance or a throttled window all mean the key is fine and something else
+#: is in the way — marking any of them invalid would disable a working
+#: credential over a private scan or a busy minute.
+CREDENTIAL_STATUS_BY_CATEGORY: Final[dict[ProviderErrorCategory, CredentialStatus]] = {
+    ProviderErrorCategory.AUTHENTICATION_ERROR: CredentialStatus.INVALID,
+    ProviderErrorCategory.PERMISSION_ERROR: CredentialStatus.ACTIVE,
+    ProviderErrorCategory.PLAN_LIMITED: CredentialStatus.ACTIVE,
+    ProviderErrorCategory.QUOTA_EXCEEDED: CredentialStatus.ACTIVE,
+    ProviderErrorCategory.RATE_LIMITED: CredentialStatus.ACTIVE,
+}
+
+
+def credential_status_for(category: ProviderErrorCategory) -> CredentialStatus:
+    """What a failure category says about the credential.
+
+    Anything not in the table is ``UNKNOWN``: a transient failure or a schema
+    change is evidence about urlscan, not about the analyst's key.
+    """
+    return CREDENTIAL_STATUS_BY_CATEGORY.get(category, CredentialStatus.UNKNOWN)
+
+
+def credential_validation_for(
+    provider_id: str, error: ProviderError | None = None
+) -> CredentialValidation:
+    """Record the outcome of a credential check.
+
+    ``error=None`` means the check succeeded. ``detail`` carries only the
+    already-redacted message from the error; the credential itself never
+    appears, because nothing at this layer has ever seen it.
+    """
+    if error is None:
+        return CredentialValidation(provider_id=provider_id, status=CredentialStatus.ACTIVE)
+    return CredentialValidation(
+        provider_id=provider_id,
+        status=credential_status_for(error.category),
+        detail=scrub_detail(str(error)),
     )

@@ -45,16 +45,29 @@ from ti_recon.providers.urlscan.descriptor import (
     build_urlscan_descriptor,
 )
 from ti_recon.providers.urlscan.errors import (
+    CREDENTIAL_STATUS_BY_CATEGORY,
     URLSCAN_STATUS_CATEGORIES,
     category_for_status,
+    credential_status_for,
+    credential_validation_for,
     parse_reset_at,
     parse_retry_after,
     scrub_detail,
     translate_status_error,
 )
+from ti_recon.providers.urlscan.quota import (
+    GATING_ACTIONS,
+    QUOTA_PERIODS,
+    UrlscanQuotaReading,
+    parse_rate_limit_headers,
+    parse_user_quotas,
+)
 
 __all__ = [
+    "CREDENTIAL_STATUS_BY_CATEGORY",
+    "GATING_ACTIONS",
     "MAX_SEARCH_SIZE",
+    "QUOTA_PERIODS",
     "URLSCAN_ADAPTER_VERSION",
     "URLSCAN_API_KEY_HEADER",
     "URLSCAN_API_VERSION",
@@ -73,11 +86,16 @@ __all__ = [
     "UrlscanHttpClient",
     "UrlscanJsonResult",
     "UrlscanOperation",
+    "UrlscanQuotaReading",
     "build_transport_config",
     "build_urlscan_descriptor",
     "category_for_status",
+    "credential_status_for",
+    "credential_validation_for",
+    "parse_rate_limit_headers",
     "parse_reset_at",
     "parse_retry_after",
+    "parse_user_quotas",
     "scrub_detail",
     "translate_status_error",
 ]
