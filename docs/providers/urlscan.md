@@ -104,22 +104,68 @@ supplied by a caller.
 | domain | `page.domain`, `domain` |
 | URL | `page.url`, `task.url` |
 | file (SHA-256) | `hash` |
-| file (MD5 / SHA-1) | **none** — reported as a coverage gap |
+| file (MD5 / SHA-1) | **none** — reported as `NOT_SUPPORTED` |
 
-urlscan indexes response bodies by SHA-256 only. An MD5 or SHA-1 produces no
-search at all and a `URLSCAN_OBSERVABLE_NOT_SEARCHABLE` warning with `NO_DATA`,
-rather than an empty result — reporting a gap as "nothing found" would turn
-missing coverage into a false absence of evidence.
+urlscan indexes the bodies it served by SHA-256 and by nothing else, so an MD5
+or SHA-1 has no query to run. That run is reported as
+`ProviderRunStatus.NOT_SUPPORTED`, carrying the warning
+`URLSCAN_OBSERVABLE_NOT_SEARCHABLE` and a reason on `error_message`.
+
+The distinction matters and is deliberate:
+
+| Situation | Status |
+|---|---|
+| SHA-256, search ran, no hits | `NO_DATA` |
+| MD5 only | `NOT_SUPPORTED` |
+| SHA-1 only | `NOT_SUPPORTED` |
+| file carrying a usable SHA-256 | ordinary lookup |
+
+`NO_DATA` means a supported lookup was attempted and urlscan had nothing.
+`NOT_SUPPORTED` means no lookup was possible, so nothing was attempted — no API
+call is made at all. Collapsing the two would let a blind spot read as a clean
+result, which is exactly what the coverage vocabulary exists to prevent. A
+future coverage layer should read `NOT_SUPPORTED` as
+`CoverageStatus.NOT_APPLICABLE` for the capability, quoting the reason, rather
+than as a covered lookup that found nothing. Nothing is cached for an
+unsupported run: there is no answer to keep.
 
 ## 5. Depth and bounds
 
 Depth is the analyst's cost signal, so it decides how much history is read.
 
-| Depth | Page size | Scans retrieved | Per-domain cap | Time bound |
+| Depth | Page size | Scans retrieved | Per-domain cap | Lookback |
 |---|---|---|---|---|
-| QUICK | 10 | 1 | 1 | last 90 days |
-| STANDARD | 50 | 3 | 2 | last year |
-| DEEP | 100 | 8 | 3 | none |
+| QUICK | 10 | 1 | 1 | 30 days |
+| STANDARD | 50 | 3 | 2 | 180 days |
+| DEEP | 100 | 8 | 3 | 365 days |
+
+**Every depth is bounded, DEEP included.** `SearchLimits.lookback_days` has no
+"unbounded" value, and `build_query` requires a `now-<days>d` bound and rejects
+anything else, so there is no argument anywhere that produces an open-ended
+query. An unbounded search is not "more thorough": it asks urlscan to scan its
+whole index for a question about current infrastructure, and on an account whose
+plan caps the searchable range it would be refused outright rather than quietly
+narrowed.
+
+### Clamping to the account's searchable range
+
+`/user/quotas/` may report `maxSearchRangeMonths` — a plan limit rather than an
+allowance, since exceeding it does not consume anything, it invalidates the
+query. The effective window is therefore:
+
+```
+effective_lookback = min(configured_depth_lookback, account_max_search_range)
+```
+
+A month is counted as 30 days, short for most months on purpose: erring inside
+the provider's window costs a few days of history, erring outside it costs the
+whole query. If urlscan does not report the limit — or the quota read was
+skipped because Task 6's store already had a fresh snapshot, or it failed — the
+configured depth lookback stands. That value is already finite, so an unknown
+plan limit can never widen a query.
+
+Because the search has to be inside that range, the once-per-TTL quota read runs
+*before* the search rather than after it. The call count is unchanged.
 
 Selection spends that budget deliberately: newest first, because a page's
 current behaviour matters more than last year's, with a per-domain cap so fifty
@@ -315,6 +361,11 @@ TI Recon never scans, and `ProviderQuotaSnapshot.is_exhausted` is true if any
 bucket is spent — so a spent scanning allowance would otherwise switch urlscan
 off over something no lookup consumes. The non-gating buckets are still parsed
 and returned, so nothing is silently discarded.
+
+The same response may carry `maxSearchRangeMonths`, which is read from the top
+level, from the `limits` block or from the `search` allowance — urlscan has moved
+it, and the first usable value wins. It clamps the search lookback (§5) and
+nothing else.
 
 `X-Rate-Limit-*` headers on each response become a `RateLimitSnapshot`. When
 urlscan names the action it metered, the window carries that name so a search

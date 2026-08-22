@@ -144,7 +144,7 @@ def test_search_limits_come_from_depth_by_default() -> None:
 
 
 def test_an_operator_can_retune_the_bounds_without_touching_code() -> None:
-    tuned = SearchLimits(page_size=5, max_candidates=1, max_per_group=1, since="now-7d")
+    tuned = SearchLimits(page_size=5, max_candidates=1, max_per_group=1, lookback_days=7)
     policy = UrlscanLookupPolicy(search_limits={InvestigationDepth.DEEP: tuned})
     assert search_limits_for(InvestigationDepth.DEEP, policy) == tuned
 
@@ -189,3 +189,40 @@ def test_an_operator_can_override_the_cache_policy() -> None:
 
 def test_concurrency_is_bounded() -> None:
     assert build_urlscan_execution_policy(max_concurrency=2).max_concurrency == 2
+
+
+# --------------------------------------------------------------------------- #
+# Lookback clamping
+# --------------------------------------------------------------------------- #
+
+
+def test_the_account_range_narrows_the_configured_lookback() -> None:
+    limits = search_limits_for(InvestigationDepth.DEEP, max_search_range_months=2)
+    assert limits.lookback_days == 60
+    assert limits.since == "now-60d"
+
+
+def test_the_account_range_cannot_widen_the_configured_lookback() -> None:
+    limits = search_limits_for(InvestigationDepth.QUICK, max_search_range_months=120)
+    assert limits.lookback_days == DEPTH_SEARCH_LIMITS[InvestigationDepth.QUICK].lookback_days
+
+
+def test_an_unknown_account_range_leaves_a_finite_bound_in_place() -> None:
+    """Unknown is not unbounded."""
+    for depth in InvestigationDepth:
+        limits = search_limits_for(depth, max_search_range_months=None)
+        assert limits.lookback_days >= 1
+        assert limits.since.startswith("now-")
+
+
+def test_clamping_applies_to_an_operator_tuned_policy_too() -> None:
+    tuned = SearchLimits(page_size=5, max_candidates=1, max_per_group=1, lookback_days=300)
+    policy = UrlscanLookupPolicy(search_limits={InvestigationDepth.DEEP: tuned})
+    limits = search_limits_for(InvestigationDepth.DEEP, policy, max_search_range_months=1)
+    assert limits.lookback_days == 30
+
+
+def test_every_depth_the_policy_can_return_is_bounded() -> None:
+    policy = UrlscanLookupPolicy(search_limits={})
+    for depth in InvestigationDepth:
+        assert search_limits_for(depth, policy).lookback_days >= 1

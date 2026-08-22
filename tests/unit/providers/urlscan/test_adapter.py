@@ -51,6 +51,7 @@ from ti_recon.providers.urlscan.adapter import (
 from ti_recon.providers.urlscan.client import UrlscanArtifact, UrlscanHttpClient
 from ti_recon.providers.urlscan.config import UrlscanConfig
 from ti_recon.providers.urlscan.policy import UrlscanLookupPolicy
+from ti_recon.providers.urlscan.search import SearchLimits
 
 USER = "user-a"
 INVESTIGATION = "inv-1"
@@ -238,16 +239,71 @@ async def test_a_lookup_without_a_credential_is_refused() -> None:
 # --------------------------------------------------------------------------- #
 
 
-async def test_an_unsearchable_observable_reports_the_gap() -> None:
-    md5 = "c" * 32
+@pytest.mark.parametrize(
+    ("algorithm", "digest"),
+    [("MD5", "c" * 32), ("SHA-1", "d" * 40)],
+)
+async def test_a_hash_urlscan_cannot_search_is_unsupported_not_empty(
+    algorithm: str, digest: str
+) -> None:
+    """NO_DATA would let a blind spot read as a clean result."""
     adapter, fake = make_adapter()
     envelope = await adapter.lookup(
-        make_request(intel_object=observable(IntelObjectType.FILE, md5, {"hashes": {"MD5": md5}})),
+        make_request(
+            intel_object=observable(IntelObjectType.FILE, digest, {"hashes": {algorithm: digest}})
+        ),
         credential(),
     )
-    assert envelope.status is ProviderRunStatus.NO_DATA
+    assert envelope.status is ProviderRunStatus.NOT_SUPPORTED
+    assert envelope.status is not ProviderRunStatus.NO_DATA
     assert URLSCAN_NOT_SEARCHABLE in envelope.warnings
-    assert not fake.called("search")
+    assert envelope.error_message is not None
+    assert "SHA-256" in envelope.error_message
+    assert fake.calls == []
+
+
+async def test_a_sha256_file_is_searched_normally() -> None:
+    digest = "a" * 64
+    adapter, fake = make_adapter()
+    envelope = await adapter.lookup(
+        make_request(
+            intel_object=observable(IntelObjectType.FILE, digest, {"hashes": {"SHA-256": digest}})
+        ),
+        credential(),
+    )
+    assert fake.called("search")
+    assert envelope.status is not ProviderRunStatus.NOT_SUPPORTED
+
+
+async def test_a_file_with_a_sha256_alongside_weaker_hashes_is_searched() -> None:
+    digest = "a" * 64
+    adapter, fake = make_adapter()
+    await adapter.lookup(
+        make_request(
+            intel_object=observable(
+                IntelObjectType.FILE,
+                digest,
+                {"hashes": {"SHA-256": digest, "MD5": "c" * 32}},
+            )
+        ),
+        credential(),
+    )
+    assert fake.called("search")
+
+
+async def test_a_searched_sha256_with_no_hits_is_no_data_not_unsupported() -> None:
+    """The distinction the two statuses exist to make."""
+    digest = "a" * 64
+    adapter, fake = make_adapter(FakeUrlscanClient(search_payload={"results": []}))
+    envelope = await adapter.lookup(
+        make_request(
+            intel_object=observable(IntelObjectType.FILE, digest, {"hashes": {"SHA-256": digest}})
+        ),
+        credential(),
+    )
+    assert fake.called("search")
+    assert envelope.status is ProviderRunStatus.NO_DATA
+    assert URLSCAN_NOT_SEARCHABLE not in envelope.warnings
 
 
 async def test_no_scans_at_all_is_no_data_not_a_failure() -> None:
@@ -797,3 +853,84 @@ async def test_a_screenshot_is_stored_but_never_parsed() -> None:
     envelope = await run_forensics(adapter)
     assert any(item.claim_type == "urlscan_stored_artifact" for item in envelope.evidence)
     assert not any(item.claim_type == "urlscan_page_forensics" for item in envelope.evidence)
+
+
+# --------------------------------------------------------------------------- #
+# Every search is date bounded
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("depth", list(InvestigationDepth))
+async def test_no_lookup_at_any_depth_issues_an_unbounded_query(
+    depth: InvestigationDepth,
+) -> None:
+    adapter, fake = make_adapter()
+    await adapter.lookup(make_request(depth=depth), credential())
+    query = next(detail for name, detail in fake.calls if name == "search")
+    assert " AND date:>now-" in query
+
+
+async def test_depth_decides_how_far_back_a_lookup_reaches() -> None:
+    windows: dict[InvestigationDepth, str] = {}
+    for depth in InvestigationDepth:
+        adapter, fake = make_adapter()
+        await adapter.lookup(make_request(depth=depth), credential())
+        windows[depth] = next(detail for name, detail in fake.calls if name == "search")
+    assert windows[InvestigationDepth.QUICK].endswith("date:>now-30d")
+    assert windows[InvestigationDepth.STANDARD].endswith("date:>now-180d")
+    assert windows[InvestigationDepth.DEEP].endswith("date:>now-365d")
+
+
+async def test_an_accounts_search_range_narrows_the_query_it_sends() -> None:
+    """A plan limit would make the query invalid, so it narrows the window."""
+    payload = payloads.quotas_payload()
+    payload["maxSearchRangeMonths"] = 2
+    fake = FakeUrlscanClient(quotas_payload=payload)
+    adapter, _ = make_adapter(fake)
+    await adapter.lookup(make_request(depth=InvestigationDepth.DEEP), credential())
+    query = next(detail for name, detail in fake.calls if name == "search")
+    assert query.endswith("date:>now-60d")
+
+
+async def test_quota_is_read_before_the_search_that_depends_on_it() -> None:
+    adapter, fake = make_adapter()
+    await adapter.lookup(make_request(), credential())
+    order = [name for name, _ in fake.calls]
+    assert order.index("quotas") < order.index("search")
+
+
+async def test_a_lookup_still_bounds_its_query_when_quota_is_unavailable() -> None:
+    """Unknown is not unbounded."""
+    fake = FakeUrlscanClient()
+    fake.fail("quotas", ProviderRateLimitedError("urlscan"))
+    adapter, _ = make_adapter(fake)
+    await adapter.lookup(make_request(depth=InvestigationDepth.DEEP), credential())
+    query = next(detail for name, detail in fake.calls if name == "search")
+    assert query.endswith("date:>now-365d")
+
+
+async def test_a_lookup_bounds_its_query_when_quota_is_already_fresh() -> None:
+    clock = ManualClock()
+    quota_store = InMemoryQuotaStore(clock=clock)
+    fake = FakeUrlscanClient()
+    adapter = UrlscanAdapter(
+        client_factory=FakeUrlscanClientFactory(fake),  # type: ignore[arg-type]
+        quota_store=quota_store,
+        clock=clock,
+    )
+    await adapter.lookup(make_request(), credential())
+    fake.calls.clear()
+    await adapter.lookup(make_request(depth=InvestigationDepth.DEEP), credential())
+    assert not fake.called("quotas")
+    query = next(detail for name, detail in fake.calls if name == "search")
+    assert query.endswith("date:>now-365d")
+
+
+async def test_an_operator_can_narrow_the_window_further() -> None:
+    tuned = SearchLimits(page_size=10, max_candidates=1, max_per_group=1, lookback_days=14)
+    adapter, fake = make_adapter(
+        lookup_policy=UrlscanLookupPolicy(search_limits={InvestigationDepth.DEEP: tuned})
+    )
+    await adapter.lookup(make_request(depth=InvestigationDepth.DEEP), credential())
+    query = next(detail for name, detail in fake.calls if name == "search")
+    assert query.endswith("date:>now-14d")

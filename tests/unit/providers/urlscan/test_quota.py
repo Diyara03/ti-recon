@@ -297,3 +297,54 @@ def test_a_numeric_reset_sent_as_a_string_is_still_an_offset() -> None:
     bucket = parse_user_quotas(payload, retrieved_at=NOW).snapshot.bucket("search_day")
     assert bucket is not None
     assert bucket.reset_at == NOW + timedelta(hours=1)
+
+
+# --------------------------------------------------------------------------- #
+# The account's maximum searchable range
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"limits": {}, "maxSearchRangeMonths": 6},
+        {"limits": {"maxSearchRangeMonths": 6}},
+        {"limits": {"search": {"maxSearchRangeMonths": 6}}},
+        {"limits": {}, "max_search_range_months": 6},
+    ],
+)
+def test_the_account_search_range_is_read_wherever_urlscan_puts_it(
+    payload: dict[str, Any],
+) -> None:
+    assert parse_user_quotas(payload, retrieved_at=NOW).max_search_range_months == 6
+
+
+def test_an_absent_search_range_is_unknown_rather_than_unlimited() -> None:
+    """The caller's own lookback is finite, so unknown can never widen a query."""
+    assert parse_user_quotas(QUOTAS, retrieved_at=NOW).max_search_range_months is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["many", None, 0, -3, True, {"months": 6}],
+)
+def test_an_unreadable_search_range_is_ignored(value: Any) -> None:
+    payload = {"limits": {"search": {"maxSearchRangeMonths": value}}}
+    assert parse_user_quotas(payload, retrieved_at=NOW).max_search_range_months is None
+
+
+def test_an_absurd_search_range_is_capped() -> None:
+    payload = {"maxSearchRangeMonths": 100_000}
+    assert parse_user_quotas(payload, retrieved_at=NOW).max_search_range_months == 600
+
+
+def test_reading_the_search_range_does_not_disturb_the_allowances() -> None:
+    payload = dict(QUOTAS)
+    payload["maxSearchRangeMonths"] = 3
+    reading = parse_user_quotas(payload, retrieved_at=NOW)
+    assert reading.max_search_range_months == 3
+    assert {bucket.name for bucket in reading.snapshot.buckets} == {
+        "search_day",
+        "search_minute",
+        "retrieve_day",
+    }

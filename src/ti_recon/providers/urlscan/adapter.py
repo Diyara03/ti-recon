@@ -126,6 +126,7 @@ from ti_recon.providers.urlscan.search import (
 )
 
 __all__ = [
+    "UNSUPPORTED_REASONS",
     "URLSCAN_ARTIFACTS_UNAVAILABLE",
     "URLSCAN_FORENSICS_NOT_REQUESTED",
     "URLSCAN_NOT_SEARCHABLE",
@@ -140,6 +141,14 @@ _logger = logging.getLogger(__name__)
 #: an MD5, say, where only SHA-256 response bodies are indexed. A coverage gap,
 #: never an absence of findings.
 URLSCAN_NOT_SEARCHABLE: Final[str] = "URLSCAN_OBSERVABLE_NOT_SEARCHABLE"
+
+#: Human-readable reason per warning, carried on the envelope so the execution
+#: layer's outcome explains itself without anyone having to look the code up.
+UNSUPPORTED_REASONS: Final[dict[str, str]] = {
+    URLSCAN_NOT_SEARCHABLE: (
+        "urlscan indexes served response bodies by SHA-256 only; this observable cannot be searched"
+    )
+}
 
 #: Reported when a selected scan could not be retrieved. The other scans still
 #: produced evidence, so the run is partial rather than failed.
@@ -325,11 +334,18 @@ class UrlscanAdapter(ProviderAdapter):
 
     async def _refresh_quota_if_stale(
         self, client: UrlscanClient, credential: CredentialMaterial
-    ) -> ProviderQuotaSnapshot | None:
+    ) -> UrlscanQuotaReading | None:
         """Read quota only when Task 6's store has nothing fresh.
 
-        A failure here is swallowed on purpose: quota is useful context, and
-        losing it must not turn a successful lookup into a failed one.
+        Returns the whole reading rather than just the snapshot, because the
+        account's maximum searchable range travels with it and the search that
+        follows has to stay inside that range.
+
+        ``None`` means "nothing was read" — either the store already had a
+        fresh snapshot or the call failed. A failure here is swallowed on
+        purpose: quota is useful context, and losing it must not turn a
+        successful lookup into a failed one. The configured depth lookback then
+        stands unclamped, which is safe because it is already finite.
         """
         if not self._lookup_policy.quota_refresh_enabled:
             return None
@@ -352,7 +368,7 @@ class UrlscanAdapter(ProviderAdapter):
         reading = self._reading_from(result.payload, credential)
         if self._quota_store is not None:
             await self._quota_store.put(self._scope_identity(credential), reading.snapshot)
-        return reading.snapshot
+        return reading
 
     @staticmethod
     def _scope_identity(credential: CredentialMaterial) -> str:
@@ -389,18 +405,31 @@ class UrlscanAdapter(ProviderAdapter):
             # into an active one.
             raise UnsupportedProviderOperation(URLSCAN_PROVIDER_ID, operation="active_action")
 
-        limits = search_limits_for(request.depth, self._lookup_policy)
-        plan = plan_search(request.intel_object, depth=request.depth, limits=limits)
-        if plan is None:
-            return self._envelope(
-                request,
-                UrlscanNormalization(warnings=(URLSCAN_NOT_SEARCHABLE,)),
-                status=ProviderRunStatus.NO_DATA,
-            )
+        unsupported = self._unsupported_reason(request)
+        if unsupported is not None:
+            # No search is attempted, so this is not "we looked and found
+            # nothing" — see ``_unsupported_reason``.
+            return self._unsupported_envelope(request, unsupported)
 
         warnings: list[str] = []
         client = self._client_factory()
         try:
+            # Quota first, because it carries the account's maximum searchable
+            # range and the search has to be inside it. It costs nothing extra:
+            # this is the same once-per-TTL refresh that used to run last.
+            reading = await self._refresh_quota_if_stale(client, credential)
+            quota = reading.snapshot if reading is not None else None
+            limits = search_limits_for(
+                request.depth,
+                self._lookup_policy,
+                max_search_range_months=(
+                    reading.max_search_range_months if reading is not None else None
+                ),
+            )
+            plan = plan_search(request.intel_object, depth=request.depth, limits=limits)
+            if plan is None:  # pragma: no cover - guarded by _unsupported_reason
+                return self._unsupported_envelope(request, URLSCAN_NOT_SEARCHABLE)
+
             search = await client.search(
                 query=plan.query, size=plan.page_size, credential=credential
             )
@@ -409,7 +438,6 @@ class UrlscanAdapter(ProviderAdapter):
                 search.rate_limit_headers, operation="urlscan.search", now=self._clock.now()
             )
             if not candidates:
-                quota = await self._refresh_quota_if_stale(client, credential)
                 return self._envelope(
                     request,
                     UrlscanNormalization(),
@@ -433,7 +461,6 @@ class UrlscanAdapter(ProviderAdapter):
             normalization = normalization.merge(
                 await self._web_forensics(client, request, candidates, documents, credential)
             )
-            quota = await self._refresh_quota_if_stale(client, credential)
         finally:
             await client.aclose()
 
@@ -446,6 +473,40 @@ class UrlscanAdapter(ProviderAdapter):
         )
         return self._envelope(
             request, normalization, status=status, quota=quota, rate_limit=rate_limit
+        )
+
+    def _unsupported_reason(self, request: ProviderRequest) -> str | None:
+        """Why urlscan cannot answer for this observable at all, if it cannot.
+
+        The case that matters is a file identified only by MD5 or SHA-1.
+        urlscan indexes the bodies it served by SHA-256 and by nothing else, so
+        there is no query to run — which is a different statement from "the
+        query ran and matched nothing". Reporting it as NO_DATA would let a
+        blind spot read as a clean result, which is exactly the confusion the
+        coverage vocabulary exists to prevent.
+        """
+        if plan_search(request.intel_object, depth=request.depth) is not None:
+            return None
+        return URLSCAN_NOT_SEARCHABLE
+
+    def _unsupported_envelope(
+        self, request: ProviderRequest, reason: str
+    ) -> ProviderResultEnvelope:
+        """A run that was never attempted, said plainly.
+
+        ``NOT_SUPPORTED`` rather than ``NO_DATA``, and it carries a reason a
+        coverage report can quote: a future coverage layer reads this as
+        ``NOT_APPLICABLE`` for the capability, not as a covered lookup that
+        found nothing.
+        """
+        return ProviderResultEnvelope(
+            provider=URLSCAN_PROVIDER_ID,
+            operation=request.operation,
+            status=ProviderRunStatus.NOT_SUPPORTED,
+            adapter_version=self._descriptor.adapter_version,
+            api_version=self._descriptor.api_version,
+            warnings=(reason,),
+            error_message=UNSUPPORTED_REASONS.get(reason),
         )
 
     async def _normalize_candidate(

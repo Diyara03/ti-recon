@@ -109,11 +109,28 @@ class UrlscanLookupPolicy(FrozenTiReconModel):
 
 
 def search_limits_for(
-    depth: InvestigationDepth, policy: UrlscanLookupPolicy | None = None
+    depth: InvestigationDepth,
+    policy: UrlscanLookupPolicy | None = None,
+    *,
+    max_search_range_months: int | None = None,
 ) -> SearchLimits:
-    """The search bounds for a depth, from policy or from the defaults."""
+    """The search bounds for a depth, clamped to what the account may search.
+
+    Two independent limits, and the narrower wins:
+
+    * the configured depth lookback — TI Recon's own cost decision;
+    * ``max_search_range_months`` — the account's plan limit, reported by
+      urlscan's quota endpoint.
+
+    Exceeding a plan limit does not consume an allowance, it makes the query
+    invalid, so clamping turns "your key may not search that far back" into a
+    narrower window rather than a failed lookup. An unknown plan limit leaves
+    the configured lookback in force, which is already finite: there is no path
+    here that produces an unbounded search.
+    """
     limits = policy.search_limits if policy is not None else DEPTH_SEARCH_LIMITS
-    return limits.get(depth, DEPTH_SEARCH_LIMITS[InvestigationDepth.STANDARD])
+    configured = limits.get(depth, DEPTH_SEARCH_LIMITS[InvestigationDepth.STANDARD])
+    return configured.clamped_to_months(max_search_range_months)
 
 
 def forensics_requested(

@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from ti_recon.enums import IntelObjectType, InvestigationDepth, ObjectClass
 from ti_recon.models.intel_object import IntelObject
 from ti_recon.providers.urlscan import (
+    DAYS_PER_MONTH,
     DEPTH_SEARCH_LIMITS,
     ScanCandidate,
     SearchLimits,
@@ -140,9 +141,9 @@ def test_a_quote_inside_a_url_value_is_escaped() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_a_single_term_query() -> None:
+def test_a_single_term_query_is_still_date_bounded() -> None:
     term = SearchTerm(field_name=UrlscanSearchField.PAGE_DOMAIN, value="example.com")
-    assert build_query([term]) == 'page.domain:"example.com"'
+    assert build_query([term], since="now-30d") == 'page.domain:"example.com" AND date:>now-30d'
 
 
 def test_several_terms_are_grouped_before_being_bounded() -> None:
@@ -150,19 +151,35 @@ def test_several_terms_are_grouped_before_being_bounded() -> None:
         SearchTerm(field_name=UrlscanSearchField.PAGE_DOMAIN, value="example.com"),
         SearchTerm(field_name=UrlscanSearchField.DOMAIN, value="example.com"),
     ]
-    assert build_query(terms, since="now-1y") == (
-        '(page.domain:"example.com" OR domain:"example.com") AND date:>now-1y'
+    assert build_query(terms, since="now-180d") == (
+        '(page.domain:"example.com" OR domain:"example.com") AND date:>now-180d'
     )
 
 
 def test_an_empty_search_is_refused() -> None:
     with pytest.raises(ValueError, match="at least one term"):
-        build_query([])
+        build_query([], since="now-30d")
 
 
-def test_a_time_bound_must_be_a_known_expression() -> None:
+@pytest.mark.parametrize(
+    "since",
+    ["", "now", "now-1y", "now-30d OR x", "*", "now-30d AND date:>now-10y", "now--1d"],
+)
+def test_a_date_bound_that_is_not_a_plain_lookback_is_refused(since: str) -> None:
+    """The bound is composed by TI Recon; anything else cannot reach the query."""
+    term = SearchTerm(field_name=UrlscanSearchField.PAGE_DOMAIN, value="example.com")
+    with pytest.raises(ValueError, match="now-<days>d"):
+        build_query([term], since=since)
+
+
+def test_a_lookback_is_always_present_and_bounded() -> None:
+    """There is no value of ``SearchLimits`` that produces an unbounded query."""
+    assert "lookback_days" in SearchLimits.model_fields
+    assert "since" not in SearchLimits.model_fields
     with pytest.raises(ValidationError):
-        SearchLimits(page_size=10, max_candidates=1, max_per_group=1, since="now OR x")
+        SearchLimits(page_size=10, max_candidates=1, max_per_group=1, lookback_days=0)
+    with pytest.raises(ValidationError):
+        SearchLimits(page_size=10, max_candidates=1, max_per_group=1, lookback_days=10_000)
 
 
 # --------------------------------------------------------------------------- #
@@ -173,7 +190,7 @@ def test_a_time_bound_must_be_a_known_expression() -> None:
 def test_a_domain_is_searched_as_the_page_and_as_a_contacted_domain() -> None:
     plan = plan_search(observable(IntelObjectType.DOMAIN_NAME, "example.com"))
     assert plan is not None
-    assert plan.query == ('(page.domain:"example.com" OR domain:"example.com") AND date:>now-1y')
+    assert plan.query == ('(page.domain:"example.com" OR domain:"example.com") AND date:>now-180d')
 
 
 def test_an_ip_is_searched_as_the_page_ip_and_as_a_contacted_ip() -> None:
@@ -226,10 +243,14 @@ def test_depth_bounds_grow_with_cost() -> None:
     assert quick.page_size < standard.page_size < deep.page_size
 
 
-def test_only_a_deep_lookup_sees_the_whole_history() -> None:
-    assert DEPTH_SEARCH_LIMITS[InvestigationDepth.QUICK].since == "now-90d"
-    assert DEPTH_SEARCH_LIMITS[InvestigationDepth.STANDARD].since == "now-1y"
-    assert DEPTH_SEARCH_LIMITS[InvestigationDepth.DEEP].since is None
+def test_every_depth_is_bounded_including_deep() -> None:
+    """An unbounded query is not "more thorough"; it is a scan of the index."""
+    assert DEPTH_SEARCH_LIMITS[InvestigationDepth.QUICK].lookback_days == 30
+    assert DEPTH_SEARCH_LIMITS[InvestigationDepth.STANDARD].lookback_days == 180
+    assert DEPTH_SEARCH_LIMITS[InvestigationDepth.DEEP].lookback_days == 365
+    for limits in DEPTH_SEARCH_LIMITS.values():
+        assert limits.lookback_days >= 1
+        assert limits.since.startswith("now-")
 
 
 def test_a_quick_plan_is_time_bounded_and_cheap() -> None:
@@ -238,21 +259,28 @@ def test_a_quick_plan_is_time_bounded_and_cheap() -> None:
         depth=InvestigationDepth.QUICK,
     )
     assert plan is not None
-    assert plan.query.endswith("AND date:>now-90d")
+    assert plan.query.endswith("AND date:>now-30d")
     assert plan.page_size == 10
 
 
-def test_a_deep_plan_drops_the_time_bound() -> None:
+@pytest.mark.parametrize("depth", list(InvestigationDepth))
+def test_no_depth_ever_produces_an_unbounded_query(depth: InvestigationDepth) -> None:
+    plan = plan_search(observable(IntelObjectType.DOMAIN_NAME, "example.com"), depth=depth)
+    assert plan is not None
+    assert " AND date:>now-" in plan.query
+
+
+def test_a_deep_plan_reaches_a_year_back() -> None:
     plan = plan_search(
         observable(IntelObjectType.DOMAIN_NAME, "example.com"),
         depth=InvestigationDepth.DEEP,
     )
     assert plan is not None
-    assert "date:>" not in plan.query
+    assert plan.query.endswith("AND date:>now-365d")
 
 
 def test_explicit_limits_override_the_depth_default() -> None:
-    limits = SearchLimits(page_size=5, max_candidates=2, max_per_group=1, since=None)
+    limits = SearchLimits(page_size=5, max_candidates=2, max_per_group=1, lookback_days=7)
     plan = plan_search(observable(IntelObjectType.DOMAIN_NAME, "example.com"), limits=limits)
     assert plan is not None
     assert plan.limits == limits
@@ -369,13 +397,13 @@ def candidate(
 
 
 def test_the_newest_scans_are_preferred() -> None:
-    limits = SearchLimits(page_size=10, max_candidates=2, max_per_group=9, since=None)
+    limits = SearchLimits(page_size=10, max_candidates=2, max_per_group=9, lookback_days=365)
     chosen = select_candidates([candidate(1), candidate(5), candidate(3)], limits)
     assert [c.scan_id for c in chosen] == [uuid_at(5), uuid_at(3)]
 
 
 def test_one_busy_site_cannot_consume_the_whole_budget() -> None:
-    limits = SearchLimits(page_size=10, max_candidates=3, max_per_group=1, since=None)
+    limits = SearchLimits(page_size=10, max_candidates=3, max_per_group=1, lookback_days=365)
     chosen = select_candidates(
         [
             candidate(1, domain="busy.example"),
@@ -390,7 +418,7 @@ def test_one_busy_site_cannot_consume_the_whole_budget() -> None:
 
 
 def test_unspent_budget_is_filled_rather_than_wasted() -> None:
-    limits = SearchLimits(page_size=10, max_candidates=3, max_per_group=1, since=None)
+    limits = SearchLimits(page_size=10, max_candidates=3, max_per_group=1, lookback_days=365)
     chosen = select_candidates([candidate(1), candidate(2), candidate(3), candidate(4)], limits)
     assert len(chosen) == 3
     # The per-group cap admitted one, and the rest of the budget went to the
@@ -399,13 +427,13 @@ def test_unspent_budget_is_filled_rather_than_wasted() -> None:
 
 
 def test_selection_never_exceeds_the_budget() -> None:
-    limits = SearchLimits(page_size=10, max_candidates=2, max_per_group=5, since=None)
+    limits = SearchLimits(page_size=10, max_candidates=2, max_per_group=5, lookback_days=365)
     chosen = select_candidates([candidate(index) for index in range(1, 20)], limits)
     assert len(chosen) == 2
 
 
 def test_scans_without_a_timestamp_go_last_deterministically() -> None:
-    limits = SearchLimits(page_size=10, max_candidates=3, max_per_group=9, since=None)
+    limits = SearchLimits(page_size=10, max_candidates=3, max_per_group=9, lookback_days=365)
     undated_b = ScanCandidate(scan_id=uuid_at(9), page_domain="b.example")
     undated_a = ScanCandidate(scan_id=uuid_at(8), page_domain="a.example")
     chosen = select_candidates([undated_b, undated_a, candidate(1)], limits)
@@ -413,7 +441,7 @@ def test_scans_without_a_timestamp_go_last_deterministically() -> None:
 
 
 def test_selecting_from_nothing_is_empty_rather_than_an_error() -> None:
-    limits = SearchLimits(page_size=10, max_candidates=3, max_per_group=1, since=None)
+    limits = SearchLimits(page_size=10, max_candidates=3, max_per_group=1, lookback_days=365)
     assert select_candidates([], limits) == ()
 
 
@@ -422,3 +450,90 @@ def test_a_candidate_without_a_domain_groups_by_ip_then_by_itself() -> None:
     alone = ScanCandidate(scan_id=uuid_at(2))
     assert by_ip.group_key == "198.51.100.7"
     assert alone.group_key == uuid_at(2)
+
+
+# --------------------------------------------------------------------------- #
+# The account's maximum searchable range
+# --------------------------------------------------------------------------- #
+
+
+def test_a_shorter_account_range_narrows_the_lookback() -> None:
+    """A plan limit is not an allowance: exceeding it invalidates the query."""
+    limits = DEPTH_SEARCH_LIMITS[InvestigationDepth.DEEP]
+    clamped = limits.clamped_to_months(3)
+    assert clamped.lookback_days == 90
+    assert clamped.since == "now-90d"
+    assert clamped.page_size == limits.page_size
+    assert clamped.max_candidates == limits.max_candidates
+
+
+def test_a_longer_account_range_never_widens_the_lookback() -> None:
+    limits = DEPTH_SEARCH_LIMITS[InvestigationDepth.QUICK]
+    assert limits.clamped_to_months(24).lookback_days == limits.lookback_days
+
+
+@pytest.mark.parametrize("months", [None, 0, -3])
+def test_an_unknown_or_nonsensical_account_range_leaves_the_lookback_alone(
+    months: int | None,
+) -> None:
+    """Unknown must not mean unbounded — the configured value is already finite."""
+    limits = DEPTH_SEARCH_LIMITS[InvestigationDepth.DEEP]
+    clamped = limits.clamped_to_months(months)
+    assert clamped.lookback_days == limits.lookback_days
+    assert clamped.since == "now-365d"
+
+
+def test_clamping_never_produces_a_zero_day_window() -> None:
+    limits = DEPTH_SEARCH_LIMITS[InvestigationDepth.QUICK]
+    assert limits.clamped_to_months(1).lookback_days >= 1
+
+
+def test_a_month_is_counted_conservatively() -> None:
+    """Erring inside the provider's window costs days; erring outside costs all."""
+    assert DAYS_PER_MONTH == 30
+    assert DEPTH_SEARCH_LIMITS[InvestigationDepth.DEEP].clamped_to_months(12).lookback_days == 360
+
+
+# --------------------------------------------------------------------------- #
+# The date bound cannot be removed through a value
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        'example.com" OR page.domain:"victim.com',
+        "example.com) OR (date:>now-10y",
+        "example.com AND date:>now-10y",
+        "example.com*",
+    ],
+)
+def test_an_ioc_cannot_smuggle_its_way_past_the_date_bound(value: str) -> None:
+    """The value never becomes syntax, so it can never reach the bound."""
+    with pytest.raises(ValidationError):
+        SearchTerm(field_name=UrlscanSearchField.PAGE_DOMAIN, value=value)
+
+
+def test_a_url_value_containing_query_syntax_stays_inside_its_own_term() -> None:
+    """URL values accept punctuation, so escaping is what protects the bound.
+
+    A URL with whitespace in it is refused outright by the field's shape check,
+    so the only injection worth testing here is one that keeps the URL shape.
+    """
+    term = SearchTerm(
+        field_name=UrlscanSearchField.PAGE_URL,
+        value='https://evil.example/?x="OR+date:>now-10y+OR+"',
+    )
+    query = build_query([term], since="now-30d")
+    assert query.endswith(" AND date:>now-30d")
+    # The injected text survives as literal characters inside the quoted phrase
+    # — its quotes are escaped, so it never becomes a second condition.
+    assert query.count(" AND date:>") == 1
+    assert '\\"' in query
+
+
+def test_the_bound_survives_a_multi_term_query() -> None:
+    plan = plan_search(observable(IntelObjectType.URL, "https://example.com/a?b=c"))
+    assert plan is not None
+    assert plan.query.endswith(" AND date:>now-180d")
+    assert plan.query.count("date:>") == 1

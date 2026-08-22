@@ -116,7 +116,9 @@ from ti_recon.providers.urlscan.quota import (
     parse_user_quotas,
 )
 from ti_recon.providers.urlscan.search import (
+    DAYS_PER_MONTH,
     DEPTH_SEARCH_LIMITS,
+    MAX_LOOKBACK_DAYS,
     ScanCandidate,
     SearchLimits,
     SearchTerm,
@@ -131,6 +133,7 @@ from ti_recon.providers.urlscan.search import (
 
 __all__ = [
     "CREDENTIAL_STATUS_BY_CATEGORY",
+    "DAYS_PER_MONTH",
     "DEFAULT_FORENSIC_ARTIFACTS",
     "DEPTH_SEARCH_LIMITS",
     "ENGINE_AGGREGATE_FAMILY",
@@ -140,6 +143,7 @@ __all__ = [
     "MAX_CONTACTED_DOMAINS",
     "MAX_CONTACTED_IPS",
     "MAX_ITEMS_PER_CATEGORY",
+    "MAX_LOOKBACK_DAYS",
     "MAX_REDIRECT_HOPS",
     "MAX_SCAN_BYTES",
     "MAX_SEARCH_SIZE",

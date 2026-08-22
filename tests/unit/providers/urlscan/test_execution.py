@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from fixtures.urlscan import payloads
 from fixtures.urlscan.fake_client import FakeUrlscanClient, FakeUrlscanClientFactory
 from ti_recon.artifacts import ArtifactScope, InMemoryArtifactStore
 from ti_recon.credentials import (
@@ -30,6 +31,7 @@ from ti_recon.credentials import (
 from ti_recon.enums import (
     IntelObjectType,
     InvestigationDepth,
+    ObjectClass,
     ProviderCapability,
     ProviderErrorCategory,
     ProviderOperation,
@@ -312,3 +314,100 @@ async def test_captured_page_content_never_reaches_the_envelope(stack: Stack) ->
 def test_the_execution_policy_never_shares_results_between_analysts() -> None:
     policy = build_urlscan_execution_policy()
     assert policy.cache.scope.value == "user"
+
+
+# --------------------------------------------------------------------------- #
+# Unsupported is not the same as empty
+# --------------------------------------------------------------------------- #
+
+
+def file_subject(algorithm: str, digest: str) -> IntelObject:
+    return IntelObject(
+        object_class=ObjectClass.OBSERVABLE,
+        object_type=IntelObjectType.FILE,
+        canonical_value=digest,
+        display_value=digest,
+        properties={"hashes": {algorithm: digest}},
+    )
+
+
+async def test_an_md5_reaches_the_executor_as_not_supported(stack: Stack) -> None:
+    """A blind spot must not arrive at the engine looking like a clean result."""
+    outcome = await stack.executor.execute(
+        stack.adapter,
+        request_for(intel_object=file_subject("MD5", "c" * 32)),
+        stack.context(),
+    )
+    assert outcome.status is ProviderRunStatus.NOT_SUPPORTED
+    assert outcome.status is not ProviderRunStatus.NO_DATA
+    assert not stack.client.called("search")
+    assert outcome.result is not None
+    assert "URLSCAN_OBSERVABLE_NOT_SEARCHABLE" in outcome.result.warnings
+
+
+async def test_an_unsupported_observable_is_not_cached_as_an_answer(
+    stack: Stack,
+) -> None:
+    """Nothing was asked of urlscan, so there is no answer to keep."""
+    request = request_for(intel_object=file_subject("SHA-1", "d" * 40))
+    first = await stack.executor.execute(stack.adapter, request, stack.context())
+    second = await stack.executor.execute(stack.adapter, request, stack.context())
+    assert first.status is ProviderRunStatus.NOT_SUPPORTED
+    assert second.cache_hit is False
+    assert second.status is ProviderRunStatus.NOT_SUPPORTED
+
+
+async def test_a_searchable_hash_with_no_hits_is_no_data_through_the_executor(
+    stack: Stack,
+) -> None:
+    stack.client.search_payload = {"results": []}
+    outcome = await stack.executor.execute(
+        stack.adapter,
+        request_for(intel_object=file_subject("SHA-256", "a" * 64)),
+        stack.context(),
+    )
+    assert stack.client.called("search")
+    assert outcome.status is ProviderRunStatus.NO_DATA
+
+
+async def test_the_executor_records_a_reason_for_an_unsupported_run(
+    stack: Stack,
+) -> None:
+    """Enough for a coverage report to say why, without reading the code."""
+    outcome = await stack.executor.execute(
+        stack.adapter,
+        request_for(intel_object=file_subject("MD5", "c" * 32)),
+        stack.context(),
+    )
+    assert outcome.error_message is not None
+    assert "SHA-256" in outcome.error_message
+
+
+# --------------------------------------------------------------------------- #
+# Bounded searches through the executor
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("depth", list(InvestigationDepth))
+async def test_every_search_the_executor_issues_is_date_bounded(
+    depth: InvestigationDepth,
+) -> None:
+    """A fresh stack per depth, so no cache hit can make this vacuous."""
+    stack = Stack()
+    await stack.add_credential(USER_A, KEY_A)
+    await stack.executor.execute(stack.adapter, request_for(depth=depth), stack.context())
+    queries = [detail for name, detail in stack.client.calls if name == "search"]
+    assert len(queries) == 1
+    assert " AND date:>now-" in queries[0]
+
+
+async def test_an_account_range_narrows_the_query_through_the_executor() -> None:
+    payload = payloads.quotas_payload()
+    payload["maxSearchRangeMonths"] = 1
+    stack = Stack(FakeUrlscanClient(quotas_payload=payload))
+    await stack.add_credential(USER_A, KEY_A)
+    await stack.executor.execute(
+        stack.adapter, request_for(depth=InvestigationDepth.DEEP), stack.context()
+    )
+    query = next(detail for name, detail in stack.client.calls if name == "search")
+    assert query.endswith("date:>now-30d")

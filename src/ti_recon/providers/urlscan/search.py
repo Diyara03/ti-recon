@@ -36,7 +36,9 @@ from ti_recon.models.intel_object import IntelObject
 from ti_recon.providers.urlscan.errors import parse_utc_timestamp
 
 __all__ = [
+    "DAYS_PER_MONTH",
     "DEPTH_SEARCH_LIMITS",
+    "MAX_LOOKBACK_DAYS",
     "ScanCandidate",
     "SearchLimits",
     "SearchTerm",
@@ -74,6 +76,17 @@ class UrlscanSearchField(StrEnum):
     #: SHA-256 of a response body the page served.
     HASH = "hash"
 
+
+#: The longest lookback any depth may configure. Two years is far beyond what
+#: current-infrastructure questions need and still finite.
+MAX_LOOKBACK_DAYS: Final[int] = 730
+
+#: Days counted per month when clamping to an account's maximum search range.
+#: Short on purpose — see :meth:`SearchLimits.clamped_to_months`.
+DAYS_PER_MONTH: Final[int] = 30
+
+#: The only shape a date bound may take, checked where the query is composed.
+_LOOKBACK_EXPRESSION: Final[re.Pattern[str]] = re.compile(r"^now-[0-9]{1,4}d$")
 
 #: How a value must look, per field. Each is deliberately strict: these are
 #: normalized observables, not free text, so anything that fails to match is a
@@ -133,25 +146,55 @@ class SearchLimits(FrozenTiReconModel):
     #: Candidates allowed from one page domain, so a single busy site cannot
     #: consume the whole budget and hide the rest of the infrastructure.
     max_per_group: int = Field(ge=1, le=50)
-    #: How far back to look, as an ElasticSearch date expression, or ``None``
-    #: for urlscan's whole history.
-    since: str | None = Field(default=None, pattern=r"^now-[0-9]{1,4}[dwMy]$")
+    #: How far back to look, in days. There is deliberately no "unbounded"
+    #: value: an open-ended query over urlscan's whole index is expensive for
+    #: urlscan, slow for the analyst, and — on an account whose plan limits the
+    #: searchable range — rejected outright rather than silently narrowed.
+    lookback_days: int = Field(ge=1, le=MAX_LOOKBACK_DAYS)
+
+    @property
+    def since(self) -> str:
+        """The date bound as the query language's own expression."""
+        return f"now-{self.lookback_days}d"
+
+    def clamped_to_months(self, max_months: int | None) -> SearchLimits:
+        """Narrow the lookback to an account's maximum searchable range.
+
+        ``None`` means the account did not say, in which case the configured
+        depth lookback stands — it is already finite, so an unknown provider
+        maximum can never widen a query.
+
+        A month is counted as :data:`DAYS_PER_MONTH` days, which is short for
+        most months on purpose: erring inside the provider's window costs a few
+        days of history, erring outside it costs the whole query.
+        """
+        if max_months is None or max_months < 1:
+            return self
+        allowed = max_months * DAYS_PER_MONTH
+        if allowed >= self.lookback_days:
+            return self
+        return self.model_copy(update={"lookback_days": max(1, allowed)})
 
 
 #: Depth is the analyst's cost signal, so it decides the bound.
 #:
-#: QUICK is a triage answer from the most recent scan. STANDARD covers enough
-#: scans to see infrastructure change. DEEP drops the time bound entirely,
-#: because historical infrastructure is exactly what a deep lookup is for.
+#: QUICK is a triage answer from the last month. STANDARD covers half a year,
+#: enough to see infrastructure change. DEEP reaches a year back, which is what
+#: a historical-infrastructure question needs.
+#:
+#: Every depth is bounded, including DEEP. An unbounded query is not "more
+#: thorough": it asks urlscan to scan its whole index for a question about
+#: current infrastructure, and an account whose plan caps the searchable range
+#: would have the query refused rather than quietly narrowed.
 DEPTH_SEARCH_LIMITS: Final[dict[InvestigationDepth, SearchLimits]] = {
     InvestigationDepth.QUICK: SearchLimits(
-        page_size=10, max_candidates=1, max_per_group=1, since="now-90d"
+        page_size=10, max_candidates=1, max_per_group=1, lookback_days=30
     ),
     InvestigationDepth.STANDARD: SearchLimits(
-        page_size=50, max_candidates=3, max_per_group=2, since="now-1y"
+        page_size=50, max_candidates=3, max_per_group=2, lookback_days=180
     ),
     InvestigationDepth.DEEP: SearchLimits(
-        page_size=100, max_candidates=8, max_per_group=3, since=None
+        page_size=100, max_candidates=8, max_per_group=3, lookback_days=365
     ),
 }
 
@@ -234,23 +277,31 @@ def _validate_value_for_field(field_name: UrlscanSearchField, value: str) -> Non
         raise ValueError(msg)
 
 
-def build_query(terms: Sequence[SearchTerm], *, since: str | None = None) -> str:
-    """Compose an ``OR`` of terms, optionally bounded in time.
+def build_query(terms: Sequence[SearchTerm], *, since: str) -> str:
+    """Compose an ``OR`` of terms, bounded in time.
 
     The boolean structure is fixed here and never comes from a caller. Several
     terms describe the same observable seen in different roles — the page's own
     domain, and any domain the page contacted — so ``OR`` is the only join that
     makes sense, and a caller cannot ask for another.
+
+    ``since`` is required and its shape is checked, which is what makes "every
+    normal search is date bounded" structural: there is no argument that
+    produces an unbounded query, and a value that is not a plain ``now-<n>d``
+    expression is rejected rather than concatenated into the query. The bound is
+    appended with ``AND`` after the terms are grouped, so no value inside a term
+    can escape its own parentheses and disable it.
     """
     if not terms:
         msg = "a search needs at least one term"
         raise ValueError(msg)
+    if not _LOOKBACK_EXPRESSION.match(since):
+        msg = "a search bound must be a now-<days>d expression"
+        raise ValueError(msg)
     rendered = " OR ".join(term.render() for term in terms)
     if len(terms) > 1:
         rendered = f"({rendered})"
-    if since:
-        rendered = f"{rendered} AND date:>{since}"
-    return rendered
+    return f"{rendered} AND date:>{since}"
 
 
 def plan_search(

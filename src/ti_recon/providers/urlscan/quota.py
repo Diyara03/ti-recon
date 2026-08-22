@@ -28,6 +28,8 @@ from collections.abc import Mapping
 from datetime import datetime, timedelta
 from typing import Any, Final
 
+from pydantic import Field
+
 from ti_recon.models.base import FrozenTiReconModel, utc_now
 from ti_recon.providers.quota import ProviderQuotaSnapshot, QuotaBucket, QuotaPeriod
 from ti_recon.providers.result import RateLimitSnapshot, RateLimitWindow
@@ -36,6 +38,7 @@ from ti_recon.providers.urlscan.errors import parse_utc_timestamp
 
 __all__ = [
     "GATING_ACTIONS",
+    "MAX_SEARCH_RANGE_KEYS",
     "QUOTA_PERIODS",
     "UrlscanQuotaReading",
     "parse_rate_limit_headers",
@@ -57,6 +60,15 @@ QUOTA_PERIODS: Final[dict[str, QuotaPeriod]] = {
     "day": QuotaPeriod.DAY,
     "month": QuotaPeriod.MONTH,
 }
+
+#: Where an account's maximum searchable range may appear. urlscan reports it
+#: alongside the allowances rather than inside one, and the exact nesting has
+#: moved before, so all three plausible homes are checked and the first usable
+#: value wins.
+MAX_SEARCH_RANGE_KEYS: Final[tuple[str, ...]] = (
+    "maxSearchRangeMonths",
+    "max_search_range_months",
+)
 
 #: Where the per-action blocks live in the response. Read from the envelope when
 #: present and from the top level when not, so a flatter response still parses.
@@ -84,6 +96,14 @@ class UrlscanQuotaReading(FrozenTiReconModel):
 
     snapshot: ProviderQuotaSnapshot
     non_gating: tuple[QuotaBucket, ...] = ()
+
+    #: How many months back this account is allowed to search, if urlscan said.
+    #:
+    #: A plan limit rather than an allowance: exceeding it does not consume
+    #: anything, it makes the query invalid. TI Recon's own depth lookback is
+    #: clamped to it so a deep lookup on a restricted account narrows its window
+    #: instead of being refused.
+    max_search_range_months: int | None = Field(default=None, ge=1, le=600)
 
     @property
     def is_exhausted(self) -> bool:
@@ -143,7 +163,33 @@ def parse_user_quotas(
         retrieved_at=now,
         buckets=tuple(gating),
     )
-    return UrlscanQuotaReading(snapshot=snapshot, non_gating=tuple(other))
+    return UrlscanQuotaReading(
+        snapshot=snapshot,
+        non_gating=tuple(other),
+        max_search_range_months=_max_search_range_months(payload, blocks),
+    )
+
+
+def _max_search_range_months(payload: Mapping[str, Any], blocks: Mapping[str, Any]) -> int | None:
+    """The account's maximum searchable range, wherever urlscan put it.
+
+    Checked at the top level, next to the allowances, and inside the ``search``
+    allowance itself. An unreadable or absent value is ``None``, which leaves
+    the configured depth lookback in force — already finite, so a missing plan
+    limit can never widen a query.
+    """
+    search_block = blocks.get("search")
+    candidates: tuple[Mapping[str, Any], ...] = (
+        payload,
+        blocks,
+        search_block if isinstance(search_block, Mapping) else {},
+    )
+    for source in candidates:
+        for key in MAX_SEARCH_RANGE_KEYS:
+            months = _non_negative_int(source.get(key))
+            if months is not None and months >= 1:
+                return min(months, 600)
+    return None
 
 
 def parse_rate_limit_headers(

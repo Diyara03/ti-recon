@@ -645,3 +645,86 @@ def test_the_filter_leaves_a_record_without_a_url_alone() -> None:
     record = logging.LogRecord("httpx", logging.INFO, __file__, 1, "plain %s", ("message",), None)
     assert QueryStringRedactingFilter().filter(record) is True
     assert record.args == ("message",)
+
+
+@respx.mock
+async def test_an_investigated_value_in_a_query_is_redacted_from_httpx_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The same filter that hides a key also stops a lookup value leaking.
+
+    This module's own log line already omits the query string; httpx's did not.
+    """
+    client = ProviderHttpClient(make_config())
+    respx.get(f"{BASE_URL}search").mock(return_value=httpx.Response(200))
+    try:
+        with caplog.at_level(logging.DEBUG):
+            await client.get("search", params={"q": "victim-domain.example"})
+    finally:
+        await client.aclose()
+
+    rendered = "\n".join(record.getMessage() for record in caplog.records)
+    assert "victim-domain.example" not in rendered
+    assert "[REDACTED]" in rendered
+
+
+@respx.mock
+async def test_a_url_without_a_query_is_logged_unchanged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = ProviderHttpClient(make_config())
+    respx.get(f"{BASE_URL}ip/1.2.3.4").mock(return_value=httpx.Response(200))
+    try:
+        with caplog.at_level(logging.DEBUG):
+            await client.get("ip/1.2.3.4")
+    finally:
+        await client.aclose()
+
+    rendered = "\n".join(record.getMessage() for record in caplog.records)
+    assert f"{BASE_URL}ip/1.2.3.4" in rendered
+    assert "[REDACTED]" not in rendered
+
+
+def test_the_filter_keeps_everything_that_is_not_the_query() -> None:
+    """A redacted line must still be a usable line."""
+    record = logging.LogRecord(
+        "httpx",
+        logging.INFO,
+        __file__,
+        1,
+        'HTTP Request: %s %s "%s %d %s"',
+        ("GET", "https://api.example/v1/search?q=secret-value", "HTTP/1.1", 200, "OK"),
+        None,
+    )
+    assert QueryStringRedactingFilter().filter(record) is True
+    message = record.getMessage()
+    assert "secret-value" not in message
+    assert "GET" in message
+    assert "https://api.example/v1/search?[REDACTED]" in message
+    assert "200" in message
+    assert "OK" in message
+
+
+def test_the_filter_leaves_a_record_with_no_arguments_alone() -> None:
+    record = logging.LogRecord("httpx", logging.INFO, __file__, 1, "connected", None, None)
+    assert QueryStringRedactingFilter().filter(record) is True
+    assert record.getMessage() == "connected"
+
+
+@respx.mock
+async def test_a_query_parameter_credential_never_reaches_an_exception(
+    client: ProviderHttpClient,
+) -> None:
+    """A failure carrying the URL would carry the key with it."""
+    query_client = ProviderHttpClient(
+        make_config(auth=AuthConfig(placement=AuthPlacement.QUERY, query_param="apikey"))
+    )
+    respx.get(f"{BASE_URL}x").mock(side_effect=httpx.ConnectError("refused"))
+    try:
+        with pytest.raises(ProviderUnavailableError) as caught:
+            await query_client.get("x", credential=make_credential())
+    finally:
+        await query_client.aclose()
+
+    text = f"{caught.value}\n{caught.value!r}\n{caught.value.args}"
+    assert SECRET not in text
