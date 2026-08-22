@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+from calendar import monthrange
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
 from enum import StrEnum
@@ -36,9 +37,10 @@ from ti_recon.models.intel_object import IntelObject
 from ti_recon.providers.urlscan.errors import parse_utc_timestamp
 
 __all__ = [
-    "DAYS_PER_MONTH",
+    "DEEP_FALLBACK_LOOKBACK_DAYS",
     "DEPTH_SEARCH_LIMITS",
     "MAX_LOOKBACK_DAYS",
+    "MAX_LOOKBACK_MONTHS",
     "ScanCandidate",
     "SearchLimits",
     "SearchTerm",
@@ -46,9 +48,11 @@ __all__ = [
     "UrlscanSearchPlan",
     "build_query",
     "cursor_for_hit",
+    "lookback_days_for_months",
     "parse_hits",
     "plan_search",
     "select_candidates",
+    "subtract_months",
 ]
 
 
@@ -79,11 +83,19 @@ class UrlscanSearchField(StrEnum):
 
 #: The longest lookback any depth may configure. Two years is far beyond what
 #: current-infrastructure questions need and still finite.
-MAX_LOOKBACK_DAYS: Final[int] = 730
+MAX_LOOKBACK_DAYS: Final[int] = 7305
 
-#: Days counted per month when clamping to an account's maximum search range.
-#: Short on purpose — see :meth:`SearchLimits.clamped_to_months`.
-DAYS_PER_MONTH: Final[int] = 30
+#: TI Recon's own ceiling on an account's reported search range, in months.
+#:
+#: A generous urlscan plan can report a range longer than anyone investigates
+#: over; twenty years is already far past the point where an old scan is a
+#: pivot rather than history, and a finite ceiling keeps the derived day count
+#: inside :data:`MAX_LOOKBACK_DAYS`.
+MAX_LOOKBACK_MONTHS: Final[int] = 240
+
+#: What DEEP falls back to when the account's maximum cannot be determined.
+#: A safety net, not the policy — see :data:`DEPTH_SEARCH_LIMITS`.
+DEEP_FALLBACK_LOOKBACK_DAYS: Final[int] = 365
 
 #: The only shape a date bound may take, checked where the query is composed.
 _LOOKBACK_EXPRESSION: Final[re.Pattern[str]] = re.compile(r"^now-[0-9]{1,4}d$")
@@ -150,42 +162,49 @@ class SearchLimits(FrozenTiReconModel):
     #: value: an open-ended query over urlscan's whole index is expensive for
     #: urlscan, slow for the analyst, and — on an account whose plan limits the
     #: searchable range — rejected outright rather than silently narrowed.
+    #:
+    #: When :attr:`use_account_maximum` is set this is the *fallback* window,
+    #: used only when the account's own maximum is unknown.
     lookback_days: int = Field(ge=1, le=MAX_LOOKBACK_DAYS)
+
+    #: Whether this depth should reach as far back as the credential allows.
+    #:
+    #: Set for DEEP and for nothing else. A phishing kit first scanned in 2022
+    #: is still the pivot that identifies the 2026 deployment, so a deep
+    #: investigation asks for everything the analyst's account is entitled to
+    #: search — while retrieving the same small number of scans as always.
+    use_account_maximum: bool = False
 
     @property
     def since(self) -> str:
         """The date bound as the query language's own expression."""
         return f"now-{self.lookback_days}d"
 
-    def clamped_to_months(self, max_months: int | None) -> SearchLimits:
-        """Narrow the lookback to an account's maximum searchable range.
+    def with_lookback_days(self, days: int) -> SearchLimits:
+        """The same budget over a different window.
 
-        ``None`` means the account did not say, in which case the configured
-        depth lookback stands — it is already finite, so an unknown provider
-        maximum can never widen a query.
-
-        A month is counted as :data:`DAYS_PER_MONTH` days, which is short for
-        most months on purpose: erring inside the provider's window costs a few
-        days of history, erring outside it costs the whole query.
+        Only the window changes. Page size, candidate count and the per-domain
+        cap are untouched, because how far back a search reaches and how many
+        scans it retrieves are separate controls: a decade of history still
+        returns a handful of representative scans.
         """
-        if max_months is None or max_months < 1:
-            return self
-        allowed = max_months * DAYS_PER_MONTH
-        if allowed >= self.lookback_days:
-            return self
-        return self.model_copy(update={"lookback_days": max(1, allowed)})
+        return self.model_copy(update={"lookback_days": min(max(1, days), MAX_LOOKBACK_DAYS)})
 
 
-#: Depth is the analyst's cost signal, so it decides the bound.
+#: Depth is the analyst's cost signal, so it decides the window.
 #:
-#: QUICK is a triage answer from the last month. STANDARD covers half a year,
-#: enough to see infrastructure change. DEEP reaches a year back, which is what
-#: a historical-infrastructure question needs.
+#: QUICK asks "what has urlscan seen recently?" — a month. STANDARD asks for
+#: broader recent context — half a year. DEEP asks "search as far back as this
+#: analyst's access permits", which is why its window comes from the account
+#: rather than from a number here; the 365 days below is only the fallback for
+#: when the account's maximum cannot be determined.
 #:
-#: Every depth is bounded, including DEEP. An unbounded query is not "more
-#: thorough": it asks urlscan to scan its whole index for a question about
-#: current infrastructure, and an account whose plan caps the searchable range
-#: would have the query refused rather than quietly narrowed.
+#: Every depth is bounded. An unbounded query is not "more thorough": it asks
+#: urlscan to scan its whole index, and an account whose plan caps the
+#: searchable range would have the query refused rather than quietly narrowed.
+#:
+#: The candidate counts are unrelated to the window and do not grow with it —
+#: see :meth:`SearchLimits.with_lookback_days`.
 DEPTH_SEARCH_LIMITS: Final[dict[InvestigationDepth, SearchLimits]] = {
     InvestigationDepth.QUICK: SearchLimits(
         page_size=10, max_candidates=1, max_per_group=1, lookback_days=30
@@ -194,7 +213,11 @@ DEPTH_SEARCH_LIMITS: Final[dict[InvestigationDepth, SearchLimits]] = {
         page_size=50, max_candidates=3, max_per_group=2, lookback_days=180
     ),
     InvestigationDepth.DEEP: SearchLimits(
-        page_size=100, max_candidates=8, max_per_group=3, lookback_days=365
+        page_size=100,
+        max_candidates=8,
+        max_per_group=3,
+        lookback_days=DEEP_FALLBACK_LOOKBACK_DAYS,
+        use_account_maximum=True,
     ),
 }
 
@@ -275,6 +298,37 @@ def _validate_value_for_field(field_name: UrlscanSearchField, value: str) -> Non
     elif not _DOMAIN_PATTERN.match(value):
         msg = "domain search values must be a hostname"
         raise ValueError(msg)
+
+
+def subtract_months(moment: datetime, months: int) -> datetime:
+    """``moment`` moved back by whole calendar months.
+
+    Calendar arithmetic rather than a fixed month length, because
+    ``maxSearchRangeMonths`` is expressed in months and a 30-day approximation
+    drifts by nearly two months over a decade — enough to miss the scan a
+    historical pivot depends on. A day that does not exist in the target month
+    lands on that month's last day, so 31 March minus one month is 28 February.
+
+    No dependency is added for this: the whole calculation is two lines of
+    integer arithmetic plus :func:`calendar.monthrange`.
+    """
+    bounded = max(0, min(months, MAX_LOOKBACK_MONTHS))
+    total = moment.year * 12 + (moment.month - 1) - bounded
+    year, month_index = divmod(total, 12)
+    month = month_index + 1
+    day = min(moment.day, monthrange(year, month)[1])
+    return moment.replace(year=year, month=month, day=day)
+
+
+def lookback_days_for_months(months: int, *, now: datetime) -> int:
+    """How many days back ``months`` calendar months reaches from ``now``.
+
+    The query language takes a day offset, so the calendar boundary is turned
+    into one here rather than being approximated. ``now`` is supplied by the
+    caller's injected clock, which keeps this deterministic under test.
+    """
+    delta = now - subtract_months(now, months)
+    return max(1, min(delta.days, MAX_LOOKBACK_DAYS))
 
 
 def build_query(terms: Sequence[SearchTerm], *, since: str) -> str:

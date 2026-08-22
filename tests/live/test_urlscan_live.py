@@ -24,8 +24,10 @@ a test that teaches you to ignore failures.
 Rules these obey
 ----------------
 
-Passive GET requests only against endpoints urlscan already has data for. No
-submission, no rescan, no live scan, no downloads — the integration has no code
+Passive GET requests only against endpoints urlscan already has data for. Every
+search is date bounded — STANDARD to 180 days, DEEP to whatever historical range
+the account reports — so a live run never asks urlscan for an open-ended index
+scan. No submission, no rescan, no live scan, no downloads — the integration has no code
 path for any of those, and these tests do not add one. STANDARD depth, so a run
 costs one search plus a small number of stored-result reads. The forensic tests
 run at DEEP with WEB_FORENSICS and read stored artifacts only; nothing is

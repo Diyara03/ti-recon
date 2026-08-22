@@ -44,6 +44,7 @@ from ti_recon.providers.transport import ProviderTransportSecurityError
 from ti_recon.providers.urlscan.adapter import (
     URLSCAN_ARTIFACTS_UNAVAILABLE,
     URLSCAN_FORENSICS_NOT_REQUESTED,
+    URLSCAN_HISTORICAL_RANGE_UNKNOWN,
     URLSCAN_NOT_SEARCHABLE,
     URLSCAN_SCAN_UNRETRIEVABLE,
     UrlscanAdapter,
@@ -310,8 +311,11 @@ async def test_no_scans_at_all_is_no_data_not_a_failure() -> None:
     adapter, _ = make_adapter(FakeUrlscanClient(search_payload={"results": []}))
     envelope = await adapter.lookup(make_request(), credential())
     assert envelope.status is ProviderRunStatus.NO_DATA
-    assert envelope.evidence == ()
     assert envelope.error_category is None
+    # Nothing was found, but how far back we looked is still worth recording:
+    # it is the difference between a clean result and a narrow one.
+    assert [item.claim_type for item in envelope.evidence] == ["urlscan_search_coverage"]
+    assert envelope.evidence[0].attributes["candidates_selected"] == 0
 
 
 async def test_a_scan_that_cannot_be_retrieved_degrades_rather_than_fails() -> None:
@@ -713,6 +717,10 @@ def test_configuration_and_policy_are_exposed_for_inspection() -> None:
 # Forensic extraction from what was captured
 # --------------------------------------------------------------------------- #
 
+DOM_ARTIFACT = UrlscanArtifact(
+    content=b"<html><body>page</body></html>", content_type="text/html", truncated=False
+)
+
 KIT_DOM = UrlscanArtifact(
     content=(
         b"<html><title>Sign in</title>"
@@ -870,26 +878,144 @@ async def test_no_lookup_at_any_depth_issues_an_unbounded_query(
     assert " AND date:>now-" in query
 
 
-async def test_depth_decides_how_far_back_a_lookup_reaches() -> None:
-    windows: dict[InvestigationDepth, str] = {}
-    for depth in InvestigationDepth:
-        adapter, fake = make_adapter()
-        await adapter.lookup(make_request(depth=depth), credential())
-        windows[depth] = next(detail for name, detail in fake.calls if name == "search")
-    assert windows[InvestigationDepth.QUICK].endswith("date:>now-30d")
-    assert windows[InvestigationDepth.STANDARD].endswith("date:>now-180d")
-    assert windows[InvestigationDepth.DEEP].endswith("date:>now-365d")
-
-
-async def test_an_accounts_search_range_narrows_the_query_it_sends() -> None:
-    """A plan limit would make the query invalid, so it narrows the window."""
+def quotas_allowing(months: int | None) -> dict[str, Any]:
     payload = payloads.quotas_payload()
-    payload["maxSearchRangeMonths"] = 2
-    fake = FakeUrlscanClient(quotas_payload=payload)
+    if months is not None:
+        payload["maxSearchRangeMonths"] = months
+    return payload
+
+
+async def search_query(
+    depth: InvestigationDepth,
+    *,
+    months: int | None = None,
+    capabilities: frozenset[ProviderCapability] = frozenset({ProviderCapability.REPUTATION}),
+) -> str:
+    fake = FakeUrlscanClient(quotas_payload=quotas_allowing(months), dom=DOM_ARTIFACT)
+    adapter, _ = make_adapter(fake, artifact_store=InMemoryArtifactStore())
+    await adapter.lookup(make_request(depth=depth, capabilities=capabilities), credential())
+    return next(detail for name, detail in fake.calls if name == "search")
+
+
+async def test_quick_and_standard_keep_their_windows_on_a_generous_account() -> None:
+    """A ten-year entitlement does not turn a triage lookup into a history sweep."""
+    assert (await search_query(InvestigationDepth.QUICK, months=120)).endswith("date:>now-30d")
+    assert (await search_query(InvestigationDepth.STANDARD, months=120)).endswith("date:>now-180d")
+
+
+async def test_deep_reaches_as_far_back_as_the_account_permits() -> None:
+    """The point of the change: a 2022 kit is what identifies the 2026 one."""
+    assert (await search_query(InvestigationDepth.DEEP, months=48)).endswith("date:>now-1461d")
+    assert (await search_query(InvestigationDepth.DEEP, months=120)).endswith("date:>now-3652d")
+
+
+async def test_deep_narrows_to_a_small_entitlement() -> None:
+    assert (await search_query(InvestigationDepth.DEEP, months=6)).endswith("date:>now-181d")
+
+
+async def test_an_account_narrower_than_standard_clamps_it() -> None:
+    assert (await search_query(InvestigationDepth.STANDARD, months=3)).endswith("date:>now-92d")
+
+
+async def test_deep_falls_back_to_a_finite_year_without_account_metadata() -> None:
+    assert (await search_query(InvestigationDepth.DEEP)).endswith("date:>now-365d")
+
+
+@pytest.mark.parametrize("months", [0, -12, "many", None])
+async def test_unusable_account_metadata_never_widens_or_unbounds_a_query(
+    months: Any,
+) -> None:
+    query = await search_query(InvestigationDepth.DEEP, months=months)
+    assert query.endswith("date:>now-365d")
+
+
+async def test_a_deep_forensic_run_uses_the_same_historical_window() -> None:
+    """Search broad history; retrieve a tiny bounded set of it."""
+    query = await search_query(
+        InvestigationDepth.DEEP, months=48, capabilities=FORENSIC_CAPABILITIES
+    )
+    assert query.endswith("date:>now-1461d")
+
+
+async def test_a_wider_history_does_not_widen_what_is_retrieved() -> None:
+    scans = [f"0195f3c2-4d6e-7a8b-9c0d-1e2f3a4b5c{index:02d}" for index in range(1, 21)]
+    results = {scan: payloads.result_payload() for scan in scans}
+    retrieved: dict[int, int] = {}
+    for months in (6, 120):
+        fake = FakeUrlscanClient(
+            search_payload=payloads.search_payload(*scans),
+            result_payloads=results,
+            quotas_payload=quotas_allowing(months),
+            dom=DOM_ARTIFACT,
+        )
+        adapter, _ = make_adapter(fake, artifact_store=InMemoryArtifactStore())
+        await adapter.lookup(
+            make_request(depth=InvestigationDepth.DEEP, capabilities=FORENSIC_CAPABILITIES),
+            credential(),
+        )
+        retrieved[months] = fake.call_count("result")
+        assert fake.call_count("dom") == 1
+    assert retrieved[6] == retrieved[120] <= 8
+
+
+async def test_the_search_window_is_recorded_so_a_result_can_be_judged() -> None:
+    """ "DEEP found nothing" means one thing over ten years and another over one."""
+    fake = FakeUrlscanClient(quotas_payload=quotas_allowing(48))
     adapter, _ = make_adapter(fake)
-    await adapter.lookup(make_request(depth=InvestigationDepth.DEEP), credential())
+    envelope = await adapter.lookup(make_request(depth=InvestigationDepth.DEEP), credential())
+    coverage = next(
+        item for item in envelope.evidence if item.claim_type == "urlscan_search_coverage"
+    )
+    assert coverage.attributes["depth"] == "deep"
+    assert coverage.attributes["historical_range_days"] == 1461
+    assert coverage.attributes["historical_range_months"] == 48
+    assert coverage.attributes["historical_range_source"] == "provider_limit"
+    assert coverage.attributes["max_candidates"] == 8
+    assert coverage.attributes["candidates_selected"] >= 1
+    assert URLSCAN_HISTORICAL_RANGE_UNKNOWN not in envelope.warnings
+
+
+async def test_a_fallback_window_is_reported_as_such() -> None:
+    adapter, _ = make_adapter()
+    envelope = await adapter.lookup(make_request(depth=InvestigationDepth.DEEP), credential())
+    coverage = next(
+        item for item in envelope.evidence if item.claim_type == "urlscan_search_coverage"
+    )
+    assert coverage.attributes["historical_range_source"] == "fallback"
+    assert "historical_range_months" not in coverage.attributes
+    assert URLSCAN_HISTORICAL_RANGE_UNKNOWN in envelope.warnings
+    assert envelope.status is ProviderRunStatus.SUCCESS
+
+
+async def test_coverage_metadata_carries_no_plan_detail() -> None:
+    fake = FakeUrlscanClient(quotas_payload=quotas_allowing(48))
+    adapter, _ = make_adapter(fake)
+    envelope = await adapter.lookup(make_request(depth=InvestigationDepth.DEEP), credential())
+    coverage = next(
+        item for item in envelope.evidence if item.claim_type == "urlscan_search_coverage"
+    )
+    assert set(coverage.attributes) <= {
+        "depth",
+        "historical_range_days",
+        "historical_range_months",
+        "historical_range_source",
+        "page_size",
+        "max_candidates",
+        "candidates_selected",
+    }
+
+
+async def test_an_ioc_cannot_alter_the_historical_window() -> None:
+    """The date bound is generated internally and no value can reach it."""
+    fake = FakeUrlscanClient(quotas_payload=quotas_allowing(6))
+    adapter, _ = make_adapter(fake)
+    hostile = observable(IntelObjectType.URL, 'https://evil.example/?q="OR+date:>now-10y')
+    await adapter.lookup(
+        make_request(depth=InvestigationDepth.DEEP, intel_object=hostile), credential()
+    )
     query = next(detail for name, detail in fake.calls if name == "search")
-    assert query.endswith("date:>now-60d")
+    assert query.endswith(" AND date:>now-181d")
+    assert query.count(" AND date:>") == 1
 
 
 async def test_quota_is_read_before_the_search_that_depends_on_it() -> None:

@@ -27,6 +27,7 @@ class FakeUrlscanClient:
         search_payload: dict[str, Any] | None = None,
         result_payloads: dict[str, dict[str, Any]] | None = None,
         quotas_payload: dict[str, Any] | None = None,
+        quotas_by_user: dict[str, dict[str, Any]] | None = None,
         screenshot: UrlscanArtifact | None = None,
         dom: UrlscanArtifact | None = None,
         response_bodies: dict[str, UrlscanArtifact] | None = None,
@@ -43,6 +44,9 @@ class FakeUrlscanClient:
         self.quotas_payload = (
             payloads.quotas_payload() if quotas_payload is None else quotas_payload
         )
+        # Per-analyst quota answers, because urlscan plans differ per account
+        # and the historical range one analyst may search is not another's.
+        self.quotas_by_user = quotas_by_user or {}
         self.screenshot = screenshot
         self.dom = dom
         self.response_bodies = response_bodies or {}
@@ -68,7 +72,8 @@ class FakeUrlscanClient:
 
     async def get_quotas(self, *, credential: CredentialMaterial) -> UrlscanJsonResult:
         self._record("quotas", credential.user_id)
-        return UrlscanJsonResult(payload=self.quotas_payload)
+        payload = self.quotas_by_user.get(credential.user_id, self.quotas_payload)
+        return UrlscanJsonResult(payload=payload)
 
     async def search(
         self,

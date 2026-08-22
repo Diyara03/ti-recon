@@ -131,47 +131,110 @@ unsupported run: there is no answer to keep.
 
 ## 5. Depth and bounds
 
-Depth is the analyst's cost signal, so it decides how much history is read.
+Depth is the analyst's question, and it decides how much history is searched.
 
-| Depth | Page size | Scans retrieved | Per-domain cap | Lookback |
-|---|---|---|---|---|
-| QUICK | 10 | 1 | 1 | 30 days |
-| STANDARD | 50 | 3 | 2 | 180 days |
-| DEEP | 100 | 8 | 3 | 365 days |
+| Depth | Question | Historical window | Page size | Scans retrieved | Per-domain cap |
+|---|---|---|---|---|---|
+| QUICK | "what has urlscan seen recently?" | 30 days, clamped to the account allowance | 10 | 1 | 1 |
+| STANDARD | "give me broader recent context" | 180 days, clamped to the account allowance | 50 | 3 | 2 |
+| DEEP | "search as far back as my access permits" | the account's maximum searchable range | 100 | 8 | 3 |
+| DEEP, range unknown | — | 365 days (finite fallback) | 100 | 8 | 3 |
 
-**Every depth is bounded, DEEP included.** `SearchLimits.lookback_days` has no
-"unbounded" value, and `build_query` requires a `now-<days>d` bound and rejects
-anything else, so there is no argument anywhere that produces an open-ended
-query. An unbounded search is not "more thorough": it asks urlscan to scan its
-whole index for a question about current infrastructure, and on an account whose
-plan caps the searchable range it would be refused outright rather than quietly
-narrowed.
+DEEP is deliberately not a fixed number of days. A phishing kit first scanned in
+2022 is often exactly what identifies its 2026 redeployment — same DOM
+structure, same script hash, same exfiltration endpoint — so a deep
+investigation searches everything the analyst's own urlscan account is entitled
+to see. QUICK and STANDARD keep their windows: a generous plan is not a reason
+to turn a triage lookup into a history sweep.
 
-### Clamping to the account's searchable range
+**A broad window is not a large result set.** This is the distinction the whole
+design rests on:
+
+| Control | DEEP behaviour |
+|---|---|
+| time range | potentially several years |
+| result volume | unchanged — one page of hits, at most 8 retrieved scans |
+| artifact retrieval | unchanged — the newest selected scan only |
+
+Eight years of history matching 2,500 scans still retrieves the same bounded,
+representative handful. `SearchLimits.with_lookback_days` changes the window and
+nothing else, and there is no pagination: `search_after` traversal belongs to a
+future campaign-expansion feature, not here.
+
+**Every depth is bounded.** `SearchLimits.lookback_days` has no "unbounded"
+value, and `build_query` requires a `now-<days>d` bound and rejects anything
+else, so no argument anywhere produces an open-ended query. An unbounded search
+is not "more thorough": it asks urlscan to scan its whole index, and on an
+account whose plan caps the searchable range it would be refused outright rather
+than quietly narrowed.
+
+### The account's searchable range
 
 `/user/quotas/` may report `maxSearchRangeMonths` — a plan limit rather than an
-allowance, since exceeding it does not consume anything, it invalidates the
-query. The effective window is therefore:
+allowance, since exceeding it consumes nothing and simply invalidates the query.
+It is read from the top level, from the `limits` block, or from the `search`
+allowance, whichever carries it first.
 
 ```
-effective_lookback = min(configured_depth_lookback, account_max_search_range)
+QUICK    = min(30 days,  account maximum)
+STANDARD = min(180 days, account maximum)
+DEEP     = account maximum, or 365 days if it is unknown
 ```
 
-A month is counted as 30 days, short for most months on purpose: erring inside
-the provider's window costs a few days of history, erring outside it costs the
-whole query. If urlscan does not report the limit — or the quota read was
-skipped because Task 6's store already had a fresh snapshot, or it failed — the
-configured depth lookback stands. That value is already finite, so an unknown
-plan limit can never widen a query.
+Months become days by **calendar** arithmetic against the injected clock, not by
+multiplying by 30 — a 30-day month drifts by nearly two months over a decade,
+which is enough to miss the scan a historical pivot depends on. A day that does
+not exist in the target month lands on that month's last day. No dependency was
+added: it is integer arithmetic plus `calendar.monthrange`. TI Recon applies its
+own ceiling of 240 months, since nobody investigates over a longer horizon than
+that and the derived day count has to stay inside the model's bounds.
 
-Because the search has to be inside that range, the once-per-TTL quota read runs
-*before* the search rather than after it. The call count is unchanged.
+Missing, null, non-numeric, negative and zero values are all treated the same
+way — "we do not know how far back this credential may search" — because urlscan
+defines no meaning for a zero-month range and guessing one would either forbid
+every search or permit an unbounded one. The window then falls back to the
+configured finite value, and the run is *not* failed over it: a missing quota
+field is no reason to lose an otherwise useful investigation.
 
-Selection spends that budget deliberately: newest first, because a page's
-current behaviour matters more than last year's, with a per-domain cap so fifty
-scans of one popular site cannot crowd out the single scan that shows the
-observable somewhere else. Budget the cap leaves unspent is filled rather than
-wasted. All of it is overridable through `UrlscanLookupPolicy.search_limits`.
+The range belongs to the credential, not to the deployment. Two analysts on
+different urlscan plans get different DEEP windows, and the quota read that
+supplies the range is scoped by the Task 6 execution scope like every other
+per-credential fact, so one analyst's entitlement is never reused for another's
+lookup.
+
+Because the search must sit inside that range, the once-per-TTL quota read runs
+*before* the search rather than after it. The call count is unchanged. When the
+read is skipped (Task 6's store already had a fresh snapshot) or fails, the
+configured window applies.
+
+### Recording how far back a search reached
+
+Every lookup that runs a search emits one `urlscan_search_coverage` context
+evidence:
+
+| Attribute | Meaning |
+|---|---|
+| `depth` | the requested depth |
+| `historical_range_days` | the window actually searched |
+| `historical_range_months` | the account maximum, when it decided the window |
+| `historical_range_source` | `provider_limit`, `configured` or `fallback` |
+| `page_size`, `max_candidates`, `candidates_selected` | the result budget and what it spent |
+
+"DEEP found nothing" means one thing over ten years and another over one, and
+this is what says which happened. A DEEP lookup that fell back also carries the
+`URLSCAN_HISTORICAL_RANGE_UNKNOWN` warning, so "searched all history this
+credential permits" and "could not tell, so searched a year" are distinguishable
+without reading the code. The run still succeeds. Nothing about the subscription
+beyond that month count is recorded.
+
+### Spending the retrieval budget
+
+Selection is unchanged by the window: newest first, because a page's current
+behaviour matters more than last year's, with a per-domain cap so fifty scans of
+one popular site cannot crowd out the single scan that shows the observable
+somewhere else. Budget the cap leaves unspent is filled rather than wasted. A
+wider window simply gives the selector older candidates to choose among. All of
+it is overridable through `UrlscanLookupPolicy.search_limits`.
 
 Other bounds:
 
@@ -202,6 +265,7 @@ A truncated list must never read as a complete one.
 | `urlscan_contacted_infrastructure` | direct observation | context | `urlscan` |
 | `urlscan_served_bodies` | direct observation | context | `urlscan` |
 | `urlscan_traffic_summary` | context | context | `urlscan` |
+| `urlscan_search_coverage` | context | context | `urlscan` |
 | `urlscan_stored_artifact` | context | context | `urlscan` |
 | `urlscan_page_forensics` | direct observation | context | `urlscan` |
 | `urlscan_response_forensics` | direct observation | context | `urlscan` |
@@ -284,8 +348,11 @@ forensics off produces an honest coverage gap rather than a silently missing
 answer. When the gate refuses a request that asked for forensics, the envelope
 carries `URLSCAN_WEB_FORENSICS_NOT_PERFORMED`.
 
-Only the newest selected scan is captured: artifacts are large, and a forensic
-question is almost always about the current state of a page.
+Candidate discovery for a forensic run uses the same DEEP historical window, so
+a 2022 scan of the same kit is reachable when the account allows it. What does
+not change is how much is pulled back: only the newest selected scan is
+captured, because artifacts are large and a forensic question is almost always
+about the current state of a page. Broad discovery, tiny retrieval.
 
 Forensics remains passive. Everything it reads is content urlscan already
 stored; nothing causes a new visit to anybody's site.
@@ -364,8 +431,10 @@ and returned, so nothing is silently discarded.
 
 The same response may carry `maxSearchRangeMonths`, which is read from the top
 level, from the `limits` block or from the `search` allowance — urlscan has moved
-it, and the first usable value wins. It clamps the search lookback (§5) and
-nothing else.
+it, and the first usable value wins. It decides the DEEP window and clamps the
+QUICK and STANDARD ones (§5), and it affects nothing else. It travels with the
+credential's quota reading, so one analyst's historical range is never applied
+to another's lookup.
 
 `X-Rate-Limit-*` headers on each response become a `RateLimitSnapshot`. When
 urlscan names the action it metered, the window carries that name so a search

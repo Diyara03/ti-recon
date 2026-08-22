@@ -109,9 +109,10 @@ from ti_recon.providers.urlscan.observations import (
     normalize_traffic_summary,
 )
 from ti_recon.providers.urlscan.policy import (
+    SearchWindow,
     UrlscanLookupPolicy,
     forensics_requested,
-    search_limits_for,
+    resolve_search_window,
 )
 from ti_recon.providers.urlscan.quota import (
     UrlscanQuotaReading,
@@ -129,6 +130,7 @@ __all__ = [
     "UNSUPPORTED_REASONS",
     "URLSCAN_ARTIFACTS_UNAVAILABLE",
     "URLSCAN_FORENSICS_NOT_REQUESTED",
+    "URLSCAN_HISTORICAL_RANGE_UNKNOWN",
     "URLSCAN_NOT_SEARCHABLE",
     "URLSCAN_SCAN_UNRETRIEVABLE",
     "UrlscanAdapter",
@@ -141,6 +143,13 @@ _logger = logging.getLogger(__name__)
 #: an MD5, say, where only SHA-256 response bodies are indexed. A coverage gap,
 #: never an absence of findings.
 URLSCAN_NOT_SEARCHABLE: Final[str] = "URLSCAN_OBSERVABLE_NOT_SEARCHABLE"
+
+#: Reported when a DEEP lookup could not learn how far back the credential may
+#: search and used the finite fallback window instead. Not a failure — the
+#: search still ran — but the difference between "searched all permitted
+#: history" and "searched one year because we could not ask" matters to whoever
+#: reads the result.
+URLSCAN_HISTORICAL_RANGE_UNKNOWN: Final[str] = "URLSCAN_HISTORICAL_RANGE_UNKNOWN"
 
 #: Human-readable reason per warning, carried on the envelope so the execution
 #: layer's outcome explains itself without anyone having to look the code up.
@@ -419,13 +428,15 @@ class UrlscanAdapter(ProviderAdapter):
             # this is the same once-per-TTL refresh that used to run last.
             reading = await self._refresh_quota_if_stale(client, credential)
             quota = reading.snapshot if reading is not None else None
-            limits = search_limits_for(
+            window = resolve_search_window(
                 request.depth,
                 self._lookup_policy,
                 max_search_range_months=(
                     reading.max_search_range_months if reading is not None else None
                 ),
+                now=self._clock.now(),
             )
+            limits = window.limits
             plan = plan_search(request.intel_object, depth=request.depth, limits=limits)
             if plan is None:  # pragma: no cover - guarded by _unsupported_reason
                 return self._unsupported_envelope(request, URLSCAN_NOT_SEARCHABLE)
@@ -437,16 +448,17 @@ class UrlscanAdapter(ProviderAdapter):
             rate_limit = parse_rate_limit_headers(
                 search.rate_limit_headers, operation="urlscan.search", now=self._clock.now()
             )
+            coverage = self._search_coverage(request, window, candidates)
             if not candidates:
                 return self._envelope(
                     request,
-                    UrlscanNormalization(),
+                    coverage,
                     status=ProviderRunStatus.NO_DATA,
                     quota=quota,
                     rate_limit=rate_limit,
                 )
 
-            normalization = UrlscanNormalization()
+            normalization = coverage
             documents: dict[str, ScanDocument] = {}
             for candidate in candidates:
                 result, document, candidate_warning = await self._normalize_candidate(
@@ -474,6 +486,45 @@ class UrlscanAdapter(ProviderAdapter):
         return self._envelope(
             request, normalization, status=status, quota=quota, rate_limit=rate_limit
         )
+
+    def _search_coverage(
+        self,
+        request: ProviderRequest,
+        window: SearchWindow,
+        candidates: tuple[ScanCandidate, ...],
+    ) -> UrlscanNormalization:
+        """Record how far back this search actually reached.
+
+        "DEEP found nothing" means one thing over ten years and another over
+        one, and only this says which happened. Context evidence, because how
+        wide a search was says nothing about the observable — it says what the
+        answer is worth.
+
+        The window's *source* travels with it: an analyst can tell a search
+        that covered everything the credential permits from one that fell back
+        because the account's limit could not be read. Nothing about the plan
+        beyond that number is recorded.
+        """
+        attributes: dict[str, Any] = {
+            "depth": request.depth.value,
+            "historical_range_days": window.lookback_days,
+            "historical_range_source": window.source.value,
+            "page_size": window.limits.page_size,
+            "max_candidates": window.limits.max_candidates,
+            "candidates_selected": len(candidates),
+        }
+        if window.account_months is not None:
+            attributes["historical_range_months"] = window.account_months
+
+        evidence = build_evidence(
+            self._forensic_context(request),
+            evidence_class=EvidenceClass.CONTEXT,
+            claim_type="urlscan_search_coverage",
+            effect=EvidenceEffect.CONTEXT_ONLY,
+            attributes=attributes,
+        )
+        warnings = (URLSCAN_HISTORICAL_RANGE_UNKNOWN,) if window.is_fallback else ()
+        return UrlscanNormalization(evidence=(evidence,), warnings=warnings)
 
     def _unsupported_reason(self, request: ProviderRequest) -> str | None:
         """Why urlscan cannot answer for this observable at all, if it cannot.

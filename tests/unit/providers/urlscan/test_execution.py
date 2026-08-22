@@ -401,13 +401,85 @@ async def test_every_search_the_executor_issues_is_date_bounded(
     assert " AND date:>now-" in queries[0]
 
 
-async def test_an_account_range_narrows_the_query_through_the_executor() -> None:
+async def test_the_account_range_decides_how_far_back_deep_reaches() -> None:
     payload = payloads.quotas_payload()
-    payload["maxSearchRangeMonths"] = 1
-    stack = Stack(FakeUrlscanClient(quotas_payload=payload))
+    payload["maxSearchRangeMonths"] = 48
+    stack = Stack(FakeUrlscanClient(quotas_payload=payload, dom=DOM))
     await stack.add_credential(USER_A, KEY_A)
     await stack.executor.execute(
         stack.adapter, request_for(depth=InvestigationDepth.DEEP), stack.context()
     )
     query = next(detail for name, detail in stack.client.calls if name == "search")
-    assert query.endswith("date:>now-30d")
+    assert query.endswith("date:>now-1461d")
+
+
+def quotas_allowing(months: int) -> dict[str, Any]:
+    payload = payloads.quotas_payload()
+    payload["maxSearchRangeMonths"] = months
+    return payload
+
+
+async def test_one_analysts_historical_range_is_never_used_for_another() -> None:
+    """Two urlscan plans, two different histories, one quota store."""
+    client = FakeUrlscanClient(
+        dom=DOM,
+        quotas_by_user={USER_A: quotas_allowing(6), USER_B: quotas_allowing(60)},
+    )
+    stack = Stack(client)
+    await stack.add_credential(USER_A, KEY_A)
+    await stack.add_credential(USER_B, KEY_B)
+
+    await stack.executor.execute(
+        stack.adapter, request_for(depth=InvestigationDepth.DEEP), stack.context(USER_A)
+    )
+    await stack.executor.execute(
+        stack.adapter, request_for(depth=InvestigationDepth.DEEP), stack.context(USER_B)
+    )
+    queries = [detail for name, detail in client.calls if name == "search"]
+    assert len(queries) == 2
+    assert queries[0].endswith("date:>now-181d")
+    assert queries[1].endswith("date:>now-1826d")
+
+
+async def test_a_cached_historical_range_does_not_cross_provider_connections() -> None:
+    """The second analyst's window comes from their own quota read, not A's."""
+    client = FakeUrlscanClient(
+        dom=DOM,
+        quotas_by_user={USER_A: quotas_allowing(6), USER_B: quotas_allowing(60)},
+    )
+    stack = Stack(client)
+    await stack.add_credential(USER_A, KEY_A)
+    await stack.add_credential(USER_B, KEY_B)
+
+    await stack.executor.execute(
+        stack.adapter, request_for(depth=InvestigationDepth.DEEP), stack.context(USER_A)
+    )
+    client.calls.clear()
+    await stack.executor.execute(
+        stack.adapter, request_for(depth=InvestigationDepth.DEEP), stack.context(USER_B)
+    )
+    assert client.called("quotas")
+    query = next(detail for name, detail in client.calls if name == "search")
+    assert query.endswith("date:>now-1826d")
+
+
+async def test_the_recorded_window_travels_with_each_analysts_result() -> None:
+    client = FakeUrlscanClient(
+        dom=DOM,
+        quotas_by_user={USER_A: quotas_allowing(6), USER_B: quotas_allowing(60)},
+    )
+    stack = Stack(client)
+    await stack.add_credential(USER_A, KEY_A)
+    await stack.add_credential(USER_B, KEY_B)
+
+    windows: dict[str, int] = {}
+    for user in (USER_A, USER_B):
+        outcome = await stack.executor.execute(
+            stack.adapter, request_for(depth=InvestigationDepth.DEEP), stack.context(user)
+        )
+        assert outcome.result is not None
+        coverage = next(
+            item for item in outcome.result.evidence if item.claim_type == "urlscan_search_coverage"
+        )
+        windows[user] = coverage.attributes["historical_range_months"]
+    assert windows == {USER_A: 6, USER_B: 60}

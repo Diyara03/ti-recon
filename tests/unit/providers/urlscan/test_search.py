@@ -15,17 +15,21 @@ from pydantic import ValidationError
 from ti_recon.enums import IntelObjectType, InvestigationDepth, ObjectClass
 from ti_recon.models.intel_object import IntelObject
 from ti_recon.providers.urlscan import (
-    DAYS_PER_MONTH,
+    DEEP_FALLBACK_LOOKBACK_DAYS,
     DEPTH_SEARCH_LIMITS,
+    MAX_LOOKBACK_DAYS,
+    MAX_LOOKBACK_MONTHS,
     ScanCandidate,
     SearchLimits,
     SearchTerm,
     UrlscanSearchField,
     build_query,
     cursor_for_hit,
+    lookback_days_for_months,
     parse_hits,
     plan_search,
     select_candidates,
+    subtract_months,
 )
 
 SHA256 = "b" * 64
@@ -247,10 +251,21 @@ def test_every_depth_is_bounded_including_deep() -> None:
     """An unbounded query is not "more thorough"; it is a scan of the index."""
     assert DEPTH_SEARCH_LIMITS[InvestigationDepth.QUICK].lookback_days == 30
     assert DEPTH_SEARCH_LIMITS[InvestigationDepth.STANDARD].lookback_days == 180
-    assert DEPTH_SEARCH_LIMITS[InvestigationDepth.DEEP].lookback_days == 365
     for limits in DEPTH_SEARCH_LIMITS.values():
         assert limits.lookback_days >= 1
         assert limits.since.startswith("now-")
+
+
+def test_only_deep_reaches_for_the_accounts_own_maximum() -> None:
+    """ "As far back as this analyst may look" is what DEEP means."""
+    assert DEPTH_SEARCH_LIMITS[InvestigationDepth.DEEP].use_account_maximum is True
+    assert DEPTH_SEARCH_LIMITS[InvestigationDepth.QUICK].use_account_maximum is False
+    assert DEPTH_SEARCH_LIMITS[InvestigationDepth.STANDARD].use_account_maximum is False
+
+
+def test_the_deep_number_is_a_fallback_not_the_policy() -> None:
+    deep = DEPTH_SEARCH_LIMITS[InvestigationDepth.DEEP]
+    assert deep.lookback_days == DEEP_FALLBACK_LOOKBACK_DAYS == 365
 
 
 def test_a_quick_plan_is_time_bounded_and_cheap() -> None:
@@ -270,7 +285,8 @@ def test_no_depth_ever_produces_an_unbounded_query(depth: InvestigationDepth) ->
     assert " AND date:>now-" in plan.query
 
 
-def test_a_deep_plan_reaches_a_year_back() -> None:
+def test_a_deep_plan_without_account_metadata_falls_back_to_a_year() -> None:
+    """``plan_search`` is given whatever window was resolved for it."""
     plan = plan_search(
         observable(IntelObjectType.DOMAIN_NAME, "example.com"),
         depth=InvestigationDepth.DEEP,
@@ -457,41 +473,64 @@ def test_a_candidate_without_a_domain_groups_by_ip_then_by_itself() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_a_shorter_account_range_narrows_the_lookback() -> None:
-    """A plan limit is not an allowance: exceeding it invalidates the query."""
+NOW = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
+
+
+def test_a_window_change_never_changes_the_result_budget() -> None:
+    """Historical breadth and result volume are separate controls."""
     limits = DEPTH_SEARCH_LIMITS[InvestigationDepth.DEEP]
-    clamped = limits.clamped_to_months(3)
-    assert clamped.lookback_days == 90
-    assert clamped.since == "now-90d"
-    assert clamped.page_size == limits.page_size
-    assert clamped.max_candidates == limits.max_candidates
+    widened = limits.with_lookback_days(3653)
+    assert widened.lookback_days == 3653
+    assert widened.page_size == limits.page_size
+    assert widened.max_candidates == limits.max_candidates
+    assert widened.max_per_group == limits.max_per_group
 
 
-def test_a_longer_account_range_never_widens_the_lookback() -> None:
-    limits = DEPTH_SEARCH_LIMITS[InvestigationDepth.QUICK]
-    assert limits.clamped_to_months(24).lookback_days == limits.lookback_days
+def test_a_window_is_clamped_to_the_models_own_ceiling() -> None:
+    limits = DEPTH_SEARCH_LIMITS[InvestigationDepth.DEEP]
+    assert limits.with_lookback_days(1_000_000).lookback_days == MAX_LOOKBACK_DAYS
+    assert limits.with_lookback_days(0).lookback_days == 1
 
 
-@pytest.mark.parametrize("months", [None, 0, -3])
-def test_an_unknown_or_nonsensical_account_range_leaves_the_lookback_alone(
-    months: int | None,
+# --------------------------------------------------------------------------- #
+# Calendar-month arithmetic
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("moment", "months", "expected"),
+    [
+        (datetime(2026, 8, 22, tzinfo=UTC), 48, datetime(2022, 8, 22, tzinfo=UTC)),
+        (datetime(2026, 8, 22, tzinfo=UTC), 120, datetime(2016, 8, 22, tzinfo=UTC)),
+        (datetime(2026, 1, 15, tzinfo=UTC), 1, datetime(2025, 12, 15, tzinfo=UTC)),
+        (datetime(2026, 3, 31, tzinfo=UTC), 1, datetime(2026, 2, 28, tzinfo=UTC)),
+        (datetime(2024, 2, 29, tzinfo=UTC), 12, datetime(2023, 2, 28, tzinfo=UTC)),
+        (datetime(2026, 8, 22, tzinfo=UTC), 0, datetime(2026, 8, 22, tzinfo=UTC)),
+    ],
+)
+def test_months_are_counted_on_the_calendar(
+    moment: datetime, months: int, expected: datetime
 ) -> None:
-    """Unknown must not mean unbounded — the configured value is already finite."""
-    limits = DEPTH_SEARCH_LIMITS[InvestigationDepth.DEEP]
-    clamped = limits.clamped_to_months(months)
-    assert clamped.lookback_days == limits.lookback_days
-    assert clamped.since == "now-365d"
+    """A 30-day month drifts by nearly two months over a decade."""
+    assert subtract_months(moment, months) == expected
 
 
-def test_clamping_never_produces_a_zero_day_window() -> None:
-    limits = DEPTH_SEARCH_LIMITS[InvestigationDepth.QUICK]
-    assert limits.clamped_to_months(1).lookback_days >= 1
+def test_a_month_count_beyond_the_ceiling_is_bounded() -> None:
+    moment = datetime(2026, 8, 22, tzinfo=UTC)
+    assert subtract_months(moment, 10_000) == subtract_months(moment, MAX_LOOKBACK_MONTHS)
 
 
-def test_a_month_is_counted_conservatively() -> None:
-    """Erring inside the provider's window costs days; erring outside costs all."""
-    assert DAYS_PER_MONTH == 30
-    assert DEPTH_SEARCH_LIMITS[InvestigationDepth.DEEP].clamped_to_months(12).lookback_days == 360
+@pytest.mark.parametrize(
+    ("months", "expected_days"),
+    [(1, 31), (6, 181), (12, 365), (48, 1461), (120, 3652)],
+)
+def test_a_month_range_becomes_the_exact_day_offset(months: int, expected_days: int) -> None:
+    assert lookback_days_for_months(months, now=NOW) == expected_days
+
+
+def test_a_day_offset_is_never_zero_or_unbounded() -> None:
+    assert lookback_days_for_months(0, now=NOW) == 1
+    assert lookback_days_for_months(100_000, now=NOW) <= MAX_LOOKBACK_DAYS
 
 
 # --------------------------------------------------------------------------- #

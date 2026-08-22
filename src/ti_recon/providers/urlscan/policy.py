@@ -35,6 +35,8 @@ already stored; no part of it causes a new visit to anybody's site.
 
 from __future__ import annotations
 
+from datetime import datetime
+from enum import StrEnum
 from typing import Final
 
 from pydantic import Field
@@ -46,15 +48,22 @@ from ti_recon.execution.retry import RetryPolicy
 from ti_recon.models.base import FrozenTiReconModel
 from ti_recon.providers.request import ProviderRequest
 from ti_recon.providers.urlscan.descriptor import URLSCAN_PROVIDER_ID
-from ti_recon.providers.urlscan.search import DEPTH_SEARCH_LIMITS, SearchLimits
+from ti_recon.providers.urlscan.search import (
+    DEPTH_SEARCH_LIMITS,
+    MAX_LOOKBACK_MONTHS,
+    SearchLimits,
+    lookback_days_for_months,
+)
 
 __all__ = [
     "DEFAULT_FORENSIC_ARTIFACTS",
     "FORENSICS_DEPTH",
+    "HistoricalRangeSource",
+    "SearchWindow",
     "UrlscanLookupPolicy",
     "build_urlscan_execution_policy",
     "forensics_requested",
-    "search_limits_for",
+    "resolve_search_window",
 ]
 
 #: The only depth at which stored artifacts may be retrieved.
@@ -108,29 +117,110 @@ class UrlscanLookupPolicy(FrozenTiReconModel):
         return self.allow_web_forensics and kind in self.forensic_artifacts
 
 
-def search_limits_for(
+class HistoricalRangeSource(StrEnum):
+    """Where a search's historical window came from.
+
+    Recorded on the result so an analyst can tell "DEEP searched ten years"
+    from "DEEP searched one year because we could not find out what this
+    account is allowed to search". Both are legitimate answers; only one of
+    them is the answer the analyst asked for.
+    """
+
+    #: The window is the account's own maximum searchable range.
+    PROVIDER_LIMIT = "provider_limit"
+    #: The configured depth window applied as-is.
+    CONFIGURED = "configured"
+    #: DEEP wanted the account maximum and it was unknown, so the safe finite
+    #: fallback applied.
+    FALLBACK = "fallback"
+
+
+class SearchWindow(FrozenTiReconModel):
+    """The resolved bounds for one search, and where they came from."""
+
+    limits: SearchLimits
+    source: HistoricalRangeSource
+    #: The account's reported maximum, when it decided the window.
+    account_months: int | None = Field(default=None, ge=1)
+
+    @property
+    def lookback_days(self) -> int:
+        return self.limits.lookback_days
+
+    @property
+    def is_fallback(self) -> bool:
+        return self.source is HistoricalRangeSource.FALLBACK
+
+
+def resolve_search_window(
     depth: InvestigationDepth,
     policy: UrlscanLookupPolicy | None = None,
     *,
     max_search_range_months: int | None = None,
-) -> SearchLimits:
-    """The search bounds for a depth, clamped to what the account may search.
+    now: datetime,
+) -> SearchWindow:
+    """The window one search may cover, and the reason it is that wide.
 
-    Two independent limits, and the narrower wins:
+    Three rules, and each depth uses exactly one of them:
 
-    * the configured depth lookback — TI Recon's own cost decision;
-    * ``max_search_range_months`` — the account's plan limit, reported by
-      urlscan's quota endpoint.
+    * QUICK and STANDARD keep their configured windows — a recent question and
+      a broader-recent one — narrowed if the account may not search that far
+      back. A generous account never widens them: nobody asked for more.
+    * DEEP takes the account's maximum. A phishing kit first scanned in 2022 is
+      still what identifies its 2026 redeployment, so "deep" means "as far back
+      as this credential is entitled to look".
+    * DEEP without that metadata takes the configured fallback, which is finite.
+      A missing plan limit must never become an unbounded query, and it must
+      never fail an otherwise useful investigation either.
 
-    Exceeding a plan limit does not consume an allowance, it makes the query
-    invalid, so clamping turns "your key may not search that far back" into a
-    narrower window rather than a failed lookup. An unknown plan limit leaves
-    the configured lookback in force, which is already finite: there is no path
-    here that produces an unbounded search.
+    Months become days by calendar arithmetic against ``now``, which the caller
+    supplies from its injected clock.
+
+    What does *not* change with the window is how much comes back: page size,
+    candidate count and the per-domain cap are the same at ten years as at
+    thirty days. Historical breadth and result volume are separate controls.
     """
     limits = policy.search_limits if policy is not None else DEPTH_SEARCH_LIMITS
     configured = limits.get(depth, DEPTH_SEARCH_LIMITS[InvestigationDepth.STANDARD])
-    return configured.clamped_to_months(max_search_range_months)
+    account_months = _usable_months(max_search_range_months)
+
+    if account_months is None:
+        # Unknown: the configured window stands, already finite. Only DEEP
+        # calls that a fallback, because only DEEP asked for something else.
+        source = (
+            HistoricalRangeSource.FALLBACK
+            if configured.use_account_maximum
+            else HistoricalRangeSource.CONFIGURED
+        )
+        return SearchWindow(limits=configured, source=source)
+
+    account_days = lookback_days_for_months(account_months, now=now)
+    if configured.use_account_maximum:
+        return SearchWindow(
+            limits=configured.with_lookback_days(account_days),
+            source=HistoricalRangeSource.PROVIDER_LIMIT,
+            account_months=account_months,
+        )
+    if account_days < configured.lookback_days:
+        return SearchWindow(
+            limits=configured.with_lookback_days(account_days),
+            source=HistoricalRangeSource.PROVIDER_LIMIT,
+            account_months=account_months,
+        )
+    return SearchWindow(limits=configured, source=HistoricalRangeSource.CONFIGURED)
+
+
+def _usable_months(months: int | None) -> int | None:
+    """The account maximum, or ``None`` if urlscan reported nothing usable.
+
+    Zero, negative and absent all mean the same thing here — we do not know how
+    far back this credential may search — because urlscan defines no meaning
+    for a zero-month range and guessing one would either forbid every search or
+    permit an unbounded one.
+    """
+    if months is None or months < 1:
+        return None
+    return min(months, MAX_LOOKBACK_MONTHS)
 
 
 def forensics_requested(

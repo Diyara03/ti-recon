@@ -40,7 +40,7 @@ development foundation, not distributed coordination.
 | Provider | Status | Supported | Not yet |
 |----------|--------|-----------|---------|
 | Google Threat Intelligence | Implemented | IP / domain / URL / hash passive enrichment, GTI assessment, threat severity, aggregated reputation, quota awareness, bounded relationships, selected threat associations, deep file behaviour | Intelligence Search, active scanning, sample submission, sample downloads |
-| urlscan.io | Implemented | historical scan discovery, stored scan results, verdicts with separated lineage, redirect chains, contacted infrastructure, served-body digests, quota awareness, and — on explicit request at DEEP depth — stored screenshot / DOM / response-body retrieval with static forensic extraction and kit fingerprints | scan submission, rescan, live scan, sample downloads, visibility changes, deletion, saved searches, incidents |
+| urlscan.io | Implemented | historical scan discovery bounded by the account's own searchable range, stored scan results, verdicts with separated lineage, redirect chains, contacted infrastructure, served-body digests, quota awareness, and — on explicit request at DEEP depth — stored screenshot / DOM / response-body retrieval with static forensic extraction and kit fingerprints | scan submission, rescan, live scan, sample downloads, visibility changes, deletion, saved searches, incidents |
 
 Both supply **evidence**, not verdicts. Weighing providers against each other and
 reaching a conclusion is the future evidence-fusion layer's job, and no such
