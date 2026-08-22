@@ -24,7 +24,7 @@
      Provider Executor             IMPLEMENTED — cache, retry, quota, cooldown,
            |                                     concurrency, single-flight
            |
-     Provider Adapters             CONTRACT IMPLEMENTED — no real adapters yet
+     Provider Adapters             CONTRACT IMPLEMENTED — GTI is the first
            |  (via Provider HTTP Transport — IMPLEMENTED)
            |  (auth via Credential Resolver — IMPLEMENTED)
            |
@@ -235,6 +235,15 @@ src/ti_recon/
     adapter.py        ProviderAdapter ABC
     registry.py       ProviderRegistry
     transport.py      ProviderHttpClient (+ TransportConfig)
+  providers/gti/
+    client.py         the only vt.Client user; GTIObject / descriptors
+    config.py         x-tool, agent, host, timeouts (no credential)
+    errors.py         GTI error codes -> normalized categories
+    quota.py          overall_quotas -> ProviderQuotaSnapshot
+    policy.py         collection routing, excluded attributes, cache TTLs
+    relationships.py  verified relationship table, depth profiles, limits
+    normalizer.py     GTI objects -> Task 3 evidence/objects/relationships
+    adapter.py        GTIAdapter
   execution/
     clock.py          Clock / Sleeper / JitterSource injection seams
     models.py         ExecutionScope, ExecutionContext, outcome, CacheScope
@@ -261,14 +270,32 @@ The protocols are the seams distributed implementations will slot into.
 
 Full detail: [provider-execution.md](provider-execution.md).
 
-## 11. Deferred architecture (Task 7+)
+## 11. Providers
+
+One provider is integrated: **Google Threat Intelligence**, reading GTI /
+VirusTotal API v3 with each analyst's own VirusTotal API key. It is passive
+enrichment only and supplies evidence rather than conclusions.
+
+It reaches the engine entirely through the Task 5 contract — the registry finds
+it by capability with no vendor branch, and it passes the same reusable adapter
+contract suite as the test fakes. The one deviation from the framework is
+documented and contained: GTI uses the official `vt-py` SDK rather than the
+shared HTTP transport, and that SDK is imported by exactly one module so its
+types never reach the core.
+
+Full detail: [providers/gti.md](providers/gti.md).
+
+Note the data-use boundary recorded there: GTI content must not be exposed to
+Claude, MCP or any AI layer before the applicable provider terms are reviewed.
+
+## 12. Deferred architecture (Task 8+)
 
 Documented so the shape is known; not implemented:
 
 - Distributed execution state: Redis-backed cache, quota and cooldown stores,
   shared rate-limit state and cross-worker concurrency limits.
-- Real provider adapters, and the real quota API calls that populate quota
-  snapshots.
+- Further provider adapters (urlscan, GreyNoise, Censys, abuse.ch, warning
+  lists) alongside GTI.
 - Capability planner, provider selection and adaptive enrichment (widen
   capabilities when evidence is thin).
 - Lineage-aware correlation, evidence fusion and verdict scoring.

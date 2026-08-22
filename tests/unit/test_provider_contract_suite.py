@@ -1,6 +1,8 @@
-"""Apply the reusable adapter contract suite to every fake adapter.
+"""Apply the reusable adapter contract suite to every adapter.
 
-Adding a real provider later means adding one class here.
+The fakes cover the shapes of the contract; Google Threat Intelligence is the
+first real integration to be held to it, wired to a fake client so the suite
+still performs no I/O.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ from fixtures.fake_providers import (
     FakeScannerProvider,
     FakeWarningListProvider,
 )
+from fixtures.gti.contract import contract_gti_adapter
 from ti_recon.providers import ProviderAdapter
 
 
@@ -37,3 +40,10 @@ class TestFakeMinimalContract(ProviderAdapterContractTests):
 
     def make_adapter(self) -> ProviderAdapter:
         return FakeMinimalProvider()
+
+
+class TestGTIContract(ProviderAdapterContractTests):
+    """The first real provider, held to exactly the same contract as the fakes."""
+
+    def make_adapter(self) -> ProviderAdapter:
+        return contract_gti_adapter()

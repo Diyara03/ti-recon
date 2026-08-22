@@ -20,7 +20,7 @@ Analyst -> Claude + TI Analyst Skill -> MCP -> TI Recon backend
 
 ## Current implementation boundary
 
-Implemented (Jira Tasks 1-6):
+Implemented (Jira Tasks 1-7):
 
 - Task 1 — product scope + investigation workflow foundation (docs, enums)
 - Task 2 — architecture foundation (docs, module boundaries)
@@ -29,21 +29,23 @@ Implemented (Jira Tasks 1-6):
 - Task 5 — provider integration framework (`providers/`)
 - Task 6 — provider execution controls (`execution/`): cache, retry/backoff,
   quota + cooldown, bounded concurrency, single-flight, executor, metrics
+- Task 7 — Google Threat Intelligence (`providers/gti/`): the first live
+  provider. Passive enrichment for IP/domain/URL/hash using each analyst's own
+  VirusTotal API key, via the official `vt-py` SDK.
 
-**No real provider adapter exists yet.** Task 6 built the layer every future
-adapter runs behind; the adapters themselves are Task 7 onwards.
+**GTI is the only provider.** Other providers and evidence fusion are not
+implemented, so there is still no multi-provider verdict.
 
 **Not implemented — do not add without an explicit request:**
 
-- Any real provider API integration (VirusTotal / Google Threat Intelligence,
-  urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar,
-  SecurityTrails, AbuseIPDB, Shodan, IPinfo)
+- Any other provider API integration (urlscan, GreyNoise, Censys, ThreatFox,
+  URLhaus, MalwareBazaar, SecurityTrails, AbuseIPDB, Shodan, IPinfo)
+- GTI Intelligence Search, Threat Profiles, Threat Lists, IOC Streams, DTM, ASM
+- Any active GTI operation: submission, rescan, sandbox detonation, downloads
 - Query/capability planner, provider selection, adaptive enrichment, evidence
   fusion, verdict scoring
 - Redis or any distributed coordination: every execution store is in-memory and
   single-process
-- Real quota API calls (the models and stores exist; nothing queries a provider
-  for quota)
 - PostgreSQL, production secret vault, Kafka, Celery, Neo4j
 - MCP server, Claude connector, Claude Skill, web frontend
 - Active actions: URL/file submission, rescan, sandboxing, sample download
@@ -85,6 +87,14 @@ adapter runs behind; the adapters themselves are Task 7 onwards.
 12. **Execution state is user-isolated by construction.** Cache, quota,
     cooldowns, concurrency slots and request coalescing are all keyed by
     `ExecutionScope`, whose identity is built from ids only.
+13. **A provider SDK stays inside its own package.** `vt-py` is imported only by
+    `providers/gti/` — the client for `vt.Client`/`vt.Object`/`vt.url_id`, and
+    `errors.py` for the `APIError` type alone. Its types never reach the
+    normalizer, the adapter or the core. Any future SDK exception must be
+    equally contained.
+14. **`UNDETECTED` is not benign, and engine counts are not votes.** A provider
+    reporting "nothing flagged it" is context, never evidence of safety, and an
+    aggregate of other vendors' opinions is one source rather than many.
 
 ## Security rules
 
@@ -108,6 +118,12 @@ adapter runs behind; the adapters themselves are Task 7 onwards.
 - Logging allow-list: provider, method, path/operation, status, latency,
   request id. Never log Authorization / `x-apikey` / `API-Key` / `Auth-Key` /
   cookies / secrets / sensitive query strings.
+- **GTI's quota endpoint puts the API key in its path.** Never build, return,
+  log, cache or attach that path to an error. Failures report
+  "GTI quota lookup failed" plus a normalized category only.
+- **GTI data is provider-policy-sensitive.** Do not expose raw or normalized GTI
+  content to Claude, MCP or any AI layer before the applicable Google Threat
+  Intelligence data-use terms have been reviewed. See `docs/providers/gti.md`.
 
 ## Commands
 
@@ -134,6 +150,9 @@ src/ti_recon/
   providers/         Task 5: capabilities, descriptor, request/result envelope,
                      quota models, normalized errors, adapter contract,
                      registry, HTTP transport
+  providers/gti/     Task 7: Google Threat Intelligence. client (the only
+                     vt.Client user), config/x-tool, errors, quota, policy,
+                     relationships, normalizer, adapter
   execution/         Task 6: clock/sleeper/jitter seams, cache, retry+backoff,
                      quota + cooldown stores, concurrency + single-flight,
                      policy, bounded executor, metrics
@@ -142,7 +161,7 @@ src/ti_recon/
 tests/unit/          unit + contract tests
 tests/fixtures/      model-only and fake-adapter fixtures (no network)
 docs/                scope, architecture, data model, credentials, provider
-                     framework, provider execution
+                     framework, provider execution, providers/gti
 ```
 
 ## Conventions
@@ -161,4 +180,7 @@ docs/                scope, architecture, data model, credentials, provider
   it along with its configuration.
 - File hashes are **properties of a `file` object**, not object types of
   their own.
+- A provider adapter reports and classifies. It never assigns an Admiralty grade
+  (`source_reliability`, `information_credibility`) — those are TI Recon policy —
+  and never emits a verdict, risk score or confidence.
 - Docs must describe what exists. Never document planned work as done.

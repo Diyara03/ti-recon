@@ -276,6 +276,13 @@ class ProviderCapability(StrEnum):
     CERTIFICATE_CONTEXT = "certificate_context"
     RELATIONSHIPS = "relationships"
     FALSE_POSITIVE_CONTEXT = "false_positive_context"
+    # Curated attribution: which malware families, actors or campaigns a
+    # provider associates with an observable. Distinct from
+    # MALWARE_INTELLIGENCE, which is about the malware itself rather than the
+    # association graph around it.
+    THREAT_ASSOCIATIONS = "threat_associations"
+    # Sandbox/dynamic-analysis observations of what a file did when run.
+    FILE_BEHAVIOR = "file_behavior"
     BATCH_LOOKUP = "batch_lookup"
     ACTIVE_SCAN = "active_scan"
 
