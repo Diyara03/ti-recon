@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from enum import StrEnum
 from types import TracebackType
 from typing import Any, Final, Self
@@ -55,6 +56,7 @@ __all__ = [
     "DEFAULT_USER_AGENT",
     "AuthConfig",
     "AuthPlacement",
+    "BoundedResponse",
     "ProviderHttpClient",
     "ProviderTimeoutError",
     "ProviderTransportClosed",
@@ -216,6 +218,26 @@ class TransportConfig(FrozenTiReconModel):
 # --------------------------------------------------------------------------- #
 
 
+@dataclass(frozen=True, slots=True)
+class BoundedResponse:
+    """A response whose body was read only up to an agreed byte ceiling.
+
+    ``content`` never exceeds the cap that was asked for. ``truncated`` says
+    whether the far end had more to send, which is the difference between "this
+    artifact is complete" and "this artifact is a fragment and should not be
+    treated as the thing itself".
+    """
+
+    status_code: int
+    headers: httpx.Headers
+    content: bytes
+    truncated: bool
+
+    @property
+    def is_success(self) -> bool:
+        return 200 <= self.status_code < 300
+
+
 class ProviderHttpClient:
     """An async HTTP client pinned to one provider's API.
 
@@ -330,6 +352,88 @@ class ProviderHttpClient:
     async def post(self, path: str, **kwargs: Any) -> httpx.Response:
         """Convenience wrapper for a POST against a relative provider path."""
         return await self.request("POST", path, **kwargs)
+
+    async def get_bounded(
+        self,
+        path: str,
+        *,
+        max_bytes: int,
+        params: dict[str, str | int] | None = None,
+        headers: dict[str, str] | None = None,
+        credential: CredentialMaterial | None = None,
+        operation: str | None = None,
+    ) -> BoundedResponse:
+        """GET a response body, streamed, and stop reading past ``max_bytes``.
+
+        For artifacts — screenshots, stored DOM, stored response bodies — whose
+        size is chosen by whoever is being investigated. :meth:`request` reads a
+        body fully into memory before the caller can see how big it is, which is
+        the wrong shape for content an adversary controls. This reads
+        incrementally and abandons the transfer once the cap is passed, so an
+        oversized artifact costs a bounded amount of memory and bandwidth rather
+        than however much the far end wants to send.
+
+        Passing the cap is reported as ``truncated`` rather than raised: the
+        caller knows whether a partial artifact is useless (a half PNG) or
+        simply enough (the head of a script). The returned bytes are always at
+        most ``max_bytes``.
+
+        Redirects are still not followed, and the response origin is still
+        verified, exactly as in :meth:`request`.
+        """
+        if max_bytes < 1:
+            raise ProviderTransportSecurityError(
+                self.provider_id, message="max_bytes must be positive", operation=operation
+            )
+        if self._closed:
+            raise ProviderTransportClosed(self.provider_id, operation=operation)
+        url = self._resolve(path, operation=operation)
+        request_headers = dict(headers or {})
+        self._reject_credential_headers(request_headers, operation=operation)
+        query = dict(params or {})
+        self._apply_auth(request_headers, query, credential)
+
+        started = time.perf_counter()
+        chunks: list[bytes] = []
+        received = 0
+        truncated = False
+        try:
+            async with self._client.stream(
+                "GET",
+                url,
+                params=query or None,
+                headers=request_headers,
+            ) as response:
+                self._verify_response_origin(response, operation=operation)
+                async for chunk in response.aiter_bytes():
+                    chunks.append(chunk)
+                    received += len(chunk)
+                    if received > max_bytes:
+                        # More was on the wire than we agreed to read. Breaking
+                        # out closes the connection instead of draining the
+                        # rest, so the cost stays bounded by one chunk.
+                        truncated = True
+                        break
+                status = response.status_code
+                response_headers = response.headers
+        except httpx.TimeoutException as exc:
+            self._log("GET", path, None, started, operation, outcome="timeout")
+            raise ProviderTimeoutError(
+                self.provider_id, message="request timed out", operation=operation
+            ) from exc
+        except httpx.TransportError as exc:
+            self._log("GET", path, None, started, operation, outcome="transport_error")
+            raise ProviderUnavailableError(
+                self.provider_id, message="provider unreachable", operation=operation
+            ) from exc
+
+        self._log("GET", path, status, started, operation)
+        return BoundedResponse(
+            status_code=status,
+            headers=response_headers,
+            content=b"".join(chunks)[:max_bytes],
+            truncated=truncated,
+        )
 
     # ------------------------------------------------------------------ #
     # SSRF boundary
