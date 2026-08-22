@@ -288,17 +288,18 @@ Full detail: [providers/gti.md](providers/gti.md).
 Note the data-use boundary recorded there: GTI content must not be exposed to
 Claude, MCP or any AI layer before the applicable provider terms are reviewed.
 
-## 12. Deferred architecture (Task 8+)
+## 12. Deferred architecture (Task 9+)
 
 Documented so the shape is known; not implemented:
 
 - Distributed execution state: Redis-backed cache, quota and cooldown stores,
   shared rate-limit state and cross-worker concurrency limits.
-- Further provider adapters (urlscan, GreyNoise, Censys, abuse.ch, warning
-  lists) alongside GTI.
+- Further provider adapters (GreyNoise, Censys, abuse.ch, warning lists)
+  alongside GTI and urlscan.
 - Capability planner, provider selection and adaptive enrichment (widen
   capabilities when evidence is thin).
 - Lineage-aware correlation, evidence fusion and verdict scoring.
-- Persistence (PostgreSQL), raw-response object storage, production secret vault.
+- Persistence (PostgreSQL), raw-response object storage, a durable backend for
+  the artifact store (Task 8 ships an in-memory one), production secret vault.
 - MCP server, Claude connector, TI Analyst Skill, web frontend.
 - Active operations and sandbox integration.
