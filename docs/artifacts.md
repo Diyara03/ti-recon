@@ -25,7 +25,7 @@ lookup with the wrong scope returns `None` — indistinguishable from a missing
 id, because "that exists, but not for you" is itself a disclosure.
 
 ```python
-store.get(other_scope, artifact_id)      # -> None
+store.get(other_scope, artifact_id)  # -> None
 store.content(other_scope, artifact_id)  # -> None
 ```
 
