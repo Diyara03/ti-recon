@@ -30,6 +30,10 @@ from ti_recon.providers import (
     TransportConfig,
     TransportTimeouts,
 )
+from ti_recon.providers.transport import (
+    QueryStringRedactingFilter,
+    install_transport_log_redaction,
+)
 
 BASE_URL = "https://api.fake-provider.test/v1/"
 OTHER_HOST = "https://evil.example/"
@@ -511,3 +515,216 @@ def test_config_is_exposed_for_inspection(client: ProviderHttpClient) -> None:
     assert client.config.provider_id == "fake_provider"
     assert client.config.base_url == BASE_URL
     assert client.config.host == "api.fake-provider.test"
+
+
+# --------------------------------------------------------------------------- #
+# Bounded artifact reads
+#
+# Artifact bodies are sized by whoever is being investigated, so the transport
+# must be able to stop reading rather than pull whatever the far end sends.
+# --------------------------------------------------------------------------- #
+
+
+@respx.mock
+async def test_bounded_get_returns_a_complete_small_body(client: ProviderHttpClient) -> None:
+    respx.get(f"{BASE_URL}artifact").mock(
+        return_value=httpx.Response(200, content=b"small", headers={"Content-Type": "image/png"})
+    )
+    result = await client.get_bounded("artifact", max_bytes=1024)
+    assert result.content == b"small"
+    assert result.truncated is False
+    assert result.is_success is True
+    assert result.headers["content-type"] == "image/png"
+
+
+@respx.mock
+async def test_bounded_get_stops_at_the_cap(client: ProviderHttpClient) -> None:
+    respx.get(f"{BASE_URL}artifact").mock(return_value=httpx.Response(200, content=b"x" * 5000))
+    result = await client.get_bounded("artifact", max_bytes=100)
+    assert len(result.content) == 100
+    assert result.truncated is True
+
+
+@respx.mock
+async def test_bounded_get_marks_an_exact_fit_as_complete(client: ProviderHttpClient) -> None:
+    respx.get(f"{BASE_URL}artifact").mock(return_value=httpx.Response(200, content=b"y" * 64))
+    result = await client.get_bounded("artifact", max_bytes=64)
+    assert result.content == b"y" * 64
+    assert result.truncated is False
+
+
+@respx.mock
+async def test_bounded_get_applies_the_credential(client: ProviderHttpClient) -> None:
+    route = respx.get(f"{BASE_URL}artifact").mock(return_value=httpx.Response(200, content=b"ok"))
+    await client.get_bounded("artifact", max_bytes=16, credential=make_credential())
+    assert route.calls.last.request.headers["X-Api-Key"] == SECRET
+
+
+@respx.mock
+async def test_bounded_get_returns_error_statuses_without_raising(
+    client: ProviderHttpClient,
+) -> None:
+    """Status handling is the adapter's job; the transport only refuses to be unsafe."""
+    respx.get(f"{BASE_URL}artifact").mock(return_value=httpx.Response(404, content=b"nope"))
+    result = await client.get_bounded("artifact", max_bytes=16)
+    assert result.status_code == 404
+    assert result.is_success is False
+
+
+async def test_bounded_get_keeps_the_ssrf_boundary(client: ProviderHttpClient) -> None:
+    with pytest.raises(ProviderTransportSecurityError):
+        await client.get_bounded(f"{OTHER_HOST}artifact", max_bytes=16)
+
+
+async def test_bounded_get_rejects_a_non_positive_cap(client: ProviderHttpClient) -> None:
+    with pytest.raises(ProviderTransportSecurityError, match="max_bytes"):
+        await client.get_bounded("artifact", max_bytes=0)
+
+
+async def test_bounded_get_refuses_a_closed_client() -> None:
+    transport_client = ProviderHttpClient(make_config())
+    await transport_client.aclose()
+    with pytest.raises(ProviderTransportClosed):
+        await transport_client.get_bounded("artifact", max_bytes=16)
+
+
+@respx.mock
+async def test_bounded_get_normalizes_a_timeout(client: ProviderHttpClient) -> None:
+    respx.get(f"{BASE_URL}artifact").mock(side_effect=httpx.ReadTimeout("too slow"))
+    with pytest.raises(ProviderTimeoutError):
+        await client.get_bounded("artifact", max_bytes=16)
+
+
+@respx.mock
+async def test_bounded_get_normalizes_an_unreachable_provider(client: ProviderHttpClient) -> None:
+    respx.get(f"{BASE_URL}artifact").mock(side_effect=httpx.ConnectError("refused"))
+    with pytest.raises(ProviderUnavailableError):
+        await client.get_bounded("artifact", max_bytes=16)
+
+
+# --------------------------------------------------------------------------- #
+# Third-party logging
+#
+# httpx logs every request at INFO with the full URL. `AuthPlacement.QUERY`
+# exists, so for a provider that takes its key as a query parameter that line
+# would print the credential on every request, at default level.
+# --------------------------------------------------------------------------- #
+
+
+@respx.mock
+async def test_a_query_parameter_credential_never_reaches_an_httpx_log_line(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = ProviderHttpClient(
+        make_config(auth=AuthConfig(placement=AuthPlacement.QUERY, query_param="apikey"))
+    )
+    respx.get(f"{BASE_URL}ip/1.2.3.4").mock(return_value=httpx.Response(200))
+    try:
+        with caplog.at_level(logging.DEBUG):
+            await client.get("ip/1.2.3.4", credential=make_credential())
+    finally:
+        await client.aclose()
+
+    rendered = "\n".join(record.getMessage() for record in caplog.records)
+    assert SECRET not in rendered
+    assert "[REDACTED]" in rendered
+
+
+def test_the_redaction_filter_is_installed_once() -> None:
+    install_transport_log_redaction()
+    install_transport_log_redaction()
+    installed = [
+        existing
+        for existing in logging.getLogger("httpx").filters
+        if isinstance(existing, QueryStringRedactingFilter)
+    ]
+    assert len(installed) == 1
+
+
+def test_the_filter_leaves_a_record_without_a_url_alone() -> None:
+    record = logging.LogRecord("httpx", logging.INFO, __file__, 1, "plain %s", ("message",), None)
+    assert QueryStringRedactingFilter().filter(record) is True
+    assert record.args == ("message",)
+
+
+@respx.mock
+async def test_an_investigated_value_in_a_query_is_redacted_from_httpx_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The same filter that hides a key also stops a lookup value leaking.
+
+    This module's own log line already omits the query string; httpx's did not.
+    """
+    client = ProviderHttpClient(make_config())
+    respx.get(f"{BASE_URL}search").mock(return_value=httpx.Response(200))
+    try:
+        with caplog.at_level(logging.DEBUG):
+            await client.get("search", params={"q": "victim-domain.example"})
+    finally:
+        await client.aclose()
+
+    rendered = "\n".join(record.getMessage() for record in caplog.records)
+    assert "victim-domain.example" not in rendered
+    assert "[REDACTED]" in rendered
+
+
+@respx.mock
+async def test_a_url_without_a_query_is_logged_unchanged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = ProviderHttpClient(make_config())
+    respx.get(f"{BASE_URL}ip/1.2.3.4").mock(return_value=httpx.Response(200))
+    try:
+        with caplog.at_level(logging.DEBUG):
+            await client.get("ip/1.2.3.4")
+    finally:
+        await client.aclose()
+
+    rendered = "\n".join(record.getMessage() for record in caplog.records)
+    assert f"{BASE_URL}ip/1.2.3.4" in rendered
+    assert "[REDACTED]" not in rendered
+
+
+def test_the_filter_keeps_everything_that_is_not_the_query() -> None:
+    """A redacted line must still be a usable line."""
+    record = logging.LogRecord(
+        "httpx",
+        logging.INFO,
+        __file__,
+        1,
+        'HTTP Request: %s %s "%s %d %s"',
+        ("GET", "https://api.example/v1/search?q=secret-value", "HTTP/1.1", 200, "OK"),
+        None,
+    )
+    assert QueryStringRedactingFilter().filter(record) is True
+    message = record.getMessage()
+    assert "secret-value" not in message
+    assert "GET" in message
+    assert "https://api.example/v1/search?[REDACTED]" in message
+    assert "200" in message
+    assert "OK" in message
+
+
+def test_the_filter_leaves_a_record_with_no_arguments_alone() -> None:
+    record = logging.LogRecord("httpx", logging.INFO, __file__, 1, "connected", None, None)
+    assert QueryStringRedactingFilter().filter(record) is True
+    assert record.getMessage() == "connected"
+
+
+@respx.mock
+async def test_a_query_parameter_credential_never_reaches_an_exception(
+    client: ProviderHttpClient,
+) -> None:
+    """A failure carrying the URL would carry the key with it."""
+    query_client = ProviderHttpClient(
+        make_config(auth=AuthConfig(placement=AuthPlacement.QUERY, query_param="apikey"))
+    )
+    respx.get(f"{BASE_URL}x").mock(side_effect=httpx.ConnectError("refused"))
+    try:
+        with pytest.raises(ProviderUnavailableError) as caught:
+            await query_client.get("x", credential=make_credential())
+    finally:
+        await query_client.aclose()
+
+    text = f"{caught.value}\n{caught.value!r}\n{caught.value.args}"
+    assert SECRET not in text

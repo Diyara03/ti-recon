@@ -8,8 +8,8 @@ eventually produce an explainable, auditable assessment.
 
 ## Current development state
 
-This repository currently contains the foundation plus its first provider
-(Jira Tasks 1-7):
+This repository currently contains the foundation plus its first two providers
+(Jira Tasks 1-8):
 
 | Task | Scope | State |
 |------|-------|-------|
@@ -20,12 +20,15 @@ This repository currently contains the foundation plus its first provider
 | 5 | Provider integration framework | Implemented (contract, registry, transport) |
 | 6 | Provider execution controls | Implemented (in-memory, single-process) |
 | 7 | Google Threat Intelligence integration | Implemented (passive enrichment) |
+| 8 | urlscan.io integration + web forensics | Implemented (passive enrichment; forensics on explicit request) |
 
-**One provider is integrated.** Google Threat Intelligence performs passive
-enrichment using each analyst's own VirusTotal API key. There is no urlscan,
-GreyNoise, Censys, ThreatFox, URLhaus or MalwareBazaar client yet, and there is
-no query planner, no provider selection, no evidence fusion, no verdict scoring,
-no MCP server and no Claude Skill. Those are later Jira tasks.
+**Two providers are integrated**, both passive. Google Threat Intelligence
+enriches with each analyst's own VirusTotal API key; urlscan supplies passive web
+intelligence — what its browsers observed when they visited a page — and, only
+when explicitly asked, static forensic analysis of the page artifacts it already
+stored. There is no GreyNoise, Censys, ThreatFox, URLhaus or MalwareBazaar client
+yet, and there is no query planner, no provider selection, no evidence fusion, no
+verdict scoring, no MCP server and no Claude Skill. Those are later Jira tasks.
 
 Task 6 added the execution layer every adapter runs behind — caching, retry and
 backoff, rate-limit and quota tracking, cooldowns, bounded concurrency and
@@ -37,10 +40,17 @@ development foundation, not distributed coordination.
 | Provider | Status | Supported | Not yet |
 |----------|--------|-----------|---------|
 | Google Threat Intelligence | Implemented | IP / domain / URL / hash passive enrichment, GTI assessment, threat severity, aggregated reputation, quota awareness, bounded relationships, selected threat associations, deep file behaviour | Intelligence Search, active scanning, sample submission, sample downloads |
+| urlscan.io | Implemented | historical scan discovery bounded by the account's own searchable range, stored scan results, verdicts with separated lineage, redirect chains, contacted infrastructure, served-body digests, quota awareness, and — on explicit request at DEEP depth — stored screenshot / DOM / response-body retrieval with static forensic extraction and kit fingerprints | scan submission, rescan, live scan, sample downloads, visibility changes, deletion, saved searches, incidents |
 
-GTI supplies **evidence**, not verdicts. Weighing it against other providers and
+Both supply **evidence**, not verdicts. Weighing providers against each other and
 reaching a conclusion is the future evidence-fusion layer's job, and no such
-layer exists yet. See [docs/providers/gti.md](docs/providers/gti.md).
+layer exists yet. See [docs/providers/gti.md](docs/providers/gti.md) and
+[docs/providers/urlscan.md](docs/providers/urlscan.md).
+
+urlscan has two deliberately separate modes. Ordinary enrichment never retrieves
+a DOM, a screenshot or a response body; deep forensic retrieval happens only when
+a caller asks for `WEB_FORENSICS` at DEEP depth, and stays passive — everything it
+reads is content urlscan already stored.
 
 ## Architecture (high level)
 
@@ -54,10 +64,11 @@ MCP connector                    (future, not in this repo)
 TI Recon backend                 <-- this repository
    |-- capability planner         (future)
    |-- provider registry          implemented
-   |-- provider adapters          contract implemented; GTI is the first
+   |-- provider adapters          contract implemented; GTI and urlscan
    |-- provider HTTP transport    implemented (SSRF-bounded)
    |-- provider executor          implemented (cache, retry, quota, cooldown,
    |                                           concurrency, single-flight)
+   |-- provider artifacts         implemented (bounded, user-isolated, in-memory)
    |-- normalized evidence        implemented (Task 3 models)
    |-- lineage / correlation      models implemented, engine future
    |-- evidence fusion            (future)
@@ -139,12 +150,14 @@ In production, provider credentials are held per user by the credential layer
 
 ## Current limitations
 
-- **One provider only.** Google Threat Intelligence is integrated; every other
-  provider named above is a later task.
+- **Two providers only.** Google Threat Intelligence and urlscan.io are
+  integrated; every other provider named above is a later task.
 - **No provider selection.** The registry returns every compatible provider;
   nothing ranks or chooses between them.
-- **GTI is passive only.** No submission, rescanning, downloads, sandbox
-  detonation or Intelligence Search.
+- **Both providers are passive only.** No submission, rescanning, live scanning,
+  downloads, sandbox detonation or Intelligence Search.
+- **Artifact storage is in-memory only.** Retrieved page artifacts are bounded
+  and user-isolated but process-local and lost on restart.
 - **Secret storage is in-memory only.** `InMemorySecretStore` is explicitly
   labelled *not for production*: it is process-local, unencrypted and lost on
   restart. No Vault/AWS/Azure/GCP backend is implemented.
@@ -155,8 +168,6 @@ In production, provider credentials are held per user by the credential layer
   has its own cache, each discovers a throttled provider independently, and
   effective provider concurrency is `max_concurrency x N`. No Redis or other
   shared store is implemented.
-- **No real quota API calls.** The quota models and stores exist; nothing
-  queries a provider for its quota.
 - **No batch, pivot or active operations against a real provider.** The
   contract declares them and the default implementations raise
   `UnsupportedProviderOperation`; only test fakes implement batch lookup.
@@ -171,3 +182,5 @@ In production, provider credentials are held per user by the credential layer
 - [docs/provider-framework.md](docs/provider-framework.md) — Task 5 provider framework
 - [docs/provider-execution.md](docs/provider-execution.md) — Task 6 execution controls
 - [docs/providers/gti.md](docs/providers/gti.md) — Task 7 Google Threat Intelligence
+- [docs/providers/urlscan.md](docs/providers/urlscan.md) — Task 8 urlscan.io and web forensics
+- [docs/artifacts.md](docs/artifacts.md) — Task 8 bounded provider artifact storage

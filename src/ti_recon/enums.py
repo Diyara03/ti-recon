@@ -283,6 +283,12 @@ class ProviderCapability(StrEnum):
     THREAT_ASSOCIATIONS = "threat_associations"
     # Sandbox/dynamic-analysis observations of what a file did when run.
     FILE_BEHAVIOR = "file_behavior"
+    # Deep analysis of stored web artifacts — a page's DOM, its screenshot, its
+    # script and document bodies. Deliberately generic: any provider that
+    # archives what a browser saw can serve it, and it is separate from
+    # WEB_BEHAVIOR because retrieving and parsing stored page content is far
+    # more expensive and far more entitlement-sensitive than reading a summary.
+    WEB_FORENSICS = "web_forensics"
     BATCH_LOOKUP = "batch_lookup"
     ACTIVE_SCAN = "active_scan"
 

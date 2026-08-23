@@ -3,9 +3,10 @@
 > Task 5. Describes `src/ti_recon/providers/`.
 >
 > This document describes the provider-neutral contracts, the registry and the
-> shared transport. One provider now implements them: Google Threat Intelligence
-> (Task 7, see [providers/gti.md](providers/gti.md)). urlscan, GreyNoise, Censys,
-> ThreatFox, URLhaus and MalwareBazaar are later tasks.
+> shared transport. Two providers now implement them: Google Threat Intelligence
+> (Task 7, see [providers/gti.md](providers/gti.md)) and urlscan.io (Task 8, see
+> [providers/urlscan.md](providers/urlscan.md)). GreyNoise, Censys, ThreatFox,
+> URLhaus and MalwareBazaar are later tasks.
 >
 > Covers capabilities, descriptor, request, result envelope, error taxonomy,
 > the adapter contract, the registry and the shared HTTP transport.

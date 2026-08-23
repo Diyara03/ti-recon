@@ -509,10 +509,11 @@ distributed locks         distributed semaphores  shared rate-limit state
 real quota API calls      provider selection      query planning
 ```
 
-and every real provider integration — Google Threat Intelligence / VirusTotal,
-urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP Warning
-Lists, SecurityTrails, AbuseIPDB, Shodan, IPinfo — along with evidence fusion,
-verdict scoring, MCP, the Claude Skill and any web UI.
+and every remaining provider integration — GreyNoise, Censys, ThreatFox, URLhaus,
+MalwareBazaar, MISP Warning Lists, SecurityTrails, AbuseIPDB, Shodan, IPinfo —
+along with evidence fusion, verdict scoring, MCP, the Claude Skill and any web
+UI. Google Threat Intelligence (Task 7) and urlscan.io (Task 8) run behind these
+controls today.
 
 The fake adapters in `tests/fixtures/execution_adapters.py` are shaped after
 *categories* of provider behaviour (a quota-metered aggregator, a provider with
