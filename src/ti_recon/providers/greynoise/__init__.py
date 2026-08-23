@@ -16,6 +16,11 @@ What that buys an investigation:
 * **Tags, CVE associations and sensor detail** — what the traffic looked like.
   Observations, aggregated and bounded, pointing nowhere on their own.
 
+A credential check costs no intelligence lookup: validation and health read
+GreyNoise's own ``/ping`` status endpoint, which takes no observable. That is a
+statement about reachability and authentication only — entitlement is a separate
+question, discovered from a real lookup.
+
 Two access levels, resolved per credential. The full v3 IP context needs an
 entitled subscription; the Community endpoint does not. An ``AUTO`` lookup finds
 out which one a key has — once — and remembers it. A rejected key is never
@@ -35,7 +40,6 @@ from ti_recon.providers.greynoise.access import (
     InMemoryAccessLevelStore,
 )
 from ti_recon.providers.greynoise.adapter import (
-    CREDENTIAL_PROBE_ADDRESS,
     GREYNOISE_COMMUNITY_ACCESS_ONLY,
     GREYNOISE_DOCUMENT_UNREADABLE,
     GREYNOISE_NOT_SUPPORTED,
@@ -114,7 +118,6 @@ from ti_recon.providers.greynoise.policy import (
 
 __all__ = [
     "CLASSIFICATION_EFFECTS",
-    "CREDENTIAL_PROBE_ADDRESS",
     "CREDENTIAL_STATUS_BY_CATEGORY",
     "DEFAULT_ACCESS_TTL_SECONDS",
     "DEPTH_DETAIL",

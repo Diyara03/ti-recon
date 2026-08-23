@@ -7,15 +7,21 @@ payloads, so none of it can reach the network by accident.
 What this client deliberately cannot do
 ---------------------------------------
 
-Reads of two v3 endpoints, and nothing else. There is no GNQL query method, no
-timeline method, no bulk or multi-IP method, no feed download and no PCAP or
-session retrieval. GreyNoise offers all of those; the :class:`GreyNoiseClient`
-protocol exposes none of them, the concrete implementation never calls
+Three reads, and nothing else. There is no GNQL query method, no timeline
+method, no bulk or multi-IP method, no feed download and no PCAP or session
+retrieval. GreyNoise offers all of those; the :class:`GreyNoiseClient` protocol
+exposes none of them, the concrete implementation never calls
 :meth:`~ti_recon.providers.transport.ProviderHttpClient.post`, and there is no
 code path — not even an unused one — that would submit anything.
 
-The deprecated v2 endpoints are equally absent. Only ``/v3/ip/{ip}`` and
-``/v3/community/{ip}`` exist here.
+The deprecated v2 endpoints are equally absent. Only ``/ping``, ``/v3/ip/{ip}``
+and ``/v3/community/{ip}`` exist here.
+
+Two of those answer *about an address* and one does not. ``/ping`` is GreyNoise's
+own status endpoint: it takes no observable, consumes no intelligence lookup, and
+exists precisely so a caller can check that a key is accepted and the service is
+up. That distinction is what keeps credential validation off an analyst's lookup
+allowance — see :meth:`GreyNoiseHttpClient.ping`.
 
 Path safety
 -----------
@@ -66,6 +72,7 @@ __all__ = [
 class GreyNoiseOperation:
     """Operation names used for logging, metrics and error attribution."""
 
+    PING: Final[str] = "greynoise.ping"
     IP_CONTEXT: Final[str] = "greynoise.ip_context"
     IP_CONTEXT_QUICK: Final[str] = "greynoise.ip_context_quick"
     COMMUNITY: Final[str] = "greynoise.community"
@@ -107,6 +114,8 @@ class GreyNoiseClient(Protocol):
     read out of its own database. Adding a hunting or submission method would
     mean changing this protocol, which is the point of having it.
     """
+
+    async def ping(self, *, credential: CredentialMaterial) -> GreyNoiseJsonResult: ...
 
     async def get_ip_context(
         self, *, ip: str, quick: bool = False, credential: CredentialMaterial
@@ -152,6 +161,23 @@ class GreyNoiseHttpClient:
     # ------------------------------------------------------------------ #
     # Reads
     # ------------------------------------------------------------------ #
+
+    async def ping(self, *, credential: CredentialMaterial) -> GreyNoiseJsonResult:
+        """GreyNoise's own status endpoint. Takes no observable.
+
+        This is what "does this key work" should cost: nothing. ``/ping``
+        consumes no intelligence lookup, so a credential or health check never
+        spends part of an analyst's allowance — which matters most on exactly the
+        plans where the allowance is smallest.
+
+        A ``200`` means the key was accepted and the service is up. A ``401``
+        means the key was rejected. Neither says anything about *entitlement*:
+        whether this key may read the full IP context is discovered from a real
+        lookup, not from here.
+        """
+        return await self._get_json(
+            "ping", operation=GreyNoiseOperation.PING, credential=credential
+        )
 
     async def get_ip_context(
         self, *, ip: str, quick: bool = False, credential: CredentialMaterial

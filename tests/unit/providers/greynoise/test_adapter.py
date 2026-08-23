@@ -52,6 +52,7 @@ from ti_recon.providers.greynoise import (
 )
 
 FAKE_KEY = "greynoise-key-SHOULD-NOT-LEAK-1234567890"
+PING = FakeGreyNoiseClient.PING
 FULL = FakeGreyNoiseClient.FULL
 QUICK = FakeGreyNoiseClient.QUICK
 COMMUNITY = FakeGreyNoiseClient.COMMUNITY
@@ -529,36 +530,59 @@ async def test_batch_lookup_is_unsupported() -> None:
 # --------------------------------------------------------------------------- #
 
 
-async def test_a_credential_is_validated_against_a_reserved_address() -> None:
-    """The check reveals nothing about any investigation."""
+async def test_a_credential_is_validated_against_the_ping_endpoint() -> None:
+    """A credential check must not cost an intelligence lookup."""
     adapter, client = build()
     validation = await adapter.validate_credentials(credential())
     assert validation.status is CredentialStatus.ACTIVE
-    assert client.details(COMMUNITY) == ["192.0.2.1"]
+    assert client.call_count(PING) == 1
     assert not client.called(FULL)
+    assert not client.called(QUICK)
+    assert not client.called(COMMUNITY)
 
 
-async def test_a_404_for_the_reserved_address_proves_the_key_works() -> None:
+async def test_no_observable_is_named_when_validating_a_credential() -> None:
+    """``/ping`` takes none, so nothing about any investigation is revealed."""
     adapter, client = build()
-    client.fail(COMMUNITY, provider_error_for(ProviderErrorCategory.NOT_FOUND, "greynoise"))
-    validation = await adapter.validate_credentials(credential())
-    assert validation.status is CredentialStatus.ACTIVE
+    await adapter.validate_credentials(credential())
+    assert [name for name, _ in client.calls] == [PING]
 
 
-async def test_a_rejected_key_validates_as_invalid() -> None:
+async def test_a_rejected_ping_validates_as_invalid() -> None:
     adapter, client = build()
-    client.fail(
-        COMMUNITY, provider_error_for(ProviderErrorCategory.AUTHENTICATION_ERROR, "greynoise")
-    )
+    client.fail(PING, provider_error_for(ProviderErrorCategory.AUTHENTICATION_ERROR, "greynoise"))
     validation = await adapter.validate_credentials(credential())
     assert validation.status is CredentialStatus.INVALID
 
 
-async def test_a_throttled_check_leaves_the_key_alone() -> None:
+async def test_a_throttled_ping_leaves_the_key_alone() -> None:
     adapter, client = build()
-    client.fail(COMMUNITY, provider_error_for(ProviderErrorCategory.RATE_LIMITED, "greynoise"))
+    client.fail(PING, provider_error_for(ProviderErrorCategory.RATE_LIMITED, "greynoise"))
     validation = await adapter.validate_credentials(credential())
     assert validation.status is CredentialStatus.ACTIVE
+
+
+async def test_a_transient_ping_failure_says_nothing_about_the_key() -> None:
+    adapter, client = build()
+    client.fail(PING, provider_error_for(ProviderErrorCategory.TRANSIENT_ERROR, "greynoise"))
+    validation = await adapter.validate_credentials(credential())
+    assert validation.status is CredentialStatus.UNKNOWN
+    assert validation.is_usable is True
+
+
+async def test_a_validated_credential_never_carries_the_key() -> None:
+    adapter, client = build()
+    client.fail(PING, provider_error_for(ProviderErrorCategory.AUTHENTICATION_ERROR, "greynoise"))
+    validation = await adapter.validate_credentials(credential())
+    assert FAKE_KEY not in validation.model_dump_json()
+    assert "SHOULD-NOT-LEAK" not in validation.model_dump_json()
+
+
+async def test_validating_a_credential_settles_no_access_level() -> None:
+    """A ping proves reachability, never entitlement."""
+    adapter, _ = build()
+    await adapter.validate_credentials(credential())
+    assert await adapter.access_store.get("user|analyst-a|greynoise|conn-1") is None
 
 
 async def test_a_missing_credential_validates_as_invalid() -> None:
@@ -602,19 +626,30 @@ async def test_health_is_unknown_without_a_credential() -> None:
     assert client.calls == []
 
 
-async def test_health_is_available_when_the_community_read_answers() -> None:
-    adapter, _ = build()
+async def test_health_is_checked_with_ping_rather_than_a_lookup() -> None:
+    adapter, client = build()
     report = await adapter.health(credential())
     assert report.health.value == "available"
+    assert client.call_count(PING) == 1
+    assert not client.called(FULL)
+    assert not client.called(COMMUNITY)
 
 
 async def test_health_is_unavailable_when_greynoise_is_down() -> None:
     adapter, client = build()
-    client.fail(
-        COMMUNITY, provider_error_for(ProviderErrorCategory.PROVIDER_UNAVAILABLE, "greynoise")
-    )
+    client.fail(PING, provider_error_for(ProviderErrorCategory.PROVIDER_UNAVAILABLE, "greynoise"))
     report = await adapter.health(credential())
     assert report.health.value == "unavailable"
+
+
+async def test_health_is_degraded_when_the_key_is_rejected() -> None:
+    """The service answered; this key did not get in."""
+    adapter, client = build()
+    client.fail(PING, provider_error_for(ProviderErrorCategory.AUTHENTICATION_ERROR, "greynoise"))
+    report = await adapter.health(credential())
+    assert report.health.value == "degraded"
+    assert report.detail is not None
+    assert FAKE_KEY not in report.model_dump_json()
 
 
 # --------------------------------------------------------------------------- #

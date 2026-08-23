@@ -108,7 +108,6 @@ from ti_recon.providers.result import (
 from ti_recon.providers.transport import ProviderTransportError
 
 __all__ = [
-    "CREDENTIAL_PROBE_ADDRESS",
     "GREYNOISE_COMMUNITY_ACCESS_ONLY",
     "GREYNOISE_DOCUMENT_UNREADABLE",
     "GREYNOISE_NOT_SUPPORTED",
@@ -145,17 +144,6 @@ UNSUPPORTED_REASONS: Final[dict[str, str]] = {
         "GreyNoise is queried by IPv4 address; this observable type has no GreyNoise lookup"
     )
 }
-
-#: The address used to prove a credential works without asking about anything
-#: real.
-#:
-#: RFC 5737 TEST-NET-1 — reserved for documentation, never routed, and therefore
-#: never anybody's observable. GreyNoise has no zero-cost endpoint for
-#: validating a key, so validation has to look *something* up; looking up a
-#: reserved address means the check reveals nothing about an investigation and
-#: cannot be mistaken for enrichment. A ``404`` is the expected answer and
-#: proves the key was accepted, because a bad key answers ``401``.
-CREDENTIAL_PROBE_ADDRESS: Final[str] = "192.0.2.1"
 
 #: Capabilities a Community-only credential genuinely cannot serve.
 #:
@@ -261,13 +249,20 @@ class GreyNoiseAdapter(ProviderAdapter):
     async def validate_credentials(
         self, credential: CredentialMaterial | None
     ) -> CredentialValidation:
-        """Check a key against the Community endpoint for a reserved address.
+        """Check a key against GreyNoise's own ``/ping`` status endpoint.
 
-        The Community endpoint rather than the full one on purpose: it answers
-        for both subscription levels, so a working free-tier key validates as
-        working instead of as forbidden. A ``404`` for
-        :data:`CREDENTIAL_PROBE_ADDRESS` is success — the key was accepted and
-        GreyNoise looked. Only a rejected key is reported invalid; see
+        ``/ping`` takes no observable and consumes no intelligence lookup, which
+        is what a credential check should cost. Validating by looking an address
+        up would spend part of the analyst's allowance to be told their key
+        works — and on the plans where that allowance is smallest, checking a key
+        is exactly when spending it hurts most.
+
+        What this proves is **reachability and authentication**, and nothing
+        else. Whether the key may read the full IP context is a separate
+        question, discovered from a real lookup; see
+        :mod:`ti_recon.providers.greynoise.access`.
+
+        Only a rejected key is reported invalid; see
         :func:`~ti_recon.providers.greynoise.errors.credential_status_for`.
         """
         if credential is None:
@@ -305,7 +300,11 @@ class GreyNoiseAdapter(ProviderAdapter):
         )
 
     async def health(self, credential: CredentialMaterial | None = None) -> ProviderHealthReport:
-        """Report availability, checking only if a credential is available."""
+        """Report availability, checking only if a credential is available.
+
+        Also ``/ping``: establishing that a provider is up should never cost an
+        intelligence lookup.
+        """
         if credential is None:
             return ProviderHealthReport(
                 provider_id=GREYNOISE_PROVIDER_ID, health=ProviderHealth.UNKNOWN
@@ -322,21 +321,23 @@ class GreyNoiseAdapter(ProviderAdapter):
         return ProviderHealthReport(
             provider_id=GREYNOISE_PROVIDER_ID,
             health=ProviderHealth.UNAVAILABLE if unavailable else ProviderHealth.DEGRADED,
-            detail=f"community lookup returned {error.category.value}",
+            detail=f"ping returned {error.category.value}",
         )
 
     async def _probe(self, credential: CredentialMaterial) -> ProviderError | None:
-        """One Community read of a reserved address. ``None`` means it worked.
+        """One ``/ping``. ``None`` means the key was accepted and the service is up.
 
-        A ``404`` counts as working: the request was authenticated and GreyNoise
-        answered honestly about an address nobody has ever seen.
+        No observable is named and no intelligence lookup is consumed, so this
+        can be called as often as an operator likes. Any failure is returned
+        rather than interpreted: whether it says something about the credential
+        is :func:`~ti_recon.providers.greynoise.errors.credential_status_for`'s
+        decision, and nothing here writes an access level — a ping proves
+        nothing about entitlement.
         """
         client = self._client_factory()
         try:
-            await client.get_community(ip=CREDENTIAL_PROBE_ADDRESS, credential=credential)
+            await client.ping(credential=credential)
         except ProviderError as error:
-            if error.category is ProviderErrorCategory.NOT_FOUND:
-                return None
             return error
         finally:
             await client.aclose()

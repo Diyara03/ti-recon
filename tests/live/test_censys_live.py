@@ -13,28 +13,43 @@ from the organization endpoint instead of the user one. Without the first two
 variables every test here skips, so a default ``pytest`` run, CI and pre-commit
 never contact Censys.
 
-Credits
--------
+What a full run costs
+---------------------
 
-Every Censys asset read costs a credit, so this file is deliberately frugal and
-ordered.
+Every Censys **asset** read costs a credit. The account endpoints cost nothing.
 
-The credit endpoints cost **nothing**, so they go first: the credential check and
-the health check both read a balance rather than an asset, and the balance is
-asserted before anything is spent. Then exactly one well-known public host is
-looked up, and the repeat-lookup test reuses that same asset through the cache so
-the second call costs nothing either.
+===============================  =====================================
+Check                            Cost
+===============================  =====================================
+credential validation            credit endpoint — **0 credits**
+credit balance                   credit endpoint — **0 credits**
+health                           credit endpoint — **0 credits**
+capability discovery             no request at all
+unsupported observable           no request at all
+every enrichment assertion       **one** host read — 1 credit, shared
+the repeat-lookup assertion      served from the Task 6 cache — 0 credits
+===============================  =====================================
 
-There is **no search test**, at any depth. Search is not implemented, costs
-credits per page rather than per asset, and is explicitly deferred.
+**A full run performs exactly one physical, credit-consuming asset read.**
+
+That is enforced by the code rather than by a comment or by test ordering:
+:func:`live_lookup` performs the read once, caches both outcomes in a
+module-level slot, and every assertion below reads that same pair. Calling
+``adapter.lookup`` directly from several tests — as an earlier version of this
+file did — bypasses the Task 6 cache and quietly spends one credit per test,
+which is exactly the mistake this structure removes.
+
+There is **no search test**, at any depth: search is not implemented, costs
+credits per page rather than per asset, and is explicitly deferred. There is no
+second web-property read, no certificate lookup and no rescan.
 
 What these check, and what they deliberately do not
 ---------------------------------------------------
 
 They check that a direct asset read succeeds, that what comes back normalizes
 into TI Recon models with the right provenance and no direction, that no banner
-or body text survives into evidence, and that a repeat lookup through the Task 6
-executor spends no second credit.
+or body text survives into evidence, and that the identical request run again is
+served from cache.
 
 They do **not** assert which ports are open on anything. Exposure changes, and a
 test that fails because a host closed a port is a test that teaches you to ignore
@@ -45,6 +60,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 
 import pytest
 from pydantic import SecretStr
@@ -72,6 +88,7 @@ from ti_recon.execution import (
     InMemoryCooldownStore,
     InMemoryProviderCache,
     InMemoryQuotaStore,
+    ProviderExecutionOutcome,
     ProviderExecutor,
     ProviderPolicyRegistry,
 )
@@ -86,14 +103,15 @@ from ti_recon.providers.censys import (
     StaticOrganizationDirectory,
     build_censys_execution_policy,
 )
+from ti_recon.providers.quota import ProviderQuotaSnapshot
 
 RUN_LIVE_ENV_VAR = "RUN_CENSYS_LIVE_TESTS"
 TOKEN_ENV_VAR = "CENSYS_PAT"
 ORGANIZATION_ENV_VAR = "CENSYS_ORGANIZATION_ID"
 
 #: A host that is scanned constantly and is not anybody's malicious
-#: infrastructure. Deliberately boring, and deliberately a single address: each
-#: read of it costs one credit.
+#: infrastructure. Deliberately boring, and deliberately a single address: one
+#: read of it is the entire credit budget of this file.
 SMOKE_ADDRESS = "8.8.8.8"
 
 LIVE_USER = "live-analyst"
@@ -152,7 +170,7 @@ def request_for(
 
 
 # --------------------------------------------------------------------------- #
-# The free endpoints, first
+# Zero-credit checks
 # --------------------------------------------------------------------------- #
 
 
@@ -193,142 +211,180 @@ async def test_an_unsupported_observable_costs_no_credit(adapter: CensysAdapter)
 
 
 # --------------------------------------------------------------------------- #
-# One asset read
+# The one credit, spent once and shared
 # --------------------------------------------------------------------------- #
 
 
-async def test_a_well_known_host_normalizes(adapter: CensysAdapter) -> None:
-    """One direct lookup of one deterministic asset identity."""
-    envelope = await adapter.lookup(request_for(SMOKE_ADDRESS), live_credential())
+@dataclass(frozen=True, slots=True)
+class LiveLookup:
+    """The two outcomes of one identical request, issued back to back.
 
-    assert envelope.status in {
+    ``first`` cost one credit. ``second`` cost nothing: it went through the same
+    executor, cache and provider connection, so the Task 6 cache answered it —
+    which for a credit-metered provider is the difference between one credit and
+    two.
+    """
+
+    first: ProviderExecutionOutcome
+    second: ProviderExecutionOutcome
+    quota: ProviderQuotaSnapshot | None
+
+
+#: Computed at most once per session. A module-level slot rather than a fixture
+#: because fixture scope and test ordering are exactly the things that must not
+#: be able to turn one credit into several.
+_LOOKUP: LiveLookup | None = None
+
+
+async def live_lookup() -> LiveLookup:
+    """Perform the run's single credit-bearing read, or return the cached pair."""
+    global _LOOKUP
+    if _LOOKUP is None:
+        _LOOKUP = await _perform_single_lookup()
+    return _LOOKUP
+
+
+async def _perform_single_lookup() -> LiveLookup:
+    secrets = InMemorySecretStore()
+    connections = InMemoryConnectionRepository()
+    manager = CredentialManager(secrets, connections)
+    resolver = CredentialResolver(secrets, connections)
+    metadata = {ORGANIZATION_METADATA_KEY: _organization_id} if _organization_id else {}
+    await manager.create_connection(
+        user_id=LIVE_USER,
+        provider_id="censys",
+        secret=SecretStr(_token),
+        auth_type=AuthType.BEARER_TOKEN,
+        metadata=metadata,
+        status=CredentialStatus.ACTIVE,
+    )
+
+    quota_store = InMemoryQuotaStore()
+    adapter = CensysAdapter(
+        config=CensysConfig(),
+        organizations=ConnectionOrganizationDirectory(connections),
+        quota_store=quota_store,
+    )
+    executor = ProviderExecutor(
+        credential_resolver=resolver,
+        cache=InMemoryProviderCache(),
+        quota_store=quota_store,
+        cooldown_store=InMemoryCooldownStore(),
+        # One at a time: the plan's per-minute allowance is unknown here.
+        limiter=ConcurrencyLimiter(max_concurrency=1),
+        policies=ProviderPolicyRegistry(policies=[build_censys_execution_policy()]),
+    )
+    context = ExecutionContext(authenticated_user_id=LIVE_USER, request_id="live-req")
+    request = request_for(SMOKE_ADDRESS)
+
+    # The one and only credit-consuming call in this file.
+    first = await executor.execute(adapter, request, context)
+    # Identical request, same executor and cache: this must not reach Censys.
+    second = await executor.execute(adapter, request, context)
+    snapshot = await quota_store.get(f"user|{LIVE_USER}|censys|{LIVE_CONNECTION}")
+    return LiveLookup(first=first, second=second, quota=snapshot)
+
+
+async def enriched() -> ProviderExecutionOutcome:
+    """The successful first outcome, or a skip if Censys refused it.
+
+    Skipping rather than failing when the balance is spent or the token is not
+    permitted: that is an account fact, not a defect in the integration.
+    """
+    lookup = await live_lookup()
+    if lookup.first.result is None:
+        pytest.skip(f"live lookup returned {lookup.first.status.value} with no result")
+    return lookup.first
+
+
+# --------------------------------------------------------------------------- #
+# Everything below reads that one credit
+# --------------------------------------------------------------------------- #
+
+
+async def test_the_lookup_flows_through_the_executor() -> None:
+    lookup = await live_lookup()
+    assert lookup.first.provider_id == "censys"
+    assert lookup.first.attempts >= 1
+    assert lookup.first.cache_hit is False
+    assert lookup.first.status in {
         ProviderRunStatus.SUCCESS,
         ProviderRunStatus.PARTIAL,
         ProviderRunStatus.NO_DATA,
     }
-    assert envelope.provider == "censys"
-    assert envelope.api_version == "v3"
 
-    # Structure and provenance only. Nothing about which ports are currently
-    # open: that changes, and pinning it would make this test fail for a reason
-    # nobody should act on.
-    for evidence in envelope.evidence:
+
+async def test_the_repeat_lookup_costs_no_second_credit() -> None:
+    """The reason the cache matters here: one credit rather than two."""
+    lookup = await live_lookup()
+    if lookup.first.status not in {ProviderRunStatus.SUCCESS, ProviderRunStatus.NO_DATA}:
+        pytest.skip(
+            f"first live lookup returned {lookup.first.status.value}; caching not exercised"
+        )
+    assert lookup.second.cache_hit is True
+    assert lookup.second.attempts == 0
+    assert lookup.second.called_provider is False
+
+
+async def test_the_result_is_a_structurally_valid_v3_answer() -> None:
+    outcome = await enriched()
+    assert outcome.result is not None
+    assert outcome.result.provider == "censys"
+    assert outcome.result.api_version == "v3"
+
+
+async def test_every_piece_of_evidence_carries_first_hand_provenance() -> None:
+    outcome = await enriched()
+    assert outcome.result is not None
+    for evidence in outcome.result.evidence:
         assert evidence.transport_provider == "censys"
         assert evidence.origin_provider == "censys"
         assert evidence.lineage_group_id
+        # Admiralty grading is TI Recon policy, never a provider's to claim.
         assert evidence.source_reliability is None
         assert evidence.information_credibility is None
 
 
-async def test_nothing_censys_reports_carries_a_direction(adapter: CensysAdapter) -> None:
+async def test_nothing_censys_reports_carries_a_direction() -> None:
     """Exposure is not an accusation, against the real API as much as a fixture."""
-    envelope = await adapter.lookup(request_for(SMOKE_ADDRESS), live_credential())
-    for evidence in envelope.evidence:
+    outcome = await enriched()
+    assert outcome.result is not None
+    for evidence in outcome.result.evidence:
         assert evidence.effect is EvidenceEffect.CONTEXT_ONLY
 
 
-async def test_the_result_records_which_asset_was_read(adapter: CensysAdapter) -> None:
-    envelope = await adapter.lookup(request_for(SMOKE_ADDRESS), live_credential())
+async def test_the_result_records_which_asset_was_read() -> None:
+    outcome = await enriched()
+    assert outcome.result is not None
     coverage = next(
-        item.attributes for item in envelope.evidence if item.claim_type == "censys_asset_coverage"
+        item.attributes
+        for item in outcome.result.evidence
+        if item.claim_type == "censys_asset_coverage"
     )
     assert coverage["asset_kind"] == "host"
     assert coverage["asset"] == SMOKE_ADDRESS
     assert coverage["match_scope"] == MatchScope.EXACT_OBSERVABLE.value
 
 
-async def test_no_banner_or_body_reaches_the_result(adapter: CensysAdapter) -> None:
+async def test_no_banner_or_body_reaches_the_result() -> None:
     """A real response carries banners; a real evidence record must not."""
-    envelope = await adapter.lookup(request_for(SMOKE_ADDRESS), live_credential())
-    serialized = envelope.model_dump_json()
+    outcome = await enriched()
+    assert outcome.result is not None
+    serialized = outcome.result.model_dump_json()
     assert "banner" not in serialized
     assert "html_title" not in serialized
     assert "<html" not in serialized.lower()
 
 
-async def test_nothing_in_the_result_carries_the_token(adapter: CensysAdapter) -> None:
-    envelope = await adapter.lookup(request_for(SMOKE_ADDRESS), live_credential())
-    assert _token not in envelope.model_dump_json()
+async def test_nothing_in_the_result_carries_the_token() -> None:
+    outcome = await enriched()
+    assert outcome.result is not None
+    assert _token not in outcome.result.model_dump_json()
 
 
-# --------------------------------------------------------------------------- #
-# The same lookup through the Task 6 executor
-# --------------------------------------------------------------------------- #
-
-
-class LiveStack:
-    """The real adapter behind the real execution layer."""
-
-    def __init__(self) -> None:
-        self.secrets = InMemorySecretStore()
-        self.connections = InMemoryConnectionRepository()
-        self.manager = CredentialManager(self.secrets, self.connections)
-        self.resolver = CredentialResolver(self.secrets, self.connections)
-        self.cache = InMemoryProviderCache()
-        self.quota = InMemoryQuotaStore()
-        self.adapter = CensysAdapter(
-            config=CensysConfig(),
-            organizations=ConnectionOrganizationDirectory(self.connections),
-            quota_store=self.quota,
-        )
-        self.executor = ProviderExecutor(
-            credential_resolver=self.resolver,
-            cache=self.cache,
-            quota_store=self.quota,
-            cooldown_store=InMemoryCooldownStore(),
-            # One at a time: the plan's per-minute allowance is unknown here.
-            limiter=ConcurrencyLimiter(max_concurrency=1),
-            policies=ProviderPolicyRegistry(policies=[build_censys_execution_policy()]),
-        )
-
-    async def configure(self) -> None:
-        metadata = {ORGANIZATION_METADATA_KEY: _organization_id} if _organization_id else {}
-        await self.manager.create_connection(
-            user_id=LIVE_USER,
-            provider_id="censys",
-            secret=_token,
-            auth_type=AuthType.BEARER_TOKEN,
-            metadata=metadata,
-            status=CredentialStatus.ACTIVE,
-        )
-
-    @property
-    def context(self) -> ExecutionContext:
-        return ExecutionContext(authenticated_user_id=LIVE_USER, request_id="live-req")
-
-
-@pytest.fixture
-async def stack() -> AsyncIterator[LiveStack]:
-    live = LiveStack()
-    await live.configure()
-    yield live
-
-
-async def test_a_lookup_flows_through_the_executor(stack: LiveStack) -> None:
-    outcome = await stack.executor.execute(stack.adapter, request_for(SMOKE_ADDRESS), stack.context)
-    assert outcome.provider_id == "censys"
-    assert outcome.attempts >= 1
-    assert outcome.cache_hit is False
-
-
-async def test_a_repeat_lookup_costs_no_second_credit(stack: LiveStack) -> None:
-    """The reason the cache matters here: one credit rather than two."""
-    request = request_for(SMOKE_ADDRESS)
-    first = await stack.executor.execute(stack.adapter, request, stack.context)
-    if first.status not in {ProviderRunStatus.SUCCESS, ProviderRunStatus.NO_DATA}:
-        pytest.skip(f"first live lookup returned {first.status.value}; caching not exercised")
-
-    second = await stack.executor.execute(stack.adapter, request, stack.context)
-    assert second.cache_hit is True
-    assert second.attempts == 0
-    assert second.called_provider is False
-
-
-async def test_the_balance_is_recorded_where_the_precheck_will_see_it(
-    stack: LiveStack,
-) -> None:
-    await stack.executor.execute(stack.adapter, request_for(SMOKE_ADDRESS), stack.context)
-    snapshot = await stack.quota.get(f"user|{LIVE_USER}|censys|{LIVE_CONNECTION}")
-    if snapshot is None:
+async def test_the_balance_is_recorded_where_the_precheck_will_see_it() -> None:
+    """Read from the free endpoint during the same lookup; costs nothing extra."""
+    lookup = await live_lookup()
+    if lookup.quota is None:
         pytest.skip("no balance was recorded for this account")
-    assert snapshot.provider_id == "censys"
+    assert lookup.quota.provider_id == "censys"

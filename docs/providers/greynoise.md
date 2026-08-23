@@ -21,9 +21,10 @@ Intelligence are all things it saw or curated itself. Origin equals transport fo
 every one of them.
 
 **It is not** a general reputation service, and it is not a hunting interface.
-This integration reads two endpoints about one address. It cannot run a GNQL
-query, walk a timeline, fetch a feed, retrieve a PCAP or look up anything in
-bulk — GreyNoise offers all of those, and none of them exist here.
+This integration reads three endpoints: two that answer about one address, and a
+status check that answers about nothing. It cannot run a GNQL query, walk a
+timeline, fetch a feed, retrieve a PCAP or look up anything in bulk — GreyNoise
+offers all of those, and none of them exist here.
 
 **It answers for IPv4 only.** Every other observable type is reported as
 `NOT_SUPPORTED`, never as a lookup that found nothing. See §9.
@@ -45,12 +46,18 @@ The key never appears in a path, a query string, a cache key, an error message
 or a log line. `GreyNoiseConfig` has no field for it, so a configuration object
 is safe to log and serialize.
 
-Validation reads `/v3/community/{ip}` for **192.0.2.1** — RFC 5737 TEST-NET-1,
-reserved for documentation and never routed. GreyNoise has no zero-cost endpoint
-for checking a key, so validation has to look *something* up; looking up a
-reserved address means the check reveals nothing about any investigation and
-cannot be mistaken for enrichment. A `404` is the expected answer and proves the
-key was accepted, because a rejected key answers `401`.
+Validation and health both read **`GET /ping`**, GreyNoise's own status
+endpoint. It names no observable and consumes no intelligence lookup, which is
+what a credential check should cost: validating by looking an address up would
+spend part of the analyst's allowance to be told their key works, and on the
+plans where that allowance is smallest that is exactly when spending it hurts
+most.
+
+`200` means the key was accepted and the service is up; `401` means it was
+rejected. Neither says anything about **entitlement** — whether this key may read
+the full IP context is discovered from a real lookup, and a ping never writes an
+access level. Keeping the two apart is the point: reachability and
+authentication are one question, subscription tier is another.
 
 ---
 
@@ -60,6 +67,7 @@ Used:
 
 | Endpoint | Purpose |
 |---|---|
+| `GET /ping` | status: is the service up and is this key accepted? Consumes no lookup |
 | `GET /v3/ip/{ip}` | full IP context — classification, tags, CVEs, sensor metadata, BSI |
 | `GET /v3/ip/{ip}?quick=true` | the reduced form of the same document |
 | `GET /v3/community/{ip}` | the Community view: a handful of fields, far wider availability |
@@ -74,7 +82,7 @@ Deliberately absent, with no code path — not even an unused one:
 
 ### The client is read-only by construction
 
-`GreyNoiseClient` is a `Protocol` with exactly three members —
+`GreyNoiseClient` is a `Protocol` with exactly four members — `ping`,
 `get_ip_context`, `get_community`, `aclose` — and `GreyNoiseHttpClient` is
 asserted at type-check time to satisfy it. Adding a hunting method would mean
 changing the protocol, which is the point of having one. Tests also parse the
@@ -83,10 +91,11 @@ literal appears in it.
 
 ### Path safety
 
-The only path parameter is an address. It is parsed with `ipaddress.IPv4Address`
-and **re-rendered from the parsed object** before interpolation, so what reaches
-the URL came out of the parser rather than from the caller. A value that is not
-an IPv4 address cannot become part of a path at all.
+`/ping` has no path parameter at all. Otherwise the only path parameter is an
+address, and it is parsed with `ipaddress.IPv4Address` and **re-rendered from the
+parsed object** before interpolation — so what reaches the URL came out of the
+parser rather than from the caller. A value that is not an IPv4 address cannot
+become part of a path at all.
 
 ---
 
@@ -465,3 +474,23 @@ carries control characters, or contains credential-like text.
 
 Live tests are off by default: `RUN_GREYNOISE_LIVE_TESTS=1` plus
 `GREYNOISE_API_KEY`.
+
+### What a live run actually costs
+
+GreyNoise's free and Community plans meter intelligence lookups over a weekly
+allowance, so the live suite is built around spending as little of it as
+possible:
+
+| Live check | Cost |
+|---|---|
+| credential validation | `/ping` — no lookup |
+| health | `/ping` — no lookup |
+| unsupported observable | no request at all |
+| the enrichment assertions | **one** lookup of one address, shared |
+| the repeat-lookup assertion | served from the Task 6 cache — no lookup |
+
+**A full live run performs exactly one physical GreyNoise IOC request.** Every
+normalization, coverage, classification, BSI and secret assertion reads the
+*same* cached outcome rather than issuing its own lookup, and the enforcement is
+in the test code — a single module-level outcome computed once — rather than in a
+comment or in test ordering.

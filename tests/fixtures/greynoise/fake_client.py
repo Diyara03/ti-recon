@@ -23,6 +23,7 @@ class FakeGreyNoiseClient:
     """An in-memory GreyNoise client with scripted answers."""
 
     #: Operation labels the tests assert on.
+    PING = "ping"
     FULL = "ip_context"
     QUICK = "ip_context_quick"
     COMMUNITY = "community"
@@ -33,6 +34,7 @@ class FakeGreyNoiseClient:
         full_payload: dict[str, Any] | None = None,
         quick_payload: dict[str, Any] | None = None,
         community_payload: dict[str, Any] | None = None,
+        ping_payload: dict[str, Any] | None = None,
         full_status: int = 200,
         community_status: int = 200,
         metering_headers: dict[str, str] | None = None,
@@ -46,6 +48,8 @@ class FakeGreyNoiseClient:
         self.community_payload = (
             payloads.community_payload() if community_payload is None else community_payload
         )
+        # ``/ping`` names no observable, so there is nothing per-address about it.
+        self.ping_payload = {"message": "pong"} if ping_payload is None else ping_payload
         self.full_status = full_status
         self.community_status = community_status
         self.metering_headers = metering_headers or {}
@@ -74,6 +78,10 @@ class FakeGreyNoiseClient:
         return [detail for name, detail in self.calls if name == operation]
 
     # -- the client protocol --------------------------------------------- #
+
+    async def ping(self, *, credential: CredentialMaterial) -> GreyNoiseJsonResult:
+        self._record(self.PING, credential.user_id)
+        return GreyNoiseJsonResult(payload=self.ping_payload)
 
     async def get_ip_context(
         self, *, ip: str, quick: bool = False, credential: CredentialMaterial

@@ -62,10 +62,10 @@ async def client() -> Any:
 # --------------------------------------------------------------------------- #
 
 
-def test_the_protocol_exposes_exactly_two_reads() -> None:
+def test_the_protocol_exposes_exactly_three_reads() -> None:
     """Passivity is structural: there is no hunting or submission method."""
     methods = {name for name in dir(GreyNoiseClient) if not name.startswith("_")}
-    assert methods == {"get_ip_context", "get_community", "aclose"}
+    assert methods == {"ping", "get_ip_context", "get_community", "aclose"}
     for forbidden in ("gnql", "query", "hunt", "timeline", "feed", "pcap", "bulk", "submit"):
         assert not any(forbidden in name for name in methods)
 
@@ -111,10 +111,12 @@ async def test_no_read_ever_reaches_a_hunting_or_v2_endpoint(
 ) -> None:
     gnql = respx.get(url__regex=rf"{BASE}/v3/gnql.*").mock(return_value=httpx.Response(200))
     v2 = respx.get(url__regex=rf"{BASE}/v2/.*").mock(return_value=httpx.Response(200))
+    respx.get(f"{BASE}/ping").mock(return_value=httpx.Response(200, json={"message": "pong"}))
     respx.get(f"{BASE}/v3/ip/{ADDRESS}").mock(return_value=httpx.Response(200, json={}))
     respx.get(f"{BASE}/v3/community/{ADDRESS}").mock(return_value=httpx.Response(200, json={}))
 
     credential = make_credential()
+    await client.ping(credential=credential)
     await client.get_ip_context(ip=ADDRESS, credential=credential)
     await client.get_ip_context(ip=ADDRESS, quick=True, credential=credential)
     await client.get_community(ip=ADDRESS, credential=credential)
@@ -138,6 +140,50 @@ async def test_the_key_travels_as_a_header_and_never_in_the_url(
     assert request.headers["key"] == FAKE_KEY
     assert FAKE_KEY not in str(request.url)
     assert "authorization" not in {name.lower() for name in request.headers}
+
+
+# --------------------------------------------------------------------------- #
+# ping: the read that names no observable
+# --------------------------------------------------------------------------- #
+
+
+@respx.mock
+async def test_ping_reads_the_status_endpoint(client: GreyNoiseHttpClient) -> None:
+    route = respx.get(f"{BASE}/ping").mock(
+        return_value=httpx.Response(200, json={"message": "pong", "offering": "community"})
+    )
+    result = await client.ping(credential=make_credential())
+    assert route.called
+    assert result.payload["message"] == "pong"
+
+
+@respx.mock
+async def test_ping_names_no_observable(client: GreyNoiseHttpClient) -> None:
+    """Which is why it can validate a credential without spending a lookup."""
+    route = respx.get(f"{BASE}/ping").mock(return_value=httpx.Response(200, json={}))
+    await client.ping(credential=make_credential())
+    url = str(route.calls.last.request.url)
+    assert url.endswith("/ping")
+    assert ADDRESS not in url
+    assert "v3" not in url
+
+
+@respx.mock
+async def test_ping_carries_the_key_as_a_header(client: GreyNoiseHttpClient) -> None:
+    route = respx.get(f"{BASE}/ping").mock(return_value=httpx.Response(200, json={}))
+    await client.ping(credential=make_credential())
+    request = route.calls.last.request
+    assert request.headers["key"] == FAKE_KEY
+    assert FAKE_KEY not in str(request.url)
+
+
+@respx.mock
+async def test_a_rejected_ping_is_an_authentication_error(
+    client: GreyNoiseHttpClient,
+) -> None:
+    respx.get(f"{BASE}/ping").mock(return_value=httpx.Response(401, json={}))
+    with pytest.raises(ProviderAuthenticationError):
+        await client.ping(credential=make_credential())
 
 
 # --------------------------------------------------------------------------- #
