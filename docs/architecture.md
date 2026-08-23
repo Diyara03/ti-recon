@@ -244,6 +244,42 @@ src/ti_recon/
     relationships.py  verified relationship table, depth profiles, limits
     normalizer.py     GTI objects -> Task 3 evidence/objects/relationships
     adapter.py        GTIAdapter
+  providers/urlscan/
+    client.py         read-only urlscan client (no submission method exists)
+    config.py         host, timeouts, artifact byte ceilings (no credential)
+    descriptor.py     provider identity and declared capabilities
+    errors.py         urlscan statuses -> normalized categories
+    quota.py          per-action allowances + per-window rate limits
+    search.py         allow-listed query building, bounded candidate selection
+    normalizer.py     scan results -> evidence, with verdict lineage separated
+    observations.py   redirects, contacted infrastructure, served-body digests
+    forensics.py      static extraction from stored artifacts (no execution)
+    policy.py         the WEB_FORENSICS gate, search windows, cache TTLs
+    adapter.py        UrlscanAdapter
+  providers/greynoise/
+    client.py         two read-only v3 endpoints; no GNQL, no v2
+    config.py         host, `key` header placement, timeouts (no credential)
+    descriptor.py     provider identity; IPv4 only, nothing active
+    errors.py         GreyNoise statuses -> normalized categories
+    access.py         full vs Community access, resolved and remembered per key
+    metering.py       response rate-limit headers -> RateLimitSnapshot
+    normalizer.py     classification, BSI, tags, CVEs, sensor detail, ownership
+    policy.py         access mode, per-depth detail, cache TTLs
+    adapter.py        GreyNoiseAdapter
+  providers/censys/
+    client.py         four reads (two metered, two free); no search, no rescan
+    config.py         host, bearer placement, schema Accept headers
+    descriptor.py     provider identity; no REPUTATION capability
+    errors.py         Censys statuses -> categories, credits vs rate limits
+    assets.py         observable -> deterministic host / web-property identity
+    credits.py        zero-cost balance -> ProviderQuotaSnapshot (a wallet)
+    organizations.py  per-connection organization id resolution
+    normalizer.py     exposure, ownership, DNS, certificates, vulnerabilities
+    policy.py         per-depth bounds, conservative concurrency, cache TTLs
+    adapter.py        CensysAdapter
+  artifacts/
+    models.py         ArtifactScope, ArtifactKind, StoredArtifact
+    store.py          bounded, user-isolated artifact store (in-memory)
   execution/
     clock.py          Clock / Sleeper / JitterSource injection seams
     models.py         ExecutionScope, ExecutionContext, outcome, CacheScope
@@ -272,30 +308,48 @@ Full detail: [provider-execution.md](provider-execution.md).
 
 ## 11. Providers
 
-One provider is integrated: **Google Threat Intelligence**, reading GTI /
-VirusTotal API v3 with each analyst's own VirusTotal API key. It is passive
-enrichment only and supplies evidence rather than conclusions.
+Four providers are integrated, each answering a different question and all of
+them passive:
 
-It reaches the engine entirely through the Task 5 contract — the registry finds
-it by capability with no vendor branch, and it passes the same reusable adapter
-contract suite as the test fakes. The one deviation from the framework is
-documented and contained: GTI uses the official `vt-py` SDK rather than the
-shared HTTP transport, and that SDK is imported by exactly one module so its
-types never reach the core.
+| Provider | Question it answers | Detail |
+|---|---|---|
+| Google Threat Intelligence | what does the industry know about this artifact? | [providers/gti.md](providers/gti.md) |
+| urlscan.io | what did a browser see when it visited this page? | [providers/urlscan.md](providers/urlscan.md) |
+| GreyNoise | what does this address *do* on the internet? | [providers/greynoise.md](providers/greynoise.md) |
+| Censys | what is *exposed on* this asset? | [providers/censys.md](providers/censys.md) |
 
-Full detail: [providers/gti.md](providers/gti.md).
+Every one of them reaches the engine entirely through the Task 5 contract: the
+registry finds it by capability with no vendor branch, and each passes the same
+reusable adapter contract suite as the test fakes. Every one runs behind the
+Task 6 executor, with no provider-shaped branch anywhere in that layer.
 
-Note the data-use boundary recorded there: GTI content must not be exposed to
-Claude, MCP or any AI layer before the applicable provider terms are reviewed.
+Two of them supply an assessment, and two deliberately do not. GTI reports
+provider verdicts and aggregated reputation; GreyNoise reports one scanner
+classification. urlscan's browser observations and Censys's exposure findings are
+context — an open port or a served certificate says what a thing *is*, not
+whether it is hostile — and the model enforces that rather than trusting each
+package to remember it.
 
-## 12. Deferred architecture (Task 9+)
+The one deviation from the framework is documented and contained: GTI uses the
+official `vt-py` SDK rather than the shared HTTP transport, and that SDK is
+imported by exactly one module so its types never reach the core. The other three
+use the shared, host-pinned transport.
+
+Note the data-use boundary recorded in the GTI document: GTI content must not be
+exposed to Claude, MCP or any AI layer before the applicable provider terms are
+reviewed.
+
+## 12. Deferred architecture (Task 10+)
 
 Documented so the shape is known; not implemented:
 
 - Distributed execution state: Redis-backed cache, quota and cooldown stores,
   shared rate-limit state and cross-worker concurrency limits.
-- Further provider adapters (GreyNoise, Censys, abuse.ch, warning lists)
-  alongside GTI and urlscan.
+- Further provider adapters (abuse.ch, warning lists, SecurityTrails, AbuseIPDB,
+  Shodan, IPinfo) alongside GTI, urlscan, GreyNoise and Censys.
+- Hunting and query interfaces the current adapters deliberately omit: GreyNoise
+  GNQL, Censys CenQL search, and every historical-timeline endpoint. These belong
+  with the query planner rather than with a per-observable lookup.
 - Capability planner, provider selection and adaptive enrichment (widen
   capabilities when evidence is thin).
 - Lineage-aware correlation, evidence fusion and verdict scoring.

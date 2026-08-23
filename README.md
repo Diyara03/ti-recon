@@ -8,8 +8,8 @@ eventually produce an explainable, auditable assessment.
 
 ## Current development state
 
-This repository currently contains the foundation plus its first two providers
-(Jira Tasks 1-8):
+This repository currently contains the foundation plus its first four providers
+(Jira Tasks 1-9):
 
 | Task | Scope | State |
 |------|-------|-------|
@@ -21,14 +21,21 @@ This repository currently contains the foundation plus its first two providers
 | 6 | Provider execution controls | Implemented (in-memory, single-process) |
 | 7 | Google Threat Intelligence integration | Implemented (passive enrichment) |
 | 8 | urlscan.io integration + web forensics | Implemented (passive enrichment; forensics on explicit request) |
+| 9 | GreyNoise + Censys integration | Implemented (passive enrichment) |
 
-**Two providers are integrated**, both passive. Google Threat Intelligence
-enriches with each analyst's own VirusTotal API key; urlscan supplies passive web
-intelligence — what its browsers observed when they visited a page — and, only
-when explicitly asked, static forensic analysis of the page artifacts it already
-stored. There is no GreyNoise, Censys, ThreatFox, URLhaus or MalwareBazaar client
-yet, and there is no query planner, no provider selection, no evidence fusion, no
-verdict scoring, no MCP server and no Claude Skill. Those are later Jira tasks.
+**Four providers are integrated**, all passive, each answering a different
+question. Google Threat Intelligence enriches with each analyst's own VirusTotal
+API key. urlscan supplies passive web intelligence — what its browsers observed
+when they visited a page — and, only when explicitly asked, static forensic
+analysis of the page artifacts it already stored. GreyNoise says what an address
+*does* on the internet: whether it is background scanning noise, and whose.
+Censys says what is *exposed on* an asset: which ports answer, what software is
+visible, which certificate is served.
+
+There is no ThreatFox, URLhaus, MalwareBazaar, SecurityTrails, AbuseIPDB, Shodan
+or IPinfo client yet, and there is no query planner, no provider selection, no
+evidence fusion, no verdict scoring, no MCP server and no Claude Skill. Those are
+later Jira tasks.
 
 Task 6 added the execution layer every adapter runs behind — caching, retry and
 backoff, rate-limit and quota tracking, cooldowns, bounded concurrency and
@@ -41,11 +48,22 @@ development foundation, not distributed coordination.
 |----------|--------|-----------|---------|
 | Google Threat Intelligence | Implemented | IP / domain / URL / hash passive enrichment, GTI assessment, threat severity, aggregated reputation, quota awareness, bounded relationships, selected threat associations, deep file behaviour | Intelligence Search, active scanning, sample submission, sample downloads |
 | urlscan.io | Implemented | historical scan discovery bounded by the account's own searchable range, stored scan results, verdicts with separated lineage, redirect chains, contacted infrastructure, served-body digests, quota awareness, and — on explicit request at DEEP depth — stored screenshot / DOM / response-body retrieval with static forensic extraction and kit fingerprints | scan submission, rescan, live scan, sample downloads, visibility changes, deletion, saved searches, incidents |
+| GreyNoise | Implemented | IPv4 scanner classification with its raw wording preserved, Business Services Intelligence as context, aggregated tags, CVE-activity association, sensor detail at DEEP depth, network ownership and pivots, and per-credential resolution of full-context vs Community access | GNQL and all hunting, timelines, bulk lookup, feeds, PCAP, deprecated v2 endpoints, IPv6/domain/URL/hash observables |
+| Censys | Implemented | direct host and web-property reads by deterministic asset identity, exposed services and software, DNS and reverse DNS, served certificates as `x509-certificate` pivots, labels, vulnerability context, and credit-balance awareness from the zero-cost account endpoints | CenQL and general search, historical timelines, `at_time`, collections, Adversary Investigation, live rescan/discovery, bare domains, file hashes, any body retrieval |
 
-Both supply **evidence**, not verdicts. Weighing providers against each other and
-reaching a conclusion is the future evidence-fusion layer's job, and no such
-layer exists yet. See [docs/providers/gti.md](docs/providers/gti.md) and
-[docs/providers/urlscan.md](docs/providers/urlscan.md).
+All four supply **evidence**, not verdicts. Weighing providers against each other
+and reaching a conclusion is the future evidence-fusion layer's job, and no such
+layer exists yet. See [docs/providers/gti.md](docs/providers/gti.md),
+[docs/providers/urlscan.md](docs/providers/urlscan.md),
+[docs/providers/greynoise.md](docs/providers/greynoise.md) and
+[docs/providers/censys.md](docs/providers/censys.md).
+
+Two of them are deliberately *not* reputation sources. Censys answers "what is
+exposed here" and every piece of evidence it produces is context: an open RDP
+port is a risk to its owner, not evidence its owner is an attacker. GreyNoise
+does produce one assessment — its scanner classification — and nothing else it
+reports carries a direction, because a provider gets one opinion per response
+rather than one per field.
 
 urlscan has two deliberately separate modes. Ordinary enrichment never retrieves
 a DOM, a screenshot or a response body; deep forensic retrieval happens only when
@@ -64,7 +82,8 @@ MCP connector                    (future, not in this repo)
 TI Recon backend                 <-- this repository
    |-- capability planner         (future)
    |-- provider registry          implemented
-   |-- provider adapters          contract implemented; GTI and urlscan
+   |-- provider adapters          contract implemented; GTI, urlscan,
+   |                               GreyNoise and Censys
    |-- provider HTTP transport    implemented (SSRF-bounded)
    |-- provider executor          implemented (cache, retry, quota, cooldown,
    |                                           concurrency, single-flight)
@@ -150,12 +169,18 @@ In production, provider credentials are held per user by the credential layer
 
 ## Current limitations
 
-- **Two providers only.** Google Threat Intelligence and urlscan.io are
-  integrated; every other provider named above is a later task.
+- **Four providers only.** Google Threat Intelligence, urlscan.io, GreyNoise and
+  Censys are integrated; every other provider named above is a later task.
 - **No provider selection.** The registry returns every compatible provider;
   nothing ranks or chooses between them.
-- **Both providers are passive only.** No submission, rescanning, live scanning,
-  downloads, sandbox detonation or Intelligence Search.
+- **Every provider is passive only.** No submission, rescanning, live scanning,
+  downloads, sandbox detonation, Intelligence Search, GNQL hunting or CenQL
+  search.
+- **Coverage is deliberately narrow where it cannot be deterministic.** GreyNoise
+  answers for IPv4 only; Censys answers for addresses and HTTP(S) URLs but not
+  bare domains, because a web property needs a port and guessing two would
+  present two ports as domain coverage. Both report those cases as
+  `NOT_SUPPORTED` rather than as empty answers.
 - **Artifact storage is in-memory only.** Retrieved page artifacts are bounded
   and user-isolated but process-local and lost on restart.
 - **Secret storage is in-memory only.** `InMemorySecretStore` is explicitly
@@ -183,4 +208,6 @@ In production, provider credentials are held per user by the credential layer
 - [docs/provider-execution.md](docs/provider-execution.md) — Task 6 execution controls
 - [docs/providers/gti.md](docs/providers/gti.md) — Task 7 Google Threat Intelligence
 - [docs/providers/urlscan.md](docs/providers/urlscan.md) — Task 8 urlscan.io and web forensics
+- [docs/providers/greynoise.md](docs/providers/greynoise.md) — Task 9 GreyNoise
+- [docs/providers/censys.md](docs/providers/censys.md) — Task 9 Censys
 - [docs/artifacts.md](docs/artifacts.md) — Task 8 bounded provider artifact storage
