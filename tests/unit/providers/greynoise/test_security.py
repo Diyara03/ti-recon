@@ -209,11 +209,14 @@ async def test_a_redirect_off_the_host_never_receives_the_key() -> None:
     assert not elsewhere.called
 
 
+@respx.mock
 async def test_no_analyst_supplied_value_can_become_a_request_target() -> None:
-    """There is no ``fetch_arbitrary_url``; a path leaving the base URL raises."""
-    from ti_recon.providers.greynoise.client import GreyNoiseHttpClient
+    """There is no ``fetch_arbitrary_url``; a path leaving the base URL raises.
 
-    client = GreyNoiseHttpClient()
+    Nothing is mocked, so a path that escaped the guard would fail loudly rather
+    than reach the network.
+    """
+    client = client_module.GreyNoiseHttpClient()
     try:
         for path in (
             "https://evil.example/x",

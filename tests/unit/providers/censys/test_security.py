@@ -231,11 +231,14 @@ async def test_a_redirect_off_the_host_never_receives_the_token() -> None:
     assert not elsewhere.called
 
 
+@respx.mock
 async def test_no_analyst_supplied_value_can_become_a_request_target() -> None:
-    """There is no ``fetch_arbitrary_url``; a path leaving the base URL raises."""
-    from ti_recon.providers.censys.client import CensysHttpClient
+    """There is no ``fetch_arbitrary_url``; a path leaving the base URL raises.
 
-    client = CensysHttpClient()
+    Nothing is mocked, so a path that escaped the guard would fail loudly rather
+    than reach the network.
+    """
+    client = client_module.CensysHttpClient()
     try:
         for path in (
             "https://evil.example/x",
