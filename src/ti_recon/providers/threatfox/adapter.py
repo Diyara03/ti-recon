@@ -60,6 +60,7 @@ from ti_recon.providers.abusech.evidence import (
     AbuseChNormalization,
     NormalizationContext,
 )
+from ti_recon.providers.abusech.values import hex_digest
 from ti_recon.providers.adapter import (
     CapabilityDiscovery,
     CredentialValidation,
@@ -340,8 +341,8 @@ class ThreatFoxAdapter(ProviderAdapter):
             case IntelObjectType.FILE:
                 hashes = intel_object.hashes
                 for algorithm in ("SHA-256", "MD5"):
-                    digest = hashes.get(algorithm)
-                    if digest and len(digest) in THREATFOX_HASH_LENGTHS:
+                    digest = hex_digest(hashes.get(algorithm), lengths=THREATFOX_HASH_LENGTHS)
+                    if digest is not None:
                         return digest, True
                 return None
             case _:

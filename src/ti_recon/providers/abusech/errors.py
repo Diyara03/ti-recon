@@ -124,6 +124,7 @@ QUERY_STATUS_CATEGORIES: Final[dict[str, ProviderErrorCategory]] = {
     "illegal_query": ProviderErrorCategory.INVALID_REQUEST,
     "invalid_url": ProviderErrorCategory.INVALID_REQUEST,
     "invalid_host": ProviderErrorCategory.INVALID_REQUEST,
+    "invalid_hash": ProviderErrorCategory.INVALID_REQUEST,
     "invalid_md5": ProviderErrorCategory.INVALID_REQUEST,
     "invalid_sha256": ProviderErrorCategory.INVALID_REQUEST,
     "no_hash_provided": ProviderErrorCategory.INVALID_REQUEST,
