@@ -74,7 +74,10 @@ def build_cache_key(
 
     ``api_version`` and ``adapter_version`` are included so that upgrading an
     adapter, or a provider moving to a new API version, does not serve results
-    parsed by the old code.
+    parsed by the old code. ``dataset_version`` extends the same rule to a
+    provider that answers from a pinned local dataset: refreshing the data
+    invalidates answers derived from the previous version, without the cache
+    knowing anything about which provider it is.
     """
     capabilities = ",".join(
         sorted(capability.value for capability in request.requested_capabilities)
@@ -92,6 +95,7 @@ def build_cache_key(
         f"max_pages={request.max_pages if request.max_pages is not None else '-'}",
         f"api_version={descriptor.api_version}",
         f"adapter_version={descriptor.adapter_version}",
+        f"dataset_version={descriptor.dataset_version or '-'}",
     )
     canonical = "\n".join(parts)
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
