@@ -77,7 +77,7 @@ SUITES: Final[dict[str, LiveSuite]] = {
     "censys": LiveSuite(CENSYS_LIVE, frozenset({"SMOKE_ADDRESS"}), platforms=1),
     "abusech": LiveSuite(
         ABUSECH_LIVE,
-        frozenset({"SMOKE_ADDRESS", "SMOKE_URL", "SMOKE_HASH", "smoke_file"}),
+        frozenset({"SMOKE_IOC", "SMOKE_URL", "SMOKE_HASH", "smoke_file"}),
         platforms=3,
     ),
 }
@@ -222,28 +222,69 @@ def test_the_greynoise_suite_validates_without_an_intelligence_lookup() -> None:
     assert "get_community" not in called
 
 
-def test_the_abusech_suite_performs_no_write_query() -> None:
-    """Every abuse.ch write lives one string away from a read; not in a live file."""
-    source = ABUSECH_LIVE.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    called = {
-        node.func.attr
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-    }
-    for forbidden in (
+#: abuse.ch query names that write, transfer or bulk-export. None may be called
+#: from a live module, and none may be drafted as a query value there.
+_ABUSECH_WRITE_QUERIES: Final[frozenset[str]] = frozenset(
+    {
         "submit_ioc",
         "get_file",
         "upload",
         "update",
         "add_comment",
-        "lookup_payload",
-        "search_hash",
-    ):
-        assert forbidden not in called
-    for forbidden in ("submit_ioc", "get_file", "add_comment", "upload"):
-        # Not even as a literal: a live file is not where a write query is drafted.
-        assert f'"{forbidden}"' not in source
+        "get_recent",
+        "get_iocs",
+    }
+)
+
+#: Read helpers that exist but are not part of the three-request budget.
+_ABUSECH_UNBUDGETED_READS: Final[frozenset[str]] = frozenset(
+    {"lookup_payload", "lookup_host", "search_hash"}
+)
+
+
+def _query_values(tree: ast.Module) -> set[str]:
+    """Every string a call passes as a ``query``, by keyword or in a form dict.
+
+    Precise on purpose. An earlier version scanned the whole file for the write
+    names as literals, which flagged the tests that assert those names are
+    *absent* — a guard that fires on the assertion proving its own point is a
+    guard nobody will keep. What actually issues a write is a query value, so
+    that is what this reads.
+    """
+    values: set[str] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.keyword)
+            and node.arg == "query"
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            values.add(node.value.value)
+        if isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values, strict=True):
+                if (
+                    isinstance(key, ast.Constant)
+                    and key.value == "query"
+                    and isinstance(value, ast.Constant)
+                    and isinstance(value.value, str)
+                ):
+                    values.add(value.value)
+    return values
+
+
+def test_the_abusech_suite_performs_no_write_query() -> None:
+    """Every abuse.ch write lives one string away from a read; not in a live file."""
+    tree = _tree(ABUSECH_LIVE)
+    called = {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+    assert not (called & _ABUSECH_WRITE_QUERIES)
+    # Nor a read outside the budget: three requests means three client methods.
+    assert not (called & _ABUSECH_UNBUDGETED_READS)
+    # And none of them drafted as a query value, which is what would send one.
+    assert not (_query_values(tree) & _ABUSECH_WRITE_QUERIES)
 
 
 def test_the_abusech_suite_validates_no_credential_separately() -> None:
