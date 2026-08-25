@@ -321,10 +321,17 @@ def compile_list(slug: str, raw: RawWarningList) -> tuple[CompiledList | None, L
 
 
 def _usable(entry: object) -> str | None:
-    """A non-empty, bounded, control-character-free entry, or ``None``."""
+    """A non-blank, bounded, control-character-free entry, or ``None``.
+
+    Blank means "nothing but whitespace", and it is rejected rather than
+    stripped. Both halves are deliberate: a whitespace-only substring entry
+    would match nearly every value ever submitted, while *keeping* a stripped
+    copy of an entry would change what upstream wrote. So a degenerate entry is
+    refused and a real one is stored exactly as it came.
+    """
     if not isinstance(entry, str):
         return None
-    if not entry or len(entry) > MAX_ENTRY_LENGTH:
+    if not entry.strip() or len(entry) > MAX_ENTRY_LENGTH:
         return None
     if any(ord(character) < 0x20 or ord(character) == 0x7F for character in entry):
         return None
