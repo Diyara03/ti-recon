@@ -43,6 +43,7 @@ __all__ = [
     "cooldown_from_quota",
     "cooldown_from_rate_limit",
     "make_cooldown",
+    "make_credential_cooldown",
 ]
 
 #: A cooldown longer than this is capped. A provider that reports a reset a week
@@ -288,6 +289,39 @@ def make_cooldown(
         reason=reason,
         until=now + timedelta(seconds=capped),
         operation=operation,
+        detail=detail,
+    )
+
+
+def make_credential_cooldown(
+    *,
+    scope: ExecutionScope,
+    reason: CooldownReason,
+    seconds: float,
+    now: datetime,
+    detail: str | None = None,
+) -> CooldownEntry | None:
+    """A cooldown keyed to the credential rather than to one provider.
+
+    ``None`` when the scope names no credential group, which is the signal to
+    fall back to an ordinary provider-scoped cooldown: suppression still happens,
+    it simply covers less.
+
+    Provider-wide by construction — no ``operation`` argument. A credential a
+    provider has refused is refused for everything that credential could do, so
+    narrowing this to one action would leave the others hammering the same
+    refusal.
+    """
+    identity = scope.credential_identity
+    if identity is None:
+        return None
+    capped = min(max(0.0, seconds), MAX_COOLDOWN_SECONDS)
+    return CooldownEntry(
+        provider_id=scope.provider_id,
+        scope_identity=identity,
+        reason=reason,
+        until=now + timedelta(seconds=capped),
+        operation=None,
         detail=detail,
     )
 

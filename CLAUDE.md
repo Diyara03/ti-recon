@@ -20,7 +20,7 @@ Analyst -> Claude + TI Analyst Skill -> MCP -> TI Recon backend
 
 ## Current implementation boundary
 
-Implemented (Jira Tasks 1-9):
+Implemented (Jira Tasks 1-10):
 
 - Task 1 — product scope + investigation workflow foundation (docs, enums)
 - Task 2 — architecture foundation (docs, module boundaries)
@@ -41,17 +41,30 @@ Implemented (Jira Tasks 1-9):
   passive internet-scanning context for IPv4, with per-credential resolution of
   full-context vs Community access; and passive exposure/infrastructure context
   for addresses and HTTP(S) URLs, by deterministic asset identity only.
+- Task 10 — the three abuse.ch platforms, sharing `providers/abusech/`:
+  ThreatFox (`providers/threatfox/`) for current family-attributed IOCs with
+  loose address matches re-validated locally; URLhaus (`providers/urlhaus/`) for
+  malware-distribution URLs, keeping exact-URL and host-level claims distinct;
+  MalwareBazaar (`providers/malwarebazaar/`) for vetted samples by hash. One
+  `abuse_ch` credential group, one `abuse_ch` source family, per-platform
+  lineage groups, and every relayed third-party finding attributed to its real
+  origin.
 
-**GTI, urlscan, GreyNoise and Censys are the only providers.** Evidence fusion is
-not implemented, so there is still no multi-provider verdict.
+**GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus and MalwareBazaar are the
+only providers.** Evidence fusion is not implemented, so there is still no
+multi-provider verdict.
 
 **Not implemented — do not add without an explicit request:**
 
-- Any other provider API integration (ThreatFox, URLhaus, MalwareBazaar,
-  SecurityTrails, AbuseIPDB, Shodan, IPinfo)
+- Any other provider API integration (SecurityTrails, AbuseIPDB, Shodan, IPinfo,
+  MISP Warning Lists)
 - Any dynamic malware sandbox integration. A future task will distinguish
   *passive sandbox report lookup* from *active file/URL detonation*; neither
-  exists, and nothing in Task 9 anticipates them.
+  exists, and nothing in Task 9 or 10 anticipates them — MalwareBazaar relays
+  sandbox output and therefore deliberately does *not* declare `FILE_BEHAVIOR`.
+- Any abuse.ch write or bulk operation: `submit_ioc`, URL submission, rescan,
+  `get_file`, `upload`, `update`, `add_comment`, `get_recent`, every feed, and
+  ThreatFox/MalwareBazaar tag, family, signature, YARA and certificate hunting
 - GreyNoise GNQL and every hunting, timeline, bulk-lookup, feed, PCAP or session
   endpoint; every deprecated GreyNoise v2 endpoint
 - Censys CenQL and `POST /v3/global/search/query`, historical timelines,
@@ -105,7 +118,11 @@ not implemented, so there is still no multi-provider verdict.
     computes a verdict, risk score or confidence.
 11. **Execution reacts to normalized categories, not HTTP.** Retry, cooldown and
     quota decisions read `ProviderErrorCategory`. No `if status_code == 403`
-    outside an adapter.
+    outside an adapter. Where a category is too coarse — a credential a provider
+    has refused outright is a `PERMISSION_ERROR`, and so is one unentitled
+    endpoint — the adapter supplies a *duration*
+    (`credential_cooldown_hint_seconds`), never a reason. A provider condition
+    named to `execution/` would be a vocabulary it must not learn.
 12. **Execution state is user-isolated by construction.** Cache, quota,
     cooldowns, concurrency slots and request coalescing are all keyed by
     `ExecutionScope`, whose identity is built from ids only.
@@ -155,6 +172,47 @@ not implemented, so there is still no multi-provider verdict.
     about guesses.** A Censys web property is `hostname:port`; a bare domain
     names no port, so it is reported `NOT_SUPPORTED` rather than answered by
     querying two ports and presenting that as domain coverage.
+22. **One ecosystem is one source family.** ThreatFox, URLhaus and MalwareBazaar
+    are three datasets run by one organization and share `source_family =
+    "abuse_ch"`, so two of them agreeing can never read as two independent
+    corroborations. Each keeps its own `lineage_group_id` so their claims stay
+    distinguishable within that family.
+23. **A relayed finding keeps the origin *and the family* of whoever produced
+    it.** A VirusTotal ratio relayed through URLhaus carries
+    `origin_provider = "virustotal"` and the same `source_family` a direct GTI
+    result carries, precisely so relayed and direct cannot be counted twice. An
+    aggregate of other people's opinions — a blocklist sweep, a `vendor_intel`
+    block — is *one* record naming who had something, never one per contributor,
+    and always `EvidenceClass.CONTEXT` so the model refuses it a direction.
+24. **A loose match from a provider we do not control is re-validated locally, by
+    parsing.** ThreatFox stores addresses as `ip:port`, so a bare address must be
+    searched loosely — and a loose search returns `11.2.3.45:443` for `1.2.3.4`.
+    The host part is parsed off and compared for *equality*; containment is never
+    a match, and what was discarded is published in the coverage evidence.
+    `providers/threatfox/matching.py` contains no `in`, no `startswith`/`find`/
+    `search`, and no regex, and a test asserts that.
+25. **Where an API's parameters travel in a body, passivity is a property of an
+    allow-list, not of the HTTP verb.** The abuse.ch APIs are read by POST —
+    ThreatFox with a JSON body, URLhaus and MalwareBazaar with form data — so
+    "this integration never calls `post`" is unavailable as a proof and must not
+    be claimed. The encoding is fixed per platform on the shared client and
+    every safety check runs before it is chosen, so JSON is a serialization
+    choice rather than a second route in. Each client hands the shared transport
+    a frozen set of permitted queries or paths, checked before a request is
+    built: `submit_ioc`, `get_file`, `upload`, `add_comment` and every feed are
+    unreachable rather than merely unused.
+26. **Provider-relayed and community-authored text never becomes evidence.**
+    MalwareBazaar comments contribute a count, never their text; an archive
+    password, uploader identity and uploader country are not stored at all;
+    `vendor_intel` values — which can be entire HTML reports — are never read,
+    only their keys. `EXCLUDED_FIELDS` is data with a reason per field so a test
+    can assert it.
+27. **Presence in a sample archive is provenance, not a direction.** A URLhaus
+    payload record says a tracked URL served this file, which a URL that now
+    serves an installer or an error page also does; it stays `CONTEXT_ONLY` even
+    when a family signature is present. And an expiring feed's silence is a
+    coverage fact: ThreatFox drops IOCs after ~6 months, so a miss means "nothing
+    unexpired matched" and records that horizon explicitly.
 
 ## Security rules
 
@@ -212,6 +270,24 @@ not implemented, so there is still no multi-provider verdict.
 - **GTI's quota endpoint puts the API key in its path.** Never build, return,
   log, cache or attach that path to an error. Failures report
   "GTI quota lookup failed" plus a normalized category only.
+- **A credential shared between providers is still per-user, and one
+  provider's refusal never invalidates it.** One `abuse_ch` Auth-Key serves
+  ThreatFox, URLhaus and MalwareBazaar; resolution is scoped by
+  `authenticated_user_id` plus group, and `user_blacklisted` — abuse.ch's
+  fair-use block — is a `PERMISSION_ERROR` that leaves the credential
+  `ACTIVE`. Only a rejected key marks it invalid. The API documentation states
+  no duration for a block, so the abuse.ch layer asks Task 6 for a configurable
+  6-hour credential cooldown rather than modelling a ban length it cannot know.
+- **Where parameters travel in the request body, the credential must not.** The
+  Auth-Key is written only to the `Auth-Key` header, never to a form field, path
+  or query string: a request log that captures bodies would keep it otherwise.
+  The shared transport is the only thing that reads the secret, and tests assert
+  the key is absent from every body, URL, log record and cache key.
+- **A provider response is data, never navigation.** TI Recon never contacts a
+  URL URLhaus reports, never downloads a MalwareBazaar sample and never uploads
+  one. `ALLOWED_QUERIES` / `ALLOWED_PATHS` make those unreachable rather than
+  merely unused, and no rate limit is ever evaded by rotating keys, switching
+  accounts or scraping a web interface.
 - **GTI data is provider-policy-sensitive.** Do not expose raw or normalized GTI
   content to Claude, MCP or any AI layer before the applicable Google Threat
   Intelligence data-use terms have been reviewed. See `docs/providers/gti.md`.
@@ -257,12 +333,31 @@ src/ti_recon/
                      config, descriptor, errors, assets (deterministic asset
                      identity), credits (zero-cost balance), organizations
                      (per-connection id), normalizer, policy, adapter
+  providers/abusech/ Task 10: what the three abuse.ch platforms share. family
+                     (source family, credential group, relay origins), values
+                     (bounded readers), config (three fixed origins, Auth-Key
+                     header), errors (`query_status` -> categories), client
+                     (POST transport, form or JSON per platform, gated by a
+                     frozen query allow-list), evidence (context +
+                     relayed-summary builder), policy
+  providers/threatfox/ Task 10: ThreatFox. client (search_ioc, search_hash),
+                     config, descriptor, matching (loose matches re-validated by
+                     parsing only), normalizer, policy, adapter
+  providers/urlhaus/ Task 10: URLhaus. client (three path-routed reads), config,
+                     descriptor, normalizer (exact URL vs host association,
+                     payload provenance, relays), policy, adapter
+  providers/malwarebazaar/ Task 10: MalwareBazaar. client (one read; no
+                     download, no upload), config, descriptor, normalizer (one
+                     assertion, signing, YARA, vendor names only), policy,
+                     adapter
   artifacts/         Task 8: bounded, user-isolated, provider-neutral storage
                      for retrieved screenshots, DOM snapshots and response
                      bodies
   execution/         Task 6: clock/sleeper/jitter seams, cache, retry+backoff,
-                     quota + cooldown stores, concurrency + single-flight,
-                     policy, bounded executor, metrics
+                     quota + cooldown stores (provider-scoped, plus a
+                     credential-scoped key for a refused credential),
+                     concurrency + single-flight, policy, bounded executor,
+                     metrics
   security.py        credential-key guards and text redaction
   versions.py        ENGINE_VERSION / POLICY_VERSION audit stamps
 tests/unit/          unit + contract tests

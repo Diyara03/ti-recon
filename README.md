@@ -8,8 +8,8 @@ eventually produce an explainable, auditable assessment.
 
 ## Current development state
 
-This repository currently contains the foundation plus its first four providers
-(Jira Tasks 1-9):
+This repository currently contains the foundation plus its first seven providers
+(Jira Tasks 1-10):
 
 | Task | Scope | State |
 |------|-------|-------|
@@ -22,18 +22,26 @@ This repository currently contains the foundation plus its first four providers
 | 7 | Google Threat Intelligence integration | Implemented (passive enrichment) |
 | 8 | urlscan.io integration + web forensics | Implemented (passive enrichment; forensics on explicit request) |
 | 9 | GreyNoise + Censys integration | Implemented (passive enrichment) |
+| 10 | abuse.ch: ThreatFox + URLhaus + MalwareBazaar | Implemented (passive enrichment) |
 
-**Four providers are integrated**, all passive, each answering a different
+**Seven providers are integrated**, all passive, each answering a different
 question. Google Threat Intelligence enriches with each analyst's own VirusTotal
 API key. urlscan supplies passive web intelligence — what its browsers observed
 when they visited a page — and, only when explicitly asked, static forensic
 analysis of the page artifacts it already stored. GreyNoise says what an address
 *does* on the internet: whether it is background scanning noise, and whose.
 Censys says what is *exposed on* an asset: which ports answer, what software is
-visible, which certificate is served.
+visible, which certificate is served. The three abuse.ch platforms answer from
+community and curated datasets: ThreatFox for current family-attributed
+indicators, URLhaus for malware-distribution URLs, MalwareBazaar for vetted
+samples.
 
-There is no ThreatFox, URLhaus, MalwareBazaar, SecurityTrails, AbuseIPDB, Shodan
-or IPinfo client yet, and there is no query planner, no provider selection, no
+The three abuse.ch providers share **one** credential group and **one** source
+family, so an analyst stores one Auth-Key and a future fusion layer can see that
+two of them agreeing is one ecosystem agreeing with itself.
+
+There is no SecurityTrails, AbuseIPDB, Shodan or IPinfo client yet, no sandbox
+integration of any kind, and there is no query planner, no provider selection, no
 evidence fusion, no verdict scoring, no MCP server and no Claude Skill. Those are
 later Jira tasks.
 
@@ -50,13 +58,19 @@ development foundation, not distributed coordination.
 | urlscan.io | Implemented | historical scan discovery bounded by the account's own searchable range, stored scan results, verdicts with separated lineage, redirect chains, contacted infrastructure, served-body digests, quota awareness, and — on explicit request at DEEP depth — stored screenshot / DOM / response-body retrieval with static forensic extraction and kit fingerprints | scan submission, rescan, live scan, sample downloads, visibility changes, deletion, saved searches, incidents |
 | GreyNoise | Implemented | IPv4 scanner classification with its raw wording preserved, Business Services Intelligence as context, aggregated tags, CVE-activity association, sensor detail at DEEP depth, network ownership and pivots, and per-credential resolution of full-context vs Community access | GNQL and all hunting, timelines, bulk lookup, feeds, PCAP, deprecated v2 endpoints, IPv6/domain/URL/hash observables |
 | Censys | Implemented | direct host and web-property reads by deterministic asset identity, exposed services and software, DNS and reverse DNS, served certificates as `x509-certificate` pivots, labels, vulnerability context, and credit-balance awareness from the zero-cost account endpoints | CenQL and general search, historical timelines, `at_time`, collections, Adversary Investigation, live rescan/discovery, bare domains, file hashes, any body retrieval |
+| ThreatFox (abuse.ch) | Implemented | current family-attributed IOC search for IPv4, domain, URL and MD5/SHA-256, with `ip:port` records re-validated locally by parsing, the malware family as a linked object, and the six-month API horizon recorded in coverage | indicator submission, the recent feed, malware-family / tag / reporter queries, every bulk or hunting query, IPv6, SHA-1-only files |
+| URLhaus (abuse.ch) | Implemented | exact malware-distribution URL records kept distinct from host-level associations, `url_status` and takedown-report context, served-payload provenance and fingerprints, bounded URL pivots, and relayed VirusTotal / blocklist findings attributed to their real origin | URL submission, rescan, live scan, `/downloads/` sample retrieval, all feeds, Brand/Kit monitoring, the hostname and similarity APIs |
+| MalwareBazaar (abuse.ch) | Implemented | vetted sample records by MD5 / SHA-1 / SHA-256, family signature, fingerprint pivots (imphash, TLSH, telfhash, gimphash, ssdeep, icon dhash), code signing with CSCB status and a linked `x509-certificate`, bounded YARA and document context, and relayed vendor names only | sample download and upload, record updates, comments, the recent feed, tag / signature / YARA / certificate hunting, any dynamic analysis |
 
-All four supply **evidence**, not verdicts. Weighing providers against each other
+All seven supply **evidence**, not verdicts. Weighing providers against each other
 and reaching a conclusion is the future evidence-fusion layer's job, and no such
 layer exists yet. See [docs/providers/gti.md](docs/providers/gti.md),
 [docs/providers/urlscan.md](docs/providers/urlscan.md),
-[docs/providers/greynoise.md](docs/providers/greynoise.md) and
-[docs/providers/censys.md](docs/providers/censys.md).
+[docs/providers/greynoise.md](docs/providers/greynoise.md),
+[docs/providers/censys.md](docs/providers/censys.md),
+[docs/providers/threatfox.md](docs/providers/threatfox.md),
+[docs/providers/urlhaus.md](docs/providers/urlhaus.md) and
+[docs/providers/malwarebazaar.md](docs/providers/malwarebazaar.md).
 
 Two of them are deliberately *not* reputation sources. Censys answers "what is
 exposed here" and every piece of evidence it produces is context: an open RDP
@@ -64,6 +78,17 @@ port is a risk to its owner, not evidence its owner is an attacker. GreyNoise
 does produce one assessment — its scanner classification — and nothing else it
 reports carries a direction, because a provider gets one opinion per response
 rather than one per field.
+
+The abuse.ch providers add the relay problem in its sharpest form. All three
+carry other people's findings — URLhaus relays VirusTotal ratios and URL
+blocklists, MalwareBazaar relays a dozen sandbox vendors — and none of it becomes
+an abuse.ch corroboration. A relayed VirusTotal count carries VirusTotal's origin
+*and the same source family a direct Google Threat Intelligence result carries*,
+so the two can never be counted as independent. MalwareBazaar's `vendor_intel`
+becomes one direction-free record naming which vendors had something, because
+eight relayed verdicts becoming eight votes would credit providers TI Recon never
+queried. Nothing downloads a sample, submits an indicator or requests a rescan,
+and a malicious URL in a provider response is data — never a request target.
 
 urlscan has two deliberately separate modes. Ordinary enrichment never retrieves
 a DOM, a screenshot or a response body; deep forensic retrieval happens only when
@@ -83,7 +108,8 @@ TI Recon backend                 <-- this repository
    |-- capability planner         (future)
    |-- provider registry          implemented
    |-- provider adapters          contract implemented; GTI, urlscan,
-   |                               GreyNoise and Censys
+   |                               GreyNoise, Censys, ThreatFox, URLhaus,
+   |                               MalwareBazaar
    |-- provider HTTP transport    implemented (SSRF-bounded)
    |-- provider executor          implemented (cache, retry, quota, cooldown,
    |                                           concurrency, single-flight)
@@ -169,18 +195,25 @@ In production, provider credentials are held per user by the credential layer
 
 ## Current limitations
 
-- **Four providers only.** Google Threat Intelligence, urlscan.io, GreyNoise and
-  Censys are integrated; every other provider named above is a later task.
+- **Seven providers only.** Google Threat Intelligence, urlscan.io, GreyNoise,
+  Censys, ThreatFox, URLhaus and MalwareBazaar are integrated; every other
+  provider named above is a later task, and no sandbox integration of any kind
+  exists.
 - **No provider selection.** The registry returns every compatible provider;
   nothing ranks or chooses between them.
 - **Every provider is passive only.** No submission, rescanning, live scanning,
-  downloads, sandbox detonation, Intelligence Search, GNQL hunting or CenQL
-  search.
+  downloads, uploads, sandbox detonation, Intelligence Search, GNQL hunting,
+  CenQL search or abuse.ch write query.
 - **Coverage is deliberately narrow where it cannot be deterministic.** GreyNoise
   answers for IPv4 only; Censys answers for addresses and HTTP(S) URLs but not
   bare domains, because a web property needs a port and guessing two would
-  present two ports as domain coverage. Both report those cases as
-  `NOT_SUPPORTED` rather than as empty answers.
+  present two ports as domain coverage. MalwareBazaar answers for files only, and
+  ThreatFox and URLhaus decline a file identified solely by SHA-1 rather than
+  search under a key their APIs cannot use. All of these report `NOT_SUPPORTED`
+  rather than an empty answer.
+- **ThreatFox answers only about the recent past.** Its API drops IOCs after
+  roughly six months, so a miss means "nothing unexpired matched" — recorded
+  explicitly in the coverage evidence, never as an absence of history.
 - **Artifact storage is in-memory only.** Retrieved page artifacts are bounded
   and user-isolated but process-local and lost on restart.
 - **Secret storage is in-memory only.** `InMemorySecretStore` is explicitly
@@ -210,4 +243,7 @@ In production, provider credentials are held per user by the credential layer
 - [docs/providers/urlscan.md](docs/providers/urlscan.md) — Task 8 urlscan.io and web forensics
 - [docs/providers/greynoise.md](docs/providers/greynoise.md) — Task 9 GreyNoise
 - [docs/providers/censys.md](docs/providers/censys.md) — Task 9 Censys
+- [docs/providers/threatfox.md](docs/providers/threatfox.md) — Task 10 ThreatFox
+- [docs/providers/urlhaus.md](docs/providers/urlhaus.md) — Task 10 URLhaus
+- [docs/providers/malwarebazaar.md](docs/providers/malwarebazaar.md) — Task 10 MalwareBazaar
 - [docs/artifacts.md](docs/artifacts.md) — Task 8 bounded provider artifact storage

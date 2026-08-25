@@ -24,6 +24,7 @@ from ti_recon.execution import (
     cooldown_from_quota,
     cooldown_from_rate_limit,
     make_cooldown,
+    make_credential_cooldown,
 )
 from ti_recon.providers import (
     ProviderQuotaSnapshot,
@@ -682,13 +683,124 @@ def test_negative_cooldown_durations_are_clamped() -> None:
     assert entry.is_active_at(NOW) is False
 
 
-def test_cooldown_reasons_are_the_documented_four() -> None:
+def test_cooldown_reasons_are_the_documented_five() -> None:
     assert {reason.value for reason in CooldownReason} == {
         "rate_limit",
         "quota_exhausted",
         "transient_failures",
         "provider_unavailable",
+        # An adapter asked for the pause. The vocabulary stays
+        # provider-agnostic: no reason here names a vendor or a condition only
+        # one provider's API can report.
+        "provider_directed",
     }
+
+
+# --------------------------------------------------------------------------- #
+# Credential-scoped cooldowns
+# --------------------------------------------------------------------------- #
+
+
+def test_a_credential_cooldown_is_keyed_to_the_credential_not_the_provider() -> None:
+    """So a credential one provider refused stops being spent on its siblings."""
+    entry = make_credential_cooldown(
+        scope=make_scope(provider_id="threatfox", credential_group="abuse_ch"),
+        reason=CooldownReason.PROVIDER_DIRECTED,
+        seconds=3600,
+        now=NOW,
+    )
+    assert entry is not None
+    assert entry.scope_identity == "user|user-a|group:abuse_ch|conn-a"
+    assert "threatfox" not in entry.scope_identity
+    # The provider that discovered it is still recorded, for diagnosis.
+    assert entry.provider_id == "threatfox"
+
+
+def test_sibling_providers_on_one_credential_share_the_key() -> None:
+    entries = [
+        make_credential_cooldown(
+            scope=make_scope(provider_id=provider_id, credential_group="abuse_ch"),
+            reason=CooldownReason.PROVIDER_DIRECTED,
+            seconds=3600,
+            now=NOW,
+        )
+        for provider_id in ("threatfox", "urlhaus", "malwarebazaar")
+    ]
+    assert len({entry.scope_identity for entry in entries if entry is not None}) == 1
+
+
+def test_a_credential_cooldown_never_crosses_a_user_or_a_connection() -> None:
+    base = make_credential_cooldown(
+        scope=make_scope(credential_group="abuse_ch"),
+        reason=CooldownReason.PROVIDER_DIRECTED,
+        seconds=3600,
+        now=NOW,
+    )
+    others = [
+        make_scope(credential_group="abuse_ch", user_id="user-b"),
+        make_scope(credential_group="abuse_ch", connection_id="conn-b"),
+        make_scope(credential_group="other_group"),
+    ]
+    assert base is not None
+    for scope in others:
+        assert scope.credential_identity != base.scope_identity
+
+
+def test_a_credential_cooldown_is_provider_wide_never_per_operation() -> None:
+    """A refused credential is refused for everything it could have done."""
+    entry = make_credential_cooldown(
+        scope=make_scope(credential_group="abuse_ch"),
+        reason=CooldownReason.PROVIDER_DIRECTED,
+        seconds=3600,
+        now=NOW,
+    )
+    assert entry is not None
+    assert entry.operation is None
+
+
+def test_a_scope_with_no_credential_group_has_nothing_to_key_to() -> None:
+    """``None`` is the signal to fall back to an ordinary provider cooldown."""
+    assert make_scope().credential_identity is None
+    assert (
+        make_credential_cooldown(
+            scope=make_scope(),
+            reason=CooldownReason.PROVIDER_DIRECTED,
+            seconds=3600,
+            now=NOW,
+        )
+        is None
+    )
+
+
+def test_a_credential_identity_never_collides_with_a_provider_identity() -> None:
+    """Two key spaces in one store; the ``group:`` prefix keeps them apart."""
+    scope = make_scope(provider_id="abuse_ch", credential_group="abuse_ch")
+    assert scope.credential_identity != scope.identity
+
+
+def test_a_credential_cooldown_respects_the_absolute_cap() -> None:
+    entry = make_credential_cooldown(
+        scope=make_scope(credential_group="abuse_ch"),
+        reason=CooldownReason.PROVIDER_DIRECTED,
+        seconds=MAX_COOLDOWN_SECONDS * 10,
+        now=NOW,
+    )
+    assert entry is not None
+    assert (entry.until - NOW).total_seconds() == MAX_COOLDOWN_SECONDS
+
+
+def test_a_credential_cooldown_carries_no_secret() -> None:
+    entry = make_credential_cooldown(
+        scope=make_scope(credential_group="abuse_ch"),
+        reason=CooldownReason.PROVIDER_DIRECTED,
+        seconds=3600,
+        now=NOW,
+        detail="permission_error",
+    )
+    assert entry is not None
+    serialized = json.dumps(entry.model_dump(mode="json"))
+    assert "conn-a" in serialized
+    assert "secret" not in serialized.lower()
 
 
 # --------------------------------------------------------------------------- #

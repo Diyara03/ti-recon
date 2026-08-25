@@ -378,13 +378,31 @@ def test_no_secret_can_appear_in_a_cache_key() -> None:
     )
     assert secret not in key.storage_key
     assert secret not in key.scope_identity
-    # Structural guarantee: the scope model has nowhere to put one.
+    # Structural guarantee: the scope model has nowhere to put one. Every field
+    # is an identifier or an enum; ``credential_group`` names a group, never a
+    # secret, and holds a group name the caller does not choose.
     assert set(ExecutionScope.model_fields) == {
         "provider_id",
         "user_id",
         "provider_connection_id",
         "scope",
+        "credential_group",
     }
+
+
+def test_the_credential_group_never_reaches_a_cache_key() -> None:
+    """Sharing a credential must not mean sharing an answer."""
+    grouped = ExecutionScope.for_user(
+        provider_id="fake_provider",
+        user_id="user-a",
+        provider_connection_id="conn-a",
+        credential_group="abuse_ch",
+    )
+    plain = ExecutionScope.for_user(
+        provider_id="fake_provider", user_id="user-a", provider_connection_id="conn-a"
+    )
+    assert grouped.identity == plain.identity
+    assert "abuse_ch" not in key_for(scope=grouped).storage_key
 
 
 def test_scope_identity_is_stable_and_readable() -> None:

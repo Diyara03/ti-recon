@@ -86,6 +86,11 @@ silently reuse results fetched under the old one.
 The scope model has **no field that could hold credential material**, which is
 asserted structurally rather than by pattern-matching a string.
 
+It also records the `credential_group` the work draws its secret from. That field
+is *not* part of `identity` — it partitions nothing — and exists only for
+`credential_identity`, the separate key used by the one control that belongs to a
+credential rather than to a provider. See §8.2.
+
 ## 4. Cache
 
 `ProviderCache` protocol; `InMemoryProviderCache` is the only implementation.
@@ -306,6 +311,7 @@ know the answer would be a refusal.
 | `QUOTA_EXHAUSTED` | the whole provider | spent account allowance |
 | `TRANSIENT_FAILURES` | the whole provider | retries exhausted against a flaky provider |
 | `PROVIDER_UNAVAILABLE` | the whole provider | retries exhausted against a provider that looks down |
+| `PROVIDER_DIRECTED` | the **credential** | an adapter recognized a provider condition a category cannot express |
 
 **Per-operation by default is load-bearing.** Providers commonly limit one
 action far more tightly than the rest — a cheap search endpoint throttled while
@@ -325,6 +331,82 @@ an integration for a week.
 When a cooldown is active the provider is **not called**; the outcome reports
 `cooldown_applied`, `cooldown_reason` and `cooldown_until`. Nothing ever sleeps
 until a long reset.
+
+### 8.1 Adapter-supplied credential cooldowns
+
+Four of the five reasons above are derived here, from things this layer can see:
+a status category, a rate-limit window, a quota bucket, an exhausted retry
+budget. `PROVIDER_DIRECTED` is the one an **adapter** asks for.
+
+It exists because a category is sometimes too coarse to carry the decision.
+`PERMISSION_ERROR` covers two very different situations:
+
+* *this call* is not permitted — one endpoint outside the plan, while everything
+  else on the same key works. Cooling down here would silence a working
+  integration, so it must not happen.
+* *this credential* is not permitted — the provider has refused the account
+  outright, and every call it makes from now on will be refused too.
+
+Only the provider package can tell those apart, because telling them apart means
+reading a provider's own vocabulary — which this layer is forbidden to learn
+(invariant 11). So the adapter decides, and says so by attaching a hint to the
+error it raises:
+
+```python
+provider_error_for(
+    ProviderErrorCategory.PERMISSION_ERROR,
+    provider_id,
+    credential_cooldown_hint_seconds=...,
+)
+```
+
+The hint is a **duration, never a reason**. Passing a reason would mean this
+module growing a vocabulary of provider conditions; passing a number means it
+learns nothing. The category the adapter reported travels on the entry's
+`detail`, so the outcome is still diagnosable.
+
+Three properties keep this from becoming a back door:
+
+* **Nothing gets one without asking.** No category earns this cooldown by
+  default. An error with no hint behaves exactly as it did before.
+* **It is a request, not a command.** `RetryPolicy.max_credential_cooldown_seconds`
+  (default 6 h) is the operator's ceiling on how long *any* adapter may silence a
+  credential for, and the store's absolute cap applies after that.
+* **It never makes a failure retryable.** The hint is only read on the path that
+  has already decided to stop.
+
+`QUOTA_EXCEEDED` and `RATE_LIMITED` are handled before the hint is consulted, so
+a hint cannot displace a cooldown derived from what the provider actually
+reported.
+
+### 8.2 The credential scope
+
+A `PROVIDER_DIRECTED` cooldown is keyed to the *credential* rather than to one
+provider, via `ExecutionScope.credential_identity`:
+
+```
+user|<user>|group:<credential group>|<connection>
+```
+
+A separate key space from `identity`, and never a substitute for it. Almost
+everything an execution control does is per-provider: one provider being
+throttled says nothing about the next one, even on the same key. This exists for
+the narrow condition that is genuinely about the secret rather than the endpoint.
+
+It matters wherever providers share a credential. The three abuse.ch platforms
+draw on one `Auth-Key`, so a ThreatFox `user_blacklisted` means the *key* is
+blocked — and continuing to call URLhaus and MalwareBazaar with it would keep
+producing refusals. One entry suppresses all three.
+
+The credential group is recorded on the scope but deliberately **left out of
+`identity`**, so sharing a credential never means sharing a cache entry, a quota
+bucket or a concurrency slot. Isolation is unchanged: the credential identity is
+built from the analyst's id, their credential group and their connection id, so
+one analyst's block can never silence another's key.
+
+When no credential group is known the identity is `None`, and the executor falls
+back to an ordinary provider-scoped cooldown. The pause still happens; it simply
+covers less. Skipping it would be the wrong failure mode.
 
 ## 9. Concurrency and coalescing
 
@@ -409,7 +491,7 @@ executor produces:
 | `NOT_SUPPORTED` | descriptor cannot serve this object type / capability / mode |
 | `PLAN_LIMITED` | normalized `PLAN_LIMITED` |
 | `QUOTA_EXCEEDED` | quota exhausted, or a quota cooldown is active |
-| `TEMPORARILY_UNAVAILABLE` | rate limited, provider down, or a cooldown is active |
+| `TEMPORARILY_UNAVAILABLE` | rate limited, provider down, or a cooldown is active — including a credential a provider has refused (§8.1) |
 | `ERROR` | anything else, with a normalized category |
 
 `NOT_CONFIGURED` is reported, not raised: an unconfigured provider is a coverage
@@ -509,11 +591,21 @@ distributed locks         distributed semaphores  shared rate-limit state
 real quota API calls      provider selection      query planning
 ```
 
-and every remaining provider integration — ThreatFox, URLhaus, MalwareBazaar,
-MISP Warning Lists, SecurityTrails, AbuseIPDB, Shodan, IPinfo — along with
-evidence fusion, verdict scoring, MCP, the Claude Skill and any web UI. Google
-Threat Intelligence (Task 7), urlscan.io (Task 8), GreyNoise and Censys (Task 9)
-run behind these controls today.
+and every remaining provider integration — MISP Warning Lists, SecurityTrails,
+AbuseIPDB, Shodan, IPinfo — along with evidence fusion, verdict scoring, MCP, the
+Claude Skill and any web UI. Google Threat Intelligence (Task 7), urlscan.io
+(Task 8), GreyNoise and Censys (Task 9), and the three abuse.ch platforms
+ThreatFox, URLhaus and MalwareBazaar (Task 10) all run behind these controls
+today.
+
+The abuse.ch three are worth a note here, because they are the first providers to
+share a credential. Task 6 resolves by the descriptor's credential group, so one
+stored Auth-Key serves all three with no execution-layer change at all — and
+sharing a credential never means sharing execution state: cache entries, quotas
+and cooldowns are keyed by `ExecutionScope`, which includes the provider id. A
+ThreatFox throttle does not stop URLhaus being asked. All three run at
+`max_concurrency = 1`, because abuse.ch is a free service with published fair-use
+limits and parallelism there is not TI Recon's to take.
 
 The fake adapters in `tests/fixtures/execution_adapters.py` are shaped after
 *categories* of provider behaviour (a quota-metered aggregator, a provider with

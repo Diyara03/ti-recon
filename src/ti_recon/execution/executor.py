@@ -68,6 +68,7 @@ from ti_recon.execution.limits import (
     cooldown_from_quota,
     cooldown_from_rate_limit,
     make_cooldown,
+    make_credential_cooldown,
 )
 from ti_recon.execution.metrics import (
     ExecutionMetric,
@@ -231,7 +232,9 @@ class ProviderExecutor:
         scope = self._build_scope(descriptor, context, connection, policy)
         operation = request.operation.value
 
-        blocked = await self._active_cooldown(scope, operation)
+        blocked = await self._active_cooldown(
+            scope, operation
+        ) or await self._active_credential_cooldown(scope, operation)
         if blocked is not None:
             return self._cooldown_outcome(
                 descriptor=descriptor,
@@ -498,12 +501,31 @@ class ProviderExecutor:
             provider_id=descriptor.provider_id,
             user_id=context.authenticated_user_id,
             provider_connection_id=connection.id if connection else None,
+            # Recorded, not mixed in: it stays out of ``identity``, so nothing
+            # is shared between providers except where a control asks for the
+            # credential identity explicitly.
+            credential_group=connection.credential_group if connection else None,
         )
 
     async def _active_cooldown(self, scope: ExecutionScope, operation: str) -> CooldownEntry | None:
         if self._cooldown_store is None:
             return None
         return await self._cooldown_store.active(scope_identity=scope.identity, operation=operation)
+
+    async def _active_credential_cooldown(
+        self, scope: ExecutionScope, operation: str
+    ) -> CooldownEntry | None:
+        """A pause that belongs to the credential, not to this provider.
+
+        Checked in addition to the provider's own cooldown, so a credential one
+        provider has refused stops being spent on its siblings. Still fully
+        user-isolated: the identity is built from the analyst's id, their
+        credential group and their connection id.
+        """
+        identity = scope.credential_identity
+        if self._cooldown_store is None or identity is None:
+            return None
+        return await self._cooldown_store.active(scope_identity=identity, operation=operation)
 
     async def _store_cooldown(self, entry: CooldownEntry) -> None:
         if self._cooldown_store is not None:
@@ -584,6 +606,19 @@ class ProviderExecutor:
         """Store the cooldown a retry decision asked for, if any."""
         if decision.cooldown_reason is None or decision.cooldown_seconds is None:
             return None
+        if decision.cooldown_applies_to_credential:
+            credential_entry = make_credential_cooldown(
+                scope=scope,
+                reason=decision.cooldown_reason,
+                seconds=decision.cooldown_seconds,
+                now=self._clock.now(),
+                detail=error.category.value,
+            )
+            if credential_entry is not None:
+                await self._store_cooldown(credential_entry)
+                return credential_entry
+            # No credential group to key it to. Fall through: suppressing this
+            # provider is still better than repeating a refusal.
         entry = make_cooldown(
             scope=scope,
             reason=decision.cooldown_reason,
@@ -793,6 +828,10 @@ _COOLDOWN_STATUS: dict[CooldownReason, ProviderRunStatus] = {
     CooldownReason.QUOTA_EXHAUSTED: ProviderRunStatus.QUOTA_EXCEEDED,
     CooldownReason.TRANSIENT_FAILURES: ProviderRunStatus.TEMPORARILY_UNAVAILABLE,
     CooldownReason.PROVIDER_UNAVAILABLE: ProviderRunStatus.TEMPORARILY_UNAVAILABLE,
+    # The provider is reachable and working; it is this credential that is not
+    # being used for now. "Temporarily unavailable" is the honest report to an
+    # investigation, which loses this provider's coverage either way.
+    CooldownReason.PROVIDER_DIRECTED: ProviderRunStatus.TEMPORARILY_UNAVAILABLE,
 }
 
 _COOLDOWN_ERROR_CATEGORY: dict[CooldownReason, ProviderErrorCategory] = {
@@ -800,6 +839,9 @@ _COOLDOWN_ERROR_CATEGORY: dict[CooldownReason, ProviderErrorCategory] = {
     CooldownReason.QUOTA_EXHAUSTED: ProviderErrorCategory.QUOTA_EXCEEDED,
     CooldownReason.TRANSIENT_FAILURES: ProviderErrorCategory.TRANSIENT_ERROR,
     CooldownReason.PROVIDER_UNAVAILABLE: ProviderErrorCategory.PROVIDER_UNAVAILABLE,
+    # Deliberately not ``QUOTA_EXCEEDED``: nothing has been spent, and reporting
+    # a spent allowance would misdescribe a refused credential.
+    CooldownReason.PROVIDER_DIRECTED: ProviderErrorCategory.PERMISSION_ERROR,
 }
 
 

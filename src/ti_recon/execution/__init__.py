@@ -50,6 +50,7 @@ from ti_recon.execution.limits import (
     cooldown_from_quota,
     cooldown_from_rate_limit,
     make_cooldown,
+    make_credential_cooldown,
 )
 from ti_recon.execution.metrics import (
     ExecutionMetric,
@@ -134,5 +135,6 @@ __all__ = [
     "cooldown_from_rate_limit",
     "decide_retry",
     "make_cooldown",
+    "make_credential_cooldown",
     "scope_digest",
 ]

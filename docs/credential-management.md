@@ -219,6 +219,24 @@ the user who stored it.
 This is grouping configuration, not a provider integration: no API host,
 endpoint or payload shape appears in the module.
 
+Task 10 is where that arrangement first pays off. All three abuse.ch adapters
+declare `credential_group = "abuse_ch"` in their descriptors, and the Task 6
+executor resolves by that field — so an analyst who stores one Auth-Key can use
+ThreatFox, URLhaus and MalwareBazaar with no further configuration, and no
+provider-specific resolution code was needed to make it work.
+
+Two consequences the provider docs rely on:
+
+- **A shared credential is still per-user.** Resolution is scoped by
+  `authenticated_user_id` plus group, so one analyst's Auth-Key can never serve
+  another's lookup, on any of the three platforms.
+- **A refusal from one platform must not invalidate the key.** abuse.ch blocks an
+  account whose query volume trips its fair-use limits, reported as
+  `user_blacklisted`. That is a `PERMISSION_ERROR` and leaves the
+  credential `ACTIVE`: marking it invalid would make an analyst replace a working
+  key that three providers depend on. Only a rejected key
+  (`AUTHENTICATION_ERROR`) marks the credential invalid.
+
 ## 10. Tested isolation guarantees
 
 From `tests/unit/test_credentials_isolation.py`:

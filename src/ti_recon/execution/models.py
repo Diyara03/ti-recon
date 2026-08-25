@@ -63,6 +63,13 @@ class CooldownReason(StrEnum):
     TRANSIENT_FAILURES = "transient_failures"
     PROVIDER_UNAVAILABLE = "provider_unavailable"
 
+    #: An adapter asked for the pause, because it recognized a provider
+    #: condition that a normalized category cannot express. The category the
+    #: adapter reported is kept on the entry's ``detail``, so this stays
+    #: diagnosable without the execution layer learning any provider's
+    #: vocabulary.
+    PROVIDER_DIRECTED = "provider_directed"
+
 
 class ExecutionScope(FrozenTiReconModel):
     """The isolation boundary for every execution control.
@@ -82,6 +89,14 @@ class ExecutionScope(FrozenTiReconModel):
     provider_connection_id: Identifier | None = None
     scope: CacheScope = CacheScope.USER
 
+    #: The credential group this work draws its secret from, when one is known.
+    #:
+    #: Purely additional: it does not appear in :attr:`identity`, so no cache
+    #: entry, quota bucket or concurrency slot is shared because of it. Its only
+    #: use is :attr:`credential_identity` — the narrow case where a condition
+    #: belongs to the *credential* rather than to one provider.
+    credential_group: str | None = Field(default=None, max_length=64)
+
     @classmethod
     def for_user(
         cls,
@@ -89,6 +104,7 @@ class ExecutionScope(FrozenTiReconModel):
         provider_id: str,
         user_id: str,
         provider_connection_id: str | None = None,
+        credential_group: str | None = None,
     ) -> ExecutionScope:
         """A user-isolated scope."""
         return cls(
@@ -96,6 +112,7 @@ class ExecutionScope(FrozenTiReconModel):
             user_id=user_id,
             provider_connection_id=provider_connection_id,
             scope=CacheScope.USER,
+            credential_group=credential_group,
         )
 
     @classmethod
@@ -118,6 +135,28 @@ class ExecutionScope(FrozenTiReconModel):
             return f"global|{self.provider_id}"
         connection = self.provider_connection_id or "-"
         return f"user|{self.user_id or '-'}|{self.provider_id}|{connection}"
+
+    @property
+    def credential_identity(self) -> str | None:
+        """The identity of the *credential*, shared by every provider using it.
+
+        ``None`` unless a credential group is known and the scope is
+        user-isolated: without one there is no credential to name, and a global
+        scope has no credential at all.
+
+        Deliberately a *different* key space from :attr:`identity`, and never a
+        substitute for it. Almost everything an execution control does is
+        per-provider — one provider being throttled says nothing about the next
+        one, even on the same key. This exists for the rare condition that is
+        genuinely about the secret rather than the endpoint: a credential the
+        provider has refused outright. The ``group:`` prefix keeps the two key
+        spaces from colliding, since a provider id is a plain slug and can never
+        contain a colon.
+        """
+        if self.scope is CacheScope.GLOBAL or self.credential_group is None:
+            return None
+        connection = self.provider_connection_id or "-"
+        return f"user|{self.user_id or '-'}|group:{self.credential_group}|{connection}"
 
     def operation_key(self, operation: str | None = None) -> str:
         """The scope identity narrowed to one operation, or provider-wide."""

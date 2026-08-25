@@ -125,6 +125,159 @@ async def harness() -> Harness:
 
 
 # --------------------------------------------------------------------------- #
+# Adapter-supplied credential cooldowns
+# --------------------------------------------------------------------------- #
+
+
+def hinted_permission_error(seconds: float = 3600.0) -> object:
+    return provider_error_for(
+        ProviderErrorCategory.PERMISSION_ERROR,
+        "fake_aggregator",
+        credential_cooldown_hint_seconds=seconds,
+    )
+
+
+async def test_an_ordinary_permission_error_never_earns_a_cooldown(harness: Harness) -> None:
+    """The default that must not change.
+
+    Plenty of providers answer one unentitled endpoint with a permission error
+    while serving everything else. Cooling down on that would silence a working
+    integration, so a pause has to be asked for explicitly.
+    """
+    adapter = ScriptedAdapter.with_steps(
+        ScriptedStep(
+            error=provider_error_for(ProviderErrorCategory.PERMISSION_ERROR, "fake_aggregator")
+        )
+    )
+    first = await harness.executor.execute(adapter, make_request(), harness.context())
+    assert first.error_category is ProviderErrorCategory.PERMISSION_ERROR
+    assert first.cooldown_applied is False
+    assert first.cooldown_reason is None
+
+    second = await harness.executor.execute(
+        adapter, make_request(investigation_id="inv-2"), harness.context()
+    )
+    assert second.called_provider is True
+    assert adapter.calls == 2
+
+
+async def test_an_adapter_may_ask_for_the_credential_to_be_left_alone(harness: Harness) -> None:
+    """The generic half of the abuse.ch blacklist fix, on a neutral provider."""
+    adapter = ScriptedAdapter.with_steps(ScriptedStep(error=hinted_permission_error()))
+    first = await harness.executor.execute(adapter, make_request(), harness.context())
+    assert first.cooldown_applied is True
+    assert first.cooldown_reason is CooldownReason.PROVIDER_DIRECTED
+    assert first.error_category is ProviderErrorCategory.PERMISSION_ERROR
+    assert adapter.calls == 1
+
+    second = await harness.executor.execute(
+        adapter, make_request(investigation_id="inv-2"), harness.context()
+    )
+    assert second.called_provider is False
+    assert second.attempts == 0
+    assert adapter.calls == 1
+
+
+async def test_a_hinted_cooldown_suppresses_a_provider_with_no_shared_group(
+    harness: Harness,
+) -> None:
+    """A provider in a group of one is still suppressed — it just covers less.
+
+    ``fake_aggregator`` shares its credential with nobody, so the credential
+    identity covers exactly one provider. That is the fallback working, not the
+    mechanism failing: the pause must never be skipped for want of a group.
+    """
+    adapter = ScriptedAdapter.with_steps(ScriptedStep(error=hinted_permission_error()))
+    await harness.executor.execute(adapter, make_request(), harness.context())
+    blocked = await harness.executor.execute(
+        adapter, make_request(investigation_id="inv-2"), harness.context()
+    )
+    assert blocked.called_provider is False
+    assert blocked.status is ProviderRunStatus.TEMPORARILY_UNAVAILABLE
+
+
+async def test_a_hinted_cooldown_never_crosses_to_another_analyst(harness: Harness) -> None:
+    await harness.add_credential(USER_B, KEY_B)
+    adapter = ScriptedAdapter.with_steps(ScriptedStep(error=hinted_permission_error()))
+    await harness.executor.execute(adapter, make_request(), harness.context(USER_A))
+    other = await harness.executor.execute(adapter, make_request(), harness.context(USER_B))
+    assert other.called_provider is True
+
+
+async def test_a_hinted_cooldown_lifts_and_the_provider_is_tried_again(harness: Harness) -> None:
+    adapter = ScriptedAdapter.with_steps(
+        ScriptedStep(error=hinted_permission_error()), ScriptedStep()
+    )
+    await harness.executor.execute(adapter, make_request(), harness.context())
+    harness.clock.advance(3601)
+    resumed = await harness.executor.execute(
+        adapter, make_request(investigation_id="inv-2"), harness.context()
+    )
+    assert resumed.called_provider is True
+    assert resumed.status is ProviderRunStatus.SUCCESS
+
+
+async def test_a_hinted_cooldown_is_capped_by_the_retry_policy() -> None:
+    """The operator's ceiling over how long any adapter may be believed."""
+    stack = Harness(
+        policy=ProviderExecutionPolicy(retry=RetryPolicy(max_credential_cooldown_seconds=60.0))
+    )
+    await stack.add_credential(USER_A, KEY_A)
+    adapter = ScriptedAdapter.with_steps(ScriptedStep(error=hinted_permission_error(86_400.0)))
+    outcome = await stack.executor.execute(adapter, make_request(), stack.context())
+    assert outcome.cooldown_until is not None
+    assert (outcome.cooldown_until - stack.clock.now()).total_seconds() == 60.0
+
+
+async def test_a_hinted_cooldown_falls_back_when_there_is_no_credential_to_key_to() -> None:
+    """A credential-free provider has no credential identity — pause it anyway.
+
+    ``credential_identity`` is ``None`` when no connection was resolved, which is
+    the signal to key the cooldown to the provider instead. Skipping the pause
+    for want of a credential group would be the wrong failure mode.
+    """
+    harness = Harness()
+    request = make_request(
+        requested_capabilities=frozenset({ProviderCapability.FALSE_POSITIVE_CONTEXT})
+    )
+    adapter = ScriptedAdapter.with_steps(
+        ScriptedStep(
+            error=provider_error_for(
+                ProviderErrorCategory.PERMISSION_ERROR,
+                "fake_localwarninglist",
+                credential_cooldown_hint_seconds=3600.0,
+            )
+        ),
+        descriptor=credential_free_descriptor(),
+    )
+    first = await harness.executor.execute(adapter, request, harness.context())
+    assert first.cooldown_applied is True
+    assert first.cooldown_reason is CooldownReason.PROVIDER_DIRECTED
+
+    blocked = await harness.executor.execute(
+        adapter,
+        make_request(
+            investigation_id="inv-2",
+            requested_capabilities=frozenset({ProviderCapability.FALSE_POSITIVE_CONTEXT}),
+        ),
+        harness.context(),
+    )
+    assert blocked.called_provider is False
+    assert adapter.calls == 1
+
+
+async def test_no_secret_reaches_a_hinted_cooldown_outcome(harness: Harness) -> None:
+    adapter = ScriptedAdapter.with_steps(ScriptedStep(error=hinted_permission_error()))
+    await harness.executor.execute(adapter, make_request(), harness.context())
+    blocked = await harness.executor.execute(
+        adapter, make_request(investigation_id="inv-2"), harness.context()
+    )
+    serialized = json.dumps(blocked.model_dump(mode="json"))
+    assert KEY_A not in serialized
+    assert "AAAA1111" not in serialized
+
+
+# --------------------------------------------------------------------------- #
 # Success
 # --------------------------------------------------------------------------- #
 
