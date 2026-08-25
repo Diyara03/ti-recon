@@ -509,11 +509,21 @@ distributed locks         distributed semaphores  shared rate-limit state
 real quota API calls      provider selection      query planning
 ```
 
-and every remaining provider integration — ThreatFox, URLhaus, MalwareBazaar,
-MISP Warning Lists, SecurityTrails, AbuseIPDB, Shodan, IPinfo — along with
-evidence fusion, verdict scoring, MCP, the Claude Skill and any web UI. Google
-Threat Intelligence (Task 7), urlscan.io (Task 8), GreyNoise and Censys (Task 9)
-run behind these controls today.
+and every remaining provider integration — MISP Warning Lists, SecurityTrails,
+AbuseIPDB, Shodan, IPinfo — along with evidence fusion, verdict scoring, MCP, the
+Claude Skill and any web UI. Google Threat Intelligence (Task 7), urlscan.io
+(Task 8), GreyNoise and Censys (Task 9), and the three abuse.ch platforms
+ThreatFox, URLhaus and MalwareBazaar (Task 10) all run behind these controls
+today.
+
+The abuse.ch three are worth a note here, because they are the first providers to
+share a credential. Task 6 resolves by the descriptor's credential group, so one
+stored Auth-Key serves all three with no execution-layer change at all — and
+sharing a credential never means sharing execution state: cache entries, quotas
+and cooldowns are keyed by `ExecutionScope`, which includes the provider id. A
+ThreatFox throttle does not stop URLhaus being asked. All three run at
+`max_concurrency = 1`, because abuse.ch is a free service with published fair-use
+limits and parallelism there is not TI Recon's to take.
 
 The fake adapters in `tests/fixtures/execution_adapters.py` are shaped after
 *categories* of provider behaviour (a quota-metered aggregator, a provider with

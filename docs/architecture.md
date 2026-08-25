@@ -277,6 +277,36 @@ src/ti_recon/
     normalizer.py     exposure, ownership, DNS, certificates, vulnerabilities
     policy.py         per-depth bounds, conservative concurrency, cache TTLs
     adapter.py        CensysAdapter
+  providers/abusech/
+    family.py         shared source family, credential group, relay origins
+    values.py         bounded readers for provider-supplied values
+    config.py         the three fixed origins, Auth-Key header placement
+    errors.py         `query_status` bodies -> normalized categories
+    client.py         form-POST transport gated by a frozen query allow-list
+    evidence.py       shared normalization context, relayed-summary builder
+    policy.py         per-depth bounds, concurrency 1, execution policy builder
+  providers/threatfox/
+    client.py         two reads: search_ioc, search_hash
+    config.py         host and descriptor wiring (no credential)
+    descriptor.py     provider identity; IPv4/domain/URL/file, nothing active
+    matching.py       local re-validation of loose matches, by parsing only
+    normalizer.py     one IOC assertion, family objects, coverage + horizon
+    policy.py         per-depth bounds, cache TTLs
+    adapter.py        ThreatFoxAdapter
+  providers/urlhaus/
+    client.py         three path-routed reads: url, host, payload
+    config.py         host and descriptor wiring (no credential)
+    descriptor.py     provider identity; no web-behaviour capability
+    normalizer.py     exact-URL vs host association, payload provenance, relays
+    policy.py         per-depth bounds, cache TTLs
+    adapter.py        UrlhausAdapter
+  providers/malwarebazaar/
+    client.py         one read: get_info (no download, no upload)
+    config.py         host and descriptor wiring (no credential)
+    descriptor.py     provider identity; files only, no FILE_BEHAVIOR
+    normalizer.py     one sample assertion, signing, YARA, vendor names only
+    policy.py         durable-result TTL, per-depth bounds
+    adapter.py        MalwareBazaarAdapter
   artifacts/
     models.py         ArtifactScope, ArtifactKind, StoredArtifact
     store.py          bounded, user-isolated artifact store (in-memory)
@@ -308,7 +338,7 @@ Full detail: [provider-execution.md](provider-execution.md).
 
 ## 11. Providers
 
-Four providers are integrated, each answering a different question and all of
+Seven providers are integrated, each answering a different question and all of
 them passive:
 
 | Provider | Question it answers | Detail |
@@ -317,43 +347,62 @@ them passive:
 | urlscan.io | what did a browser see when it visited this page? | [providers/urlscan.md](providers/urlscan.md) |
 | GreyNoise | what does this address *do* on the internet? | [providers/greynoise.md](providers/greynoise.md) |
 | Censys | what is *exposed on* this asset? | [providers/censys.md](providers/censys.md) |
+| ThreatFox | is this a current, family-attributed indicator? | [providers/threatfox.md](providers/threatfox.md) |
+| URLhaus | has this URL been seen distributing malware? | [providers/urlhaus.md](providers/urlhaus.md) |
+| MalwareBazaar | is this file a known, vetted malware sample? | [providers/malwarebazaar.md](providers/malwarebazaar.md) |
 
 Every one of them reaches the engine entirely through the Task 5 contract: the
 registry finds it by capability with no vendor branch, and each passes the same
 reusable adapter contract suite as the test fakes. Every one runs behind the
 Task 6 executor, with no provider-shaped branch anywhere in that layer.
 
-Two of them supply an assessment, and two deliberately do not. GTI reports
-provider verdicts and aggregated reputation; GreyNoise reports one scanner
-classification. urlscan's browser observations and Censys's exposure findings are
-context — an open port or a served certificate says what a thing *is*, not
-whether it is hostile — and the model enforces that rather than trusting each
-package to remember it.
+Some supply an assessment and some deliberately do not. GTI reports provider
+verdicts and aggregated reputation; GreyNoise reports one scanner classification;
+the three abuse.ch platforms each report one curated assertion per response.
+urlscan's browser observations and Censys's exposure findings are context — an
+open port or a served certificate says what a thing *is*, not whether it is
+hostile — and the model enforces that rather than trusting each package to
+remember it.
+
+The three abuse.ch providers are one ecosystem, and the framework has to show it:
+they share the `abuse_ch` credential group, so one stored Auth-Key serves all
+three, and they share one `source_family`, so a future fusion layer can see that
+two of them agreeing is not two independent corroborations. Each keeps its own
+`lineage_group_id` so their claims remain distinguishable inside that family, and
+anything they relay from elsewhere keeps its real origin — a VirusTotal ratio
+relayed through URLhaus carries the same family a direct GTI result carries,
+precisely so the two can never be counted twice.
 
 The one deviation from the framework is documented and contained: GTI uses the
 official `vt-py` SDK rather than the shared HTTP transport, and that SDK is
-imported by exactly one module so its types never reach the core. The other three
-use the shared, host-pinned transport.
+imported by exactly one module so its types never reach the core. Every other
+provider uses the shared, host-pinned transport.
 
 Note the data-use boundary recorded in the GTI document: GTI content must not be
 exposed to Claude, MCP or any AI layer before the applicable provider terms are
 reviewed.
 
-## 12. Deferred architecture (Task 10+)
+## 12. Deferred architecture (Task 11+)
 
 Documented so the shape is known; not implemented:
 
 - Distributed execution state: Redis-backed cache, quota and cooldown stores,
   shared rate-limit state and cross-worker concurrency limits.
-- Further provider adapters (abuse.ch, warning lists, SecurityTrails, AbuseIPDB,
-  Shodan, IPinfo) alongside GTI, urlscan, GreyNoise and Censys.
+- Further provider adapters (warning lists, SecurityTrails, AbuseIPDB, Shodan,
+  IPinfo) alongside the seven integrated ones.
 - Hunting and query interfaces the current adapters deliberately omit: GreyNoise
-  GNQL, Censys CenQL search, and every historical-timeline endpoint. These belong
-  with the query planner rather than with a per-observable lookup.
+  GNQL, Censys CenQL search, ThreatFox family/tag queries, URLhaus feeds,
+  MalwareBazaar YARA and certificate hunting, and every historical-timeline
+  endpoint. These belong with the query planner rather than with a per-observable
+  lookup.
 - Capability planner, provider selection and adaptive enrichment (widen
   capabilities when evidence is thin).
 - Lineage-aware correlation, evidence fusion and verdict scoring.
 - Persistence (PostgreSQL), raw-response object storage, a durable backend for
   the artifact store (Task 8 ships an in-memory one), production secret vault.
 - MCP server, Claude connector, TI Analyst Skill, web frontend.
-- Active operations and sandbox integration.
+- Active operations and sandbox integration. A future task will distinguish
+  *passive sandbox report lookup* from *active detonation*; neither exists, and
+  MalwareBazaar's relayed `vendor_intel` deliberately does not anticipate them —
+  relaying is not observing, which is why that adapter declines the
+  `FILE_BEHAVIOR` capability.
