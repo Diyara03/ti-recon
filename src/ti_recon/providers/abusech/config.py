@@ -63,6 +63,11 @@ class AbuseChConfig(FrozenTiReconModel):
         if parts.path.strip("/") or parts.query or parts.fragment:
             msg = "abuse.ch host must be an origin with no path, query or fragment"
             raise ValueError(msg)
+        if parts.username is not None or parts.password is not None:
+            # Userinfo in a base URL is either a credential in the wrong place or
+            # a value written to look like a different host in a log line.
+            msg = "abuse.ch host must not carry userinfo"
+            raise ValueError(msg)
         return value.rstrip("/")
 
     @field_validator("user_agent")
