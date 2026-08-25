@@ -307,6 +307,18 @@ src/ti_recon/
     normalizer.py     one sample assertion, signing, YARA, vendor names only
     policy.py         durable-result TTL, per-depth bounds
     adapter.py        MalwareBazaarAdapter
+  providers/misp_warninglists/
+    models.py         raw upstream schema, snapshot manifest, diagnostics
+    snapshot.py       local snapshot reader: path safety, checksums, staleness
+    profile.py        include/exclude, entry ceiling, profile fingerprint
+    candidates.py     observable -> MISP attribute candidates (matching_attributes)
+    matchers.py       string/substring/hostname/cidr; regex recognized, not run
+    loader.py         compiled in-memory index + applicability-aware diagnostics
+    config.py         snapshot root, stale threshold (no host, no credential)
+    descriptor.py     credential-free, FALSE_POSITIVE_CONTEXT, dataset_version
+    normalizer.py     one context finding + coverage; every hit CONTEXT_ONLY
+    policy.py         depth presentation bounds, execution policy
+    adapter.py        MispWarningListsAdapter
   artifacts/
     models.py         ArtifactScope, ArtifactKind, StoredArtifact
     store.py          bounded, user-isolated artifact store (in-memory)
@@ -338,7 +350,7 @@ Full detail: [provider-execution.md](provider-execution.md).
 
 ## 11. Providers
 
-Seven providers are integrated, each answering a different question and all of
+Eight providers are integrated, each answering a different question and all of
 them passive:
 
 | Provider | Question it answers | Detail |
@@ -350,6 +362,7 @@ them passive:
 | ThreatFox | is this a current, family-attributed indicator? | [providers/threatfox.md](providers/threatfox.md) |
 | URLhaus | has this URL been seen distributing malware? | [providers/urlhaus.md](providers/urlhaus.md) |
 | MalwareBazaar | is this file a known, vetted malware sample? | [providers/malwarebazaar.md](providers/malwarebazaar.md) |
+| MISP Warning Lists | is there local context that should change how I read the rest? | [providers/misp-warninglists.md](providers/misp-warninglists.md) |
 
 Every one of them reaches the engine entirely through the Task 5 contract: the
 registry finds it by capability with no vendor branch, and each passes the same
@@ -373,10 +386,24 @@ anything they relay from elsewhere keeps its real origin — a VirusTotal ratio
 relayed through URLhaus carries the same family a direct GTI result carries,
 precisely so the two can never be counted twice.
 
+MISP Warning Lists is the first provider with no transport at all. It reads a
+pinned local dataset, needs no credential, and cannot make a request — which the
+framework already accommodated: `requires_credentials = False` was supported
+generically, so a local provider needed no execution change beyond one
+provider-neutral cache-key field (`dataset_version`, so refreshing a dataset
+invalidates answers derived from the old one).
+
+It is also the only provider that never expresses an opinion. Every finding it
+produces is `CONTEXT_ONLY`, because a warninglist match explains other evidence
+rather than contradicting it: a cloud range hosts attacks, a popular domain has a
+malicious path on it, and an EICAR hash is a test artifact. Deciding what a
+malicious verdict plus shared-infrastructure context adds up to is false-positive
+reasoning and belongs to the fusion layer.
+
 The one deviation from the framework is documented and contained: GTI uses the
 official `vt-py` SDK rather than the shared HTTP transport, and that SDK is
 imported by exactly one module so its types never reach the core. Every other
-provider uses the shared, host-pinned transport.
+remote provider uses the shared, host-pinned transport.
 
 Note the data-use boundary recorded in the GTI document: GTI content must not be
 exposed to Claude, MCP or any AI layer before the applicable provider terms are
@@ -388,8 +415,10 @@ Documented so the shape is known; not implemented:
 
 - Distributed execution state: Redis-backed cache, quota and cooldown stores,
   shared rate-limit state and cross-worker concurrency limits.
-- Further provider adapters (warning lists, SecurityTrails, AbuseIPDB, Shodan,
-  IPinfo) alongside the seven integrated ones.
+- Further provider adapters (SecurityTrails, AbuseIPDB, Shodan, IPinfo) alongside
+  the eight integrated ones, and a MISP *instance* integration — which would share
+  `source_family = "misp"` with the warninglists so it cannot read as an
+  independent second source.
 - Hunting and query interfaces the current adapters deliberately omit: GreyNoise
   GNQL, Censys CenQL search, ThreatFox family/tag queries, URLhaus feeds,
   MalwareBazaar YARA and certificate hunting, and every historical-timeline
