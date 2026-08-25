@@ -39,7 +39,11 @@ from typing import TYPE_CHECKING, Final, Protocol, Self
 import httpx
 
 from ti_recon.credentials.models import CredentialMaterial
-from ti_recon.providers.abusech.client import AbuseChHttpClient, AbuseChJsonResult
+from ti_recon.providers.abusech.client import (
+    AbuseChBodyEncoding,
+    AbuseChHttpClient,
+    AbuseChJsonResult,
+)
 from ti_recon.providers.abusech.config import THREATFOX_HOST, AbuseChConfig
 from ti_recon.providers.abusech.values import hex_digest
 from ti_recon.providers.errors import ProviderInvalidRequestError
@@ -48,6 +52,7 @@ from ti_recon.providers.transport import ProviderHttpClient
 
 __all__ = [
     "ALLOWED_QUERIES",
+    "THREATFOX_BODY_ENCODING",
     "THREATFOX_HASH_LENGTHS",
     "ThreatFoxClient",
     "ThreatFoxConfig",
@@ -73,8 +78,20 @@ ALLOWED_QUERIES: Final[frozenset[str]] = frozenset({"search_ioc", "search_hash"}
 #: Digest lengths ThreatFox's hash search accepts: MD5 and SHA-256.
 THREATFOX_HASH_LENGTHS: Final[frozenset[int]] = frozenset({32, 64})
 
+#: ThreatFox takes its parameters as a **JSON object**, not as form data.
+#:
+#: The one place the three abuse.ch platforms disagree, and the failure mode is
+#: nasty: a form-encoded body is not rejected, it is *ignored*, and ThreatFox
+#: answers as though nothing had been asked. That reads as ``no_result``, which
+#: normalizes to a perfectly ordinary "not currently listed" — so a wrong
+#: encoding here looks exactly like a clean lookup rather than like a bug.
+#:
+#: URLhaus and MalwareBazaar keep form encoding; MalwareBazaar's documentation
+#: states it explicitly.
+THREATFOX_BODY_ENCODING: Final[AbuseChBodyEncoding] = AbuseChBodyEncoding.JSON
+
 #: The single API path. ThreatFox routes everything through one endpoint and
-#: distinguishes operations by the ``query`` form field.
+#: distinguishes operations by the ``query`` body field.
 _API_PATH: Final[str] = "api/v1/"
 
 #: Bound on a search term before it is sent. A URL observable can be long; it is
@@ -124,6 +141,9 @@ class ThreatFoxHttpClient:
             self._config,
             provider_id=provider_id,
             allowed_queries=ALLOWED_QUERIES,
+            # ThreatFox reads a JSON object, unlike its two siblings. See
+            # THREATFOX_BODY_ENCODING.
+            body_encoding=THREATFOX_BODY_ENCODING,
             transport=transport,
             http_client=http_client,
         )
@@ -159,7 +179,9 @@ class ThreatFoxHttpClient:
             form={
                 "query": "search_ioc",
                 "search_term": term,
-                "exact_match": "true" if exact_match else "false",
+                # A JSON boolean, which is what ThreatFox's API documents. The
+                # string "true" is not the same value to a JSON parser.
+                "exact_match": exact_match,
             },
             operation=ThreatFoxOperation.SEARCH_IOC,
             credential=credential,

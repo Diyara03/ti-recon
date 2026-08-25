@@ -78,9 +78,24 @@ feed), `malware_info`, `tag_info`, `malwarebazaar` cross-queries, `taginfo`,
 
 ### POST is not a write
 
-ThreatFox takes its parameters in a form body, so every lookup is an HTTP POST.
-The proof used for GTI, urlscan, GreyNoise and Censys — *this integration never
-calls `post`* — is unavailable here, and would be misleading if it were used.
+ThreatFox takes its parameters in the request body, so every lookup is an HTTP
+POST. The proof used for GTI, urlscan, GreyNoise and Censys — *this integration
+never calls `post`* — is unavailable here, and would be misleading if it were
+used.
+
+**The body is a JSON object**, unlike its two siblings, which read form data.
+That is the one place the three platforms disagree and it is worth stating
+loudly, because the failure mode is silent: a form-encoded body is not rejected
+by ThreatFox, it is *ignored*, and the API answers as though nothing had been
+asked. That arrives as `no_result` and normalizes into an ordinary "not currently
+listed" — so a wrong encoding looks exactly like a clean lookup. `THREATFOX_BODY_ENCODING`
+names it, and `tests/unit/providers/abusech/test_body_encoding.py` pins the
+encoding for all three platforms.
+
+The encoding is fixed per platform on the shared client and selected *after*
+every safety check, so JSON is a serialization choice and never a second way into
+the API: the allow-list, the field bounds, the control-character rejection and
+the credential's header-only placement all apply identically to both bodies.
 
 Passivity is instead enforced where it actually lives: in **which query values
 may be sent**. `ThreatFoxHttpClient` hands the shared transport a frozen

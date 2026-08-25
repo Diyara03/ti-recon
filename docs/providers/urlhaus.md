@@ -69,9 +69,10 @@ and deletion.
 
 ### POST is not a write
 
-URLhaus takes its parameters in a form body, so every lookup is an HTTP POST, and
-the "never calls `post`" argument used by the other integrations is unavailable —
-see [threatfox.md](threatfox.md) §3. Passivity here is a property of
+URLhaus takes its parameters in a **form** body, so every lookup is an HTTP
+POST, and the "never calls `post`" argument used by the other integrations is
+unavailable — see [threatfox.md](threatfox.md) §3, which also explains why
+ThreatFox alone uses a JSON body. Passivity here is a property of
 `ALLOWED_PATHS`: the client routes by path rather than by a `query` field, the
 three permitted paths are frozen, and a test asserts that none of them contains
 `download`, `submit`, `feed` or `rescan`.

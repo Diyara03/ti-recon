@@ -192,11 +192,14 @@ multi-provider verdict.
     `providers/threatfox/matching.py` contains no `in`, no `startswith`/`find`/
     `search`, and no regex, and a test asserts that.
 25. **Where an API's parameters travel in a body, passivity is a property of an
-    allow-list, not of the HTTP verb.** The abuse.ch APIs are read by form POST,
-    so "this integration never calls `post`" is unavailable as a proof and must
-    not be claimed. Each client hands the shared transport a frozen set of
-    permitted queries or paths, checked before a request is built:
-    `submit_ioc`, `get_file`, `upload`, `add_comment` and every feed are
+    allow-list, not of the HTTP verb.** The abuse.ch APIs are read by POST —
+    ThreatFox with a JSON body, URLhaus and MalwareBazaar with form data — so
+    "this integration never calls `post`" is unavailable as a proof and must not
+    be claimed. The encoding is fixed per platform on the shared client and
+    every safety check runs before it is chosen, so JSON is a serialization
+    choice rather than a second route in. Each client hands the shared transport
+    a frozen set of permitted queries or paths, checked before a request is
+    built: `submit_ioc`, `get_file`, `upload`, `add_comment` and every feed are
     unreachable rather than merely unused.
 26. **Provider-relayed and community-authored text never becomes evidence.**
     MalwareBazaar comments contribute a count, never their text; an archive
@@ -275,7 +278,7 @@ multi-provider verdict.
   `ACTIVE`. Only a rejected key marks it invalid. The API documentation states
   no duration for a block, so the abuse.ch layer asks Task 6 for a configurable
   6-hour credential cooldown rather than modelling a ban length it cannot know.
-- **Where parameters travel in a form body, the credential must not.** The
+- **Where parameters travel in the request body, the credential must not.** The
   Auth-Key is written only to the `Auth-Key` header, never to a form field, path
   or query string: a request log that captures bodies would keep it otherwise.
   The shared transport is the only thing that reads the secret, and tests assert
@@ -334,8 +337,9 @@ src/ti_recon/
                      (source family, credential group, relay origins), values
                      (bounded readers), config (three fixed origins, Auth-Key
                      header), errors (`query_status` -> categories), client
-                     (form-POST transport gated by a frozen query allow-list),
-                     evidence (context + relayed-summary builder), policy
+                     (POST transport, form or JSON per platform, gated by a
+                     frozen query allow-list), evidence (context +
+                     relayed-summary builder), policy
   providers/threatfox/ Task 10: ThreatFox. client (search_ioc, search_hash),
                      config, descriptor, matching (loose matches re-validated by
                      parsing only), normalizer, policy, adapter

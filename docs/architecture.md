@@ -282,7 +282,7 @@ src/ti_recon/
     values.py         bounded readers for provider-supplied values
     config.py         the three fixed origins, Auth-Key header placement
     errors.py         `query_status` bodies -> normalized categories
-    client.py         form-POST transport gated by a frozen query allow-list
+    client.py         POST transport (form or JSON), frozen query allow-list
     evidence.py       shared normalization context, relayed-summary builder
     policy.py         per-depth bounds, concurrency 1, execution policy builder
   providers/threatfox/
