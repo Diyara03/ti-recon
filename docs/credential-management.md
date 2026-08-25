@@ -231,8 +231,8 @@ Two consequences the provider docs rely on:
   `authenticated_user_id` plus group, so one analyst's Auth-Key can never serve
   another's lookup, on any of the three platforms.
 - **A refusal from one platform must not invalidate the key.** abuse.ch blocks an
-  account whose query volume trips its fair-use limits for up to 72 hours,
-  reported as `user_blacklisted`. That is a `PERMISSION_ERROR` and leaves the
+  account whose query volume trips its fair-use limits, reported as
+  `user_blacklisted`. That is a `PERMISSION_ERROR` and leaves the
   credential `ACTIVE`: marking it invalid would make an analyst replace a working
   key that three providers depend on. Only a rejected key
   (`AUTHENTICATION_ERROR`) marks the credential invalid.

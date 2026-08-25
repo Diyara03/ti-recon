@@ -25,8 +25,8 @@ Fair use is a design constraint, not a footnote
 -----------------------------------------------
 
 abuse.ch meters by behaviour rather than by a published budget: unusual query
-volume can get an account limited for up to 72 hours, and there is no per-endpoint
-number to code against. So there is nothing to invent a quota from, and the
+volume can get an account blocked outright, and there is no per-endpoint number
+to code against. So there is nothing to invent a quota from, and the
 honest response is to be conservative by construction — one request in flight per
 provider, caching on, single-flight on, and no redundant call anywhere.
 """
@@ -43,6 +43,7 @@ from ti_recon.execution.retry import RetryPolicy
 from ti_recon.models.base import FrozenTiReconModel
 
 __all__ = [
+    "ABUSE_CH_BLACKLIST_COOLDOWN_SECONDS",
     "ABUSE_CH_MAX_CONCURRENCY",
     "DEPTH_BOUNDS",
     "MAX_RELATED_CEILING",
@@ -50,6 +51,22 @@ __all__ = [
     "bounds_for_depth",
     "build_abusech_execution_policy",
 ]
+
+#: How long a blacklisted Auth-Key is left alone, in seconds.
+#:
+#: **Not a claim about how long abuse.ch blocks an account.** The public API
+#: documentation does not state a duration; it says to contact support. So this
+#: is a request-suppression figure chosen by TI Recon, not a model of the
+#: provider's ban period, and it is named as configuration so an operator can
+#: change it.
+#:
+#: Six hours, for two reasons. It is long enough that an investigation an hour
+#: from now does not spend another refusal — and repeated refusals are exactly
+#: the behaviour that keeps a fair-use block alive on a service that meters by
+#: behaviour rather than by budget. And it equals Task 6's own
+#: ``MAX_COOLDOWN_SECONDS`` ceiling, so the value asked for is the value applied
+#: rather than one silently capped on the way through.
+ABUSE_CH_BLACKLIST_COOLDOWN_SECONDS: Final[float] = 6.0 * 60.0 * 60.0
 
 #: One request in flight per provider.
 #:

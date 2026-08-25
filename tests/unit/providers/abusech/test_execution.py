@@ -361,7 +361,7 @@ async def test_a_rejected_shared_key_is_not_retried(stack: Stack) -> None:
 
 
 async def test_a_fair_use_block_is_reported_without_invalidating_the_key(stack: Stack) -> None:
-    """abuse.ch blocks a noisy account for up to 72 hours; the key is intact."""
+    """abuse.ch blocks a noisy account; the key itself is intact."""
     stack.threatfox_client.ioc_payload = {"query_status": "user_blacklisted"}
     outcome = await stack.executor.execute(stack.threatfox, request_for(), stack.context())
     assert outcome.status is ProviderRunStatus.ERROR

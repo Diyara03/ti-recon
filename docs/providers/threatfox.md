@@ -254,9 +254,10 @@ indicator is clean".
 | `illegal_search_term`, `illegal_hash`, `invalid_hash` | `INVALID_REQUEST` |
 | `rate_limited` | `RATE_LIMITED` |
 
-`user_blacklisted` is abuse.ch's fair-use response: an account whose query volume
-tripped its limits is blocked for up to 72 hours. It is a permission fact, not a
-bad key — see §2.
+`user_blacklisted` is abuse.ch's fair-use response: the account has been blocked.
+It is a permission fact, not a bad key — see §2 — and it puts the shared
+credential on a cooldown, because repeating the call is the behaviour that earned
+the block. See [malwarebazaar.md](malwarebazaar.md) §11.
 
 | Setting | Value |
 |---|---|

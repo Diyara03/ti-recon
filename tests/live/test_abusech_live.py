@@ -17,7 +17,7 @@ What a full run costs
 
 abuse.ch charges nothing and meters nothing per query — but it *is* a free
 service with published fair-use limits, and an account that trips them is
-blocked for up to 72 hours. A test suite that hammers it is both rude and
+blocked until abuse.ch lifts it. A test suite that hammers it is both rude and
 self-defeating, so this file is built to make the smallest number of requests
 that can prove anything:
 

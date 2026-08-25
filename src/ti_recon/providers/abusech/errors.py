@@ -38,12 +38,14 @@ import httpx
 
 from ti_recon.credentials.enums import CredentialStatus
 from ti_recon.enums import ProviderErrorCategory
+from ti_recon.providers.abusech.policy import ABUSE_CH_BLACKLIST_COOLDOWN_SECONDS
 from ti_recon.providers.adapter import CredentialValidation
 from ti_recon.providers.errors import ProviderError, provider_error_for
 from ti_recon.security import SENSITIVE_KEY_PATTERN, redact_sensitive_text
 
 __all__ = [
     "ABUSE_CH_STATUS_CATEGORIES",
+    "BLACKLIST_QUERY_STATUSES",
     "NO_DATA_QUERY_STATUSES",
     "QUERY_STATUS_CATEGORIES",
     "SUCCESS_QUERY_STATUSES",
@@ -113,7 +115,7 @@ QUERY_STATUS_CATEGORIES: Final[dict[str, ProviderErrorCategory]] = {
     # --- the key is fine; this account may not use the service --------------
     #
     # abuse.ch blacklists an account whose query volume tripped its fair-use
-    # controls, for up to 72 hours. Reported as a permission fact rather than a
+    # controls. Reported as a permission fact rather than a
     # bad key: the credential is intact, and marking it invalid would make an
     # analyst replace a key that was never the problem.
     "user_blacklisted": ProviderErrorCategory.PERMISSION_ERROR,
@@ -137,6 +139,25 @@ QUERY_STATUS_CATEGORIES: Final[dict[str, ProviderErrorCategory]] = {
     "rate_limited": ProviderErrorCategory.RATE_LIMITED,
     "too_many_requests": ProviderErrorCategory.RATE_LIMITED,
 }
+
+#: Body statuses that mean **this Auth-Key has been denied access**.
+#:
+#: Kept apart from the category table because the two say different things. The
+#: table says what kind of failure this is — a permission failure, which is
+#: correct: the key is intact and nothing has been spent. This set says something
+#: the category cannot express, and that only an abuse.ch package is in a
+#: position to know: repeating the call later cannot succeed either.
+#:
+#: abuse.ch meters by behaviour rather than by a published budget, so a client
+#: that keeps asking after being blocked is not merely wasting requests — the
+#: asking is the behaviour that earned the block. The execution layer is asked to
+#: stop using the credential for a while, via
+#: :data:`~ti_recon.providers.abusech.policy.ABUSE_CH_BLACKLIST_COOLDOWN_SECONDS`.
+#:
+#: Deliberately narrow. Every *other* permission failure — including an HTTP 403,
+#: which these APIs do not use for blocking — keeps the ordinary behaviour of
+#: being retried on the next investigation.
+BLACKLIST_QUERY_STATUSES: Final[frozenset[str]] = frozenset({"user_blacklisted", "blacklisted"})
 
 #: The shape a body status must have before it is trusted as an error code.
 #: Provider text, so it is validated rather than passed through.
@@ -308,12 +329,20 @@ def translate_query_status(
     *,
     provider_id: str,
     operation: str,
+    blacklist_cooldown_seconds: float = ABUSE_CH_BLACKLIST_COOLDOWN_SECONDS,
 ) -> ProviderError | None:
     """Turn a body status into a typed error, or ``None`` when it means success.
 
     ``None`` for an absent status too: some responses omit it, and refusing to
     read a document because a field is missing would lose real evidence over a
     formatting difference.
+
+    A blacklist status keeps its ``PERMISSION_ERROR`` category — the key is valid
+    and no allowance has been spent — and additionally asks the execution layer
+    to stop using that credential for a while. See
+    :data:`BLACKLIST_QUERY_STATUSES` for why the category alone is not enough,
+    and note that the request is a *duration*: naming the abuse.ch condition to
+    Task 6 would teach it a provider's vocabulary.
     """
     if status is None or status in SUCCESS_QUERY_STATUSES:
         return None
@@ -327,6 +356,9 @@ def translate_query_status(
         operation=operation,
         # The token itself: short, enum-shaped and already validated.
         provider_error_code=status,
+        credential_cooldown_hint_seconds=(
+            blacklist_cooldown_seconds if status in BLACKLIST_QUERY_STATUSES else None
+        ),
     )
 
 

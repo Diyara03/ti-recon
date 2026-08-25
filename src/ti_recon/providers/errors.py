@@ -81,10 +81,25 @@ class ProviderError(Exception):
         retry_after_seconds: float | None = None,
         reset_at: datetime | None = None,
         provider_error_code: str | None = None,
+        credential_cooldown_hint_seconds: float | None = None,
     ) -> None:
         self.provider_id = provider_id
         self.operation = operation
         self.retry_after_seconds = retry_after_seconds
+        # An adapter's request that this *credential* stop being used for a
+        # while, for a failure that is otherwise final. Retry logic already
+        # knows not to repeat a rejected call; this says the further thing —
+        # that repeating it later, in another investigation, is also pointless.
+        #
+        # Only an adapter may set it, because only an adapter can recognize the
+        # provider condition that warrants it: the execution layer sees a
+        # category, and a category is far too coarse to carry this decision.
+        # A hint is a *request*, not a guarantee: the execution layer caps it.
+        self.credential_cooldown_hint_seconds = (
+            None
+            if credential_cooldown_hint_seconds is None
+            else max(0.0, credential_cooldown_hint_seconds)
+        )
         # When a limit lifts, if the provider said so. Either an offset
         # (``retry_after_seconds``) or an absolute instant (``reset_at``) is
         # enough for the execution layer to decide between waiting inline and
@@ -260,6 +275,7 @@ def provider_error_for(
     retry_after_seconds: float | None = None,
     reset_at: datetime | None = None,
     provider_error_code: str | None = None,
+    credential_cooldown_hint_seconds: float | None = None,
 ) -> ProviderError:
     """Build the typed error for a normalized category."""
     error_class = PROVIDER_ERROR_CLASSES[category]
@@ -270,4 +286,5 @@ def provider_error_for(
         retry_after_seconds=retry_after_seconds,
         reset_at=reset_at,
         provider_error_code=provider_error_code,
+        credential_cooldown_hint_seconds=credential_cooldown_hint_seconds,
     )

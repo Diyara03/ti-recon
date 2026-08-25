@@ -126,6 +126,129 @@ def test_non_retryable_categories_do_not_retry(category: ProviderErrorCategory) 
     assert decision.cooldown_reason is None
 
 
+# --------------------------------------------------------------------------- #
+# Adapter-supplied credential cooldown hints
+# --------------------------------------------------------------------------- #
+#
+# The generic half of the mechanism. An adapter can recognize a provider
+# condition that a normalized category cannot express — a credential the provider
+# has refused outright — and ask for the credential to be left alone. This module
+# honours the request without learning what the condition was.
+
+
+def hinted(
+    category: ProviderErrorCategory,
+    *,
+    seconds: float | None,
+    policy: RetryPolicy = POLICY,
+) -> RetryDecision:
+    return decide_retry(
+        error=provider_error_for(
+            category,
+            "fake_provider",
+            operation="lookup",
+            credential_cooldown_hint_seconds=seconds,
+        ),
+        attempt=1,
+        policy=policy,
+        activity_mode=ActivityMode.PASSIVE,
+        now=NOW,
+    )
+
+
+def test_a_hinted_final_failure_pauses_the_credential() -> None:
+    decision = hinted(ProviderErrorCategory.PERMISSION_ERROR, seconds=3600.0)
+    assert decision.should_retry is False
+    assert decision.outcome is RetryOutcome.STOP_NOT_RETRYABLE
+    assert decision.cooldown_reason is CooldownReason.PROVIDER_DIRECTED
+    assert decision.cooldown_seconds == 3600.0
+    assert decision.cooldown_applies_to_credential is True
+
+
+@pytest.mark.parametrize(
+    "category",
+    [
+        ProviderErrorCategory.AUTHENTICATION_ERROR,
+        ProviderErrorCategory.PERMISSION_ERROR,
+        ProviderErrorCategory.PLAN_LIMITED,
+        ProviderErrorCategory.INVALID_REQUEST,
+    ],
+)
+def test_no_category_earns_a_cooldown_without_a_hint(category: ProviderErrorCategory) -> None:
+    """The default is unchanged: a final failure alone pauses nothing.
+
+    This is the guard against the tempting shortcut — "permission errors should
+    cool down" — which would silence every provider that answers a single
+    unentitled endpoint with a 403.
+    """
+    decision = hinted(category, seconds=None)
+    assert decision.cooldown_reason is None
+    assert decision.cooldown_applies_to_credential is False
+
+
+@pytest.mark.parametrize("seconds", [0.0, -30.0])
+def test_a_hint_of_nothing_pauses_nothing(seconds: float) -> None:
+    decision = hinted(ProviderErrorCategory.PERMISSION_ERROR, seconds=seconds)
+    assert decision.cooldown_reason is None
+
+
+def test_a_hint_is_a_request_and_the_policy_holds_the_ceiling() -> None:
+    """An adapter asks; an operator decides how long any adapter may be believed."""
+    decision = hinted(
+        ProviderErrorCategory.PERMISSION_ERROR,
+        seconds=86_400.0,
+        policy=RetryPolicy(max_credential_cooldown_seconds=600.0),
+    )
+    assert decision.cooldown_seconds == 600.0
+
+
+def test_a_hint_never_makes_a_final_failure_retryable() -> None:
+    assert hinted(ProviderErrorCategory.PERMISSION_ERROR, seconds=3600.0).should_retry is False
+    assert hinted(ProviderErrorCategory.AUTHENTICATION_ERROR, seconds=3600.0).delay_seconds == 0.0
+
+
+def test_a_hint_does_not_displace_a_derived_quota_or_rate_limit_cooldown() -> None:
+    """Those two derive their own duration from what the provider reported."""
+    quota = hinted(ProviderErrorCategory.QUOTA_EXCEEDED, seconds=3600.0)
+    assert quota.cooldown_reason is CooldownReason.QUOTA_EXHAUSTED
+    assert quota.cooldown_applies_to_credential is False
+
+    throttled = hinted(ProviderErrorCategory.RATE_LIMITED, seconds=3600.0)
+    assert throttled.cooldown_reason is CooldownReason.RATE_LIMIT
+    assert throttled.cooldown_applies_to_credential is False
+
+
+def test_a_hint_is_never_honoured_for_an_active_operation() -> None:
+    decision = decide_retry(
+        error=provider_error_for(
+            ProviderErrorCategory.PERMISSION_ERROR,
+            "fake_provider",
+            credential_cooldown_hint_seconds=3600.0,
+        ),
+        attempt=1,
+        policy=POLICY,
+        activity_mode=ActivityMode.ACTIVE,
+        now=NOW,
+    )
+    assert decision.outcome is RetryOutcome.STOP_ACTIVE_OPERATION
+    assert decision.cooldown_reason is None
+
+
+def test_a_negative_hint_is_normalized_at_the_error() -> None:
+    error = provider_error_for(
+        ProviderErrorCategory.PERMISSION_ERROR,
+        "fake_provider",
+        credential_cooldown_hint_seconds=-5.0,
+    )
+    assert error.credential_cooldown_hint_seconds == 0.0
+
+
+def test_an_unhinted_error_carries_no_hint() -> None:
+    assert (
+        error_for(ProviderErrorCategory.PERMISSION_ERROR).credential_cooldown_hint_seconds is None
+    )
+
+
 def test_authentication_error_does_not_retry() -> None:
     """Retrying a rejected key burns quota and can trip abuse protection."""
     assert decide(ProviderErrorCategory.AUTHENTICATION_ERROR).should_retry is False

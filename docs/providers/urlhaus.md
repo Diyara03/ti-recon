@@ -256,6 +256,13 @@ Outcomes arrive in the body: `no_results`, `invalid_url`, `no_api_key` and
 | `invalid_url`, `invalid_host`, `invalid_md5`, `invalid_sha256` | `INVALID_REQUEST` |
 | `rate_limited` | `RATE_LIMITED` |
 
+`user_blacklisted` keeps its `PERMISSION_ERROR` category and additionally puts
+the **shared abuse.ch credential** on a 6-hour cooldown, because repeating a call
+that abuse.ch has already refused is the behaviour that earned the refusal. A
+ThreatFox or MalwareBazaar blacklist suppresses URLhaus too — it is the same
+Auth-Key. See [malwarebazaar.md](malwarebazaar.md) §11 and
+[../provider-execution.md](../provider-execution.md) §8.1.
+
 | Setting | Value |
 |---|---|
 | Cache scope | `CacheScope.USER` — never `GLOBAL` |

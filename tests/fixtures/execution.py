@@ -84,11 +84,13 @@ def make_scope(
     provider_id: str = "fake_provider",
     user_id: str = "user-a",
     connection_id: str | None = "conn-a",
+    credential_group: str | None = None,
 ) -> ExecutionScope:
     return ExecutionScope.for_user(
         provider_id=provider_id,
         user_id=user_id,
         provider_connection_id=connection_id,
+        credential_group=credential_group,
     )
 
 

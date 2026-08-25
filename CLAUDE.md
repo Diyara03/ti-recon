@@ -118,7 +118,11 @@ multi-provider verdict.
     computes a verdict, risk score or confidence.
 11. **Execution reacts to normalized categories, not HTTP.** Retry, cooldown and
     quota decisions read `ProviderErrorCategory`. No `if status_code == 403`
-    outside an adapter.
+    outside an adapter. Where a category is too coarse — a credential a provider
+    has refused outright is a `PERMISSION_ERROR`, and so is one unentitled
+    endpoint — the adapter supplies a *duration*
+    (`credential_cooldown_hint_seconds`), never a reason. A provider condition
+    named to `execution/` would be a vocabulary it must not learn.
 12. **Execution state is user-isolated by construction.** Cache, quota,
     cooldowns, concurrency slots and request coalescing are all keyed by
     `ExecutionScope`, whose identity is built from ids only.
@@ -267,8 +271,10 @@ multi-provider verdict.
   provider's refusal never invalidates it.** One `abuse_ch` Auth-Key serves
   ThreatFox, URLhaus and MalwareBazaar; resolution is scoped by
   `authenticated_user_id` plus group, and `user_blacklisted` — abuse.ch's
-  fair-use block, up to 72 hours — is a `PERMISSION_ERROR` that leaves the
-  credential `ACTIVE`. Only a rejected key marks it invalid.
+  fair-use block — is a `PERMISSION_ERROR` that leaves the credential
+  `ACTIVE`. Only a rejected key marks it invalid. The API documentation states
+  no duration for a block, so the abuse.ch layer asks Task 6 for a configurable
+  6-hour credential cooldown rather than modelling a ban length it cannot know.
 - **Where parameters travel in a form body, the credential must not.** The
   Auth-Key is written only to the `Auth-Key` header, never to a form field, path
   or query string: a request log that captures bodies would keep it otherwise.
@@ -344,8 +350,10 @@ src/ti_recon/
                      for retrieved screenshots, DOM snapshots and response
                      bodies
   execution/         Task 6: clock/sleeper/jitter seams, cache, retry+backoff,
-                     quota + cooldown stores, concurrency + single-flight,
-                     policy, bounded executor, metrics
+                     quota + cooldown stores (provider-scoped, plus a
+                     credential-scoped key for a refused credential),
+                     concurrency + single-flight, policy, bounded executor,
+                     metrics
   security.py        credential-key guards and text redaction
   versions.py        ENGINE_VERSION / POLICY_VERSION audit stamps
 tests/unit/          unit + contract tests

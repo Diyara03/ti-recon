@@ -123,6 +123,12 @@ class RetryPolicy(FrozenTiReconModel):
     #: retry budget to rediscover it.
     transient_exhaustion_cooldown_seconds: float = Field(default=30.0, ge=0.0, le=86_400.0)
 
+    #: Ceiling on an adapter-supplied credential cooldown hint. A hint is a
+    #: request from a provider package, and this is the operator's say over how
+    #: long any of them may silence a credential for. The store applies its own
+    #: absolute cap afterwards.
+    max_credential_cooldown_seconds: float = Field(default=21_600.0, ge=0.0, le=86_400.0)
+
 
 class RetryDecision(FrozenTiReconModel):
     """What to do after one failed provider attempt."""
@@ -132,6 +138,11 @@ class RetryDecision(FrozenTiReconModel):
     outcome: RetryOutcome
     cooldown_reason: CooldownReason | None = None
     cooldown_seconds: float | None = Field(default=None, ge=0.0)
+
+    #: Whether the cooldown belongs to the credential rather than to this
+    #: provider. Set only when an adapter asked for it — see
+    #: :attr:`~ti_recon.providers.errors.ProviderError.credential_cooldown_hint_seconds`.
+    cooldown_applies_to_credential: bool = False
 
     @property
     def applies_cooldown(self) -> bool:
@@ -200,7 +211,7 @@ def decide_retry(
         category is ProviderErrorCategory.UNKNOWN_ERROR and policy.retry_unknown_errors
     )
     if not retryable:
-        return RetryDecision(should_retry=False, outcome=RetryOutcome.STOP_NOT_RETRYABLE)
+        return _stop_not_retryable(error=error, policy=policy)
 
     if attempt >= policy.max_attempts:
         return RetryDecision(
@@ -214,6 +225,36 @@ def decide_retry(
         should_retry=True,
         delay_seconds=compute_backoff(attempt=attempt, policy=policy, jitter=jitter),
         outcome=RetryOutcome.RETRY_BACKOFF,
+    )
+
+
+def _stop_not_retryable(*, error: ProviderError, policy: RetryPolicy) -> RetryDecision:
+    """Give up on this call, and pause the credential if the adapter asked.
+
+    A final failure normally needs no cooldown: the executor already stops after
+    one attempt, and the next investigation is entitled to find out whether
+    anything changed.
+
+    Some final failures are different, and only the adapter can tell. When a
+    provider has refused a *credential* outright, asking again in ten minutes
+    spends an allowance to be refused again — and for a provider that meters by
+    behaviour, that repetition is itself the thing that keeps the refusal alive.
+    So an adapter may attach a hint, and this is where it is honoured.
+
+    The hint travels as a duration, never as a reason: naming the condition would
+    mean this module learning a provider's vocabulary, which is exactly what
+    invariant 11 forbids. The reason recorded is that a provider directed it, and
+    the failure category rides along as the entry's detail.
+    """
+    hint = error.credential_cooldown_hint_seconds
+    if hint is None or hint <= 0.0:
+        return RetryDecision(should_retry=False, outcome=RetryOutcome.STOP_NOT_RETRYABLE)
+    return RetryDecision(
+        should_retry=False,
+        outcome=RetryOutcome.STOP_NOT_RETRYABLE,
+        cooldown_reason=CooldownReason.PROVIDER_DIRECTED,
+        cooldown_seconds=min(hint, policy.max_credential_cooldown_seconds),
+        cooldown_applies_to_credential=True,
     )
 
 
