@@ -8,12 +8,14 @@ I/O.
 from __future__ import annotations
 
 from fixtures.adapter_contract import ProviderAdapterContractTests
+from fixtures.censys.contract import contract_censys_adapter
 from fixtures.fake_providers import (
     FakeAggregatorProvider,
     FakeMinimalProvider,
     FakeScannerProvider,
     FakeWarningListProvider,
 )
+from fixtures.greynoise.contract import contract_greynoise_adapter
 from fixtures.gti.contract import contract_gti_adapter
 from fixtures.urlscan.contract import contract_urlscan_adapter
 from ti_recon.providers import ProviderAdapter
@@ -55,3 +57,17 @@ class TestUrlscanContract(ProviderAdapterContractTests):
 
     def make_adapter(self) -> ProviderAdapter:
         return contract_urlscan_adapter()
+
+
+class TestGreyNoiseContract(ProviderAdapterContractTests):
+    """Held to the same contract, including that active operations are refused."""
+
+    def make_adapter(self) -> ProviderAdapter:
+        return contract_greynoise_adapter()
+
+
+class TestCensysContract(ProviderAdapterContractTests):
+    """Held to the same contract, including that active operations are refused."""
+
+    def make_adapter(self) -> ProviderAdapter:
+        return contract_censys_adapter()

@@ -20,7 +20,7 @@ Analyst -> Claude + TI Analyst Skill -> MCP -> TI Recon backend
 
 ## Current implementation boundary
 
-Implemented (Jira Tasks 1-8):
+Implemented (Jira Tasks 1-9):
 
 - Task 1 — product scope + investigation workflow foundation (docs, enums)
 - Task 2 — architecture foundation (docs, module boundaries)
@@ -37,14 +37,26 @@ Implemented (Jira Tasks 1-8):
   scans, and — only on an explicit `WEB_FORENSICS` request at DEEP depth —
   retrieval and *static* analysis of stored screenshots, DOM snapshots and
   response bodies.
+- Task 9 — GreyNoise (`providers/greynoise/`) and Censys (`providers/censys/`):
+  passive internet-scanning context for IPv4, with per-credential resolution of
+  full-context vs Community access; and passive exposure/infrastructure context
+  for addresses and HTTP(S) URLs, by deterministic asset identity only.
 
-**GTI and urlscan are the only providers.** Evidence fusion is not implemented,
-so there is still no multi-provider verdict.
+**GTI, urlscan, GreyNoise and Censys are the only providers.** Evidence fusion is
+not implemented, so there is still no multi-provider verdict.
 
 **Not implemented — do not add without an explicit request:**
 
-- Any other provider API integration (GreyNoise, Censys, ThreatFox, URLhaus,
-  MalwareBazaar, SecurityTrails, AbuseIPDB, Shodan, IPinfo)
+- Any other provider API integration (ThreatFox, URLhaus, MalwareBazaar,
+  SecurityTrails, AbuseIPDB, Shodan, IPinfo)
+- Any dynamic malware sandbox integration. A future task will distinguish
+  *passive sandbox report lookup* from *active file/URL detonation*; neither
+  exists, and nothing in Task 9 anticipates them.
+- GreyNoise GNQL and every hunting, timeline, bulk-lookup, feed, PCAP or session
+  endpoint; every deprecated GreyNoise v2 endpoint
+- Censys CenQL and `POST /v3/global/search/query`, historical timelines,
+  `at_time` enumeration, collections, Adversary Investigation, live rescan and
+  live discovery
 - GTI Intelligence Search, Threat Profiles, Threat Lists, IOC Streams, DTM, ASM
 - Any active GTI operation: submission, rescan, sandbox detonation, downloads
 - Any active urlscan operation: scan submission (`POST /api/v1/scan`), rescan,
@@ -115,6 +127,34 @@ so there is still no multi-provider verdict.
     Static analysis only — no `eval`, no renderer, no subprocess. Credentials
     found inside page content are recorded by type and count; the value is
     discarded where it is matched.
+17. **A provider gets one opinion per response, not one per field.** GreyNoise's
+    scanner classification is its assessment; its tags, CVE associations, sensor
+    detail and Business Services Intelligence are context, and every one of them
+    shares a lineage group with the classification. Censys produces no
+    assessment at all — exposure is not an accusation, so every piece of Censys
+    evidence is `CONTEXT_ONLY`, and most is `EvidenceClass.CONTEXT` so the model
+    refuses to attach a direction.
+18. **`suspicious` is not `malicious`, and absence is not benign.** A coarse
+    `EvidenceEffect` records direction rather than strength, so a provider's raw
+    wording is always preserved alongside it. `noise: false`, `riot: false`,
+    `found: false`, a 404 and "Censys has never scanned this" are coverage facts:
+    an address that has not touched a sensor fleet, or an asset a scanner has not
+    reached, is not thereby safe.
+19. **An entitlement is discovered from a response, never inferred from a status
+    code.** A `401` is a rejected credential and must never be reinterpreted as a
+    free-tier plan, or a revoked key looks like a working one. Only a `403` may
+    earn a single fallback attempt, and only a real answer to that attempt sets a
+    remembered access level — which is scoped per user and connection, like every
+    other execution store.
+20. **Depth never buys more provider requests than the question needs.** For
+    providers answering one observable with one deterministic read, depth selects
+    an endpoint variant and how much of the *already-returned* document is
+    normalized. It never adds a request, widens a search, or changes which way
+    evidence points.
+21. **A cost-metered provider is asked about identities it can derive, never
+    about guesses.** A Censys web property is `hostname:port`; a bare domain
+    names no port, so it is reported `NOT_SUPPORTED` rather than answered by
+    querying two ports and presenting that as domain coverage.
 
 ## Security rules
 
@@ -147,6 +187,28 @@ so there is still no multi-provider verdict.
   so a value cannot become query syntax.
 - **urlscan results are user-scoped in the cache.** An authenticated search can
   return unlisted or team-private scans; `CacheScope.GLOBAL` is never enabled.
+- **A digest is modelled as what it identifies.** A Censys certificate
+  fingerprint becomes an `x509-certificate` object and a body hash stays a pivot
+  string; neither becomes a `file`. A TI Recon `file` hash is never reinterpreted
+  as a certificate fingerprint, even though both are 64 hex characters.
+- **Provider-authored text is never stored.** Censys service banners, HTTP
+  bodies, headers and HTML titles are all present in a response and none are
+  read; GreyNoise user-agent strings are not stored either. What is kept is the
+  shape of the observation — port, protocol, product, digest — under an explicit
+  per-block allow-list with every list capped and truncation recorded.
+- **Credits and rate limits are different resources.** A Censys `429` is a
+  throttle that lifts by itself; a `402` or a zero balance is a spent wallet that
+  no wait refills. A balance reading with no readable counter produces an *empty*
+  quota snapshot, never a zero bucket: not knowing means Task 6 may try, while
+  zero stops the provider being called at all.
+- **A provider with no zero-cost allowance endpoint gets no quota snapshot.**
+  GreyNoise's results carry a `RateLimitSnapshot` when the response said
+  something measurable and nothing otherwise. Inventing an allowance would let
+  the quota pre-check disable a working provider without ever calling it.
+- **A Censys organization id is per-connection, non-secret configuration.** It
+  lives in `ProviderConnection.metadata`, is resolved by user *and* connection so
+  one analyst can never read another's balance, and is shape-checked before it
+  reaches a path.
 - **GTI's quota endpoint puts the API key in its path.** Never build, return,
   log, cache or attach that path to an error. Failures report
   "GTI quota lookup failed" plus a normalized category only.
@@ -187,6 +249,14 @@ src/ti_recon/
                      bounded candidate selection), normalizer, observations,
                      forensics (static extraction), policy (forensics gate),
                      adapter
+  providers/greynoise/ Task 9: GreyNoise. client (two v3 reads, read-only by
+                     construction), config, descriptor, errors, access (full vs
+                     Community, per credential), metering, normalizer, policy,
+                     adapter
+  providers/censys/  Task 9: Censys Platform. client (four reads, no search),
+                     config, descriptor, errors, assets (deterministic asset
+                     identity), credits (zero-cost balance), organizations
+                     (per-connection id), normalizer, policy, adapter
   artifacts/         Task 8: bounded, user-isolated, provider-neutral storage
                      for retrieved screenshots, DOM snapshots and response
                      bodies
@@ -199,7 +269,7 @@ tests/unit/          unit + contract tests
 tests/fixtures/      model-only and fake-adapter fixtures (no network)
 docs/                scope, architecture, data model, credentials, provider
                      framework, provider execution, artifacts, providers/gti,
-                     providers/urlscan
+                     providers/urlscan, providers/greynoise, providers/censys
 ```
 
 ## Conventions
