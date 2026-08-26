@@ -100,7 +100,15 @@ _HEX: Final[re.Pattern[str]] = re.compile(r"\A[0-9a-f]+\Z")
 
 #: A report id is put into a path, so it is shape-checked first. The API's ids are
 #: hex job identifiers, sometimes suffixed with an environment number.
-_REPORT_ID: Final[re.Pattern[str]] = re.compile(r"\A[0-9a-zA-Z]{1,64}(?::[0-9]{1,6})?\Z")
+#:
+#: Alphanumerics, hyphens and underscores are allowed — all benign in a path
+#: segment — while separators, dots and everything else are not, so no id can
+#: traverse or change which endpoint is called. Deliberately tolerant about the
+#: character class and strict about structure: a provider changing its id format
+#: should not break the integration, but no id may become a different route.
+_REPORT_ID: Final[re.Pattern[str]] = re.compile(
+    r"\A[0-9a-zA-Z][0-9a-zA-Z_-]{0,63}(?::[0-9]{1,6})?\Z"
+)
 
 #: Bound on the rate-limit header before it is parsed. A header is provider text.
 _MAX_LIMITS_HEADER: Final[int] = 2048
