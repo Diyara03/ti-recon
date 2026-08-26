@@ -2,9 +2,10 @@
 
 Offline and static: this file parses the live test modules and never runs them.
 
-Three live suites are metered in some way — GreyNoise over a weekly lookup
+Four live suites are metered in some way — GreyNoise over a weekly lookup
 allowance, Censys per asset read in credits, abuse.ch by a free service's
-published fair-use limits — and each documents a specific cost. The obvious way
+published fair-use limits, Hybrid Analysis at roughly five requests a minute on a
+restricted key — and each documents a specific cost. The obvious way
 to break that documentation is also the most natural thing to write: give each
 assertion its own ``adapter.lookup(...)`` call. That bypasses the Task 6 cache
 and quietly multiplies the bill by the number of tests, which is exactly what an
@@ -35,6 +36,7 @@ _LIVE_DIR: Final[Path] = Path(__file__).resolve().parents[1] / "live"
 GREYNOISE_LIVE: Final[Path] = _LIVE_DIR / "test_greynoise_live.py"
 CENSYS_LIVE: Final[Path] = _LIVE_DIR / "test_censys_live.py"
 ABUSECH_LIVE: Final[Path] = _LIVE_DIR / "test_abusech_live.py"
+HYBRID_ANALYSIS_LIVE: Final[Path] = _LIVE_DIR / "test_hybrid_analysis_live.py"
 
 #: How a request for an observable is constructed in these modules.
 _REQUEST_BUILDERS: Final[frozenset[str]] = frozenset({"request_for"})
@@ -70,6 +72,10 @@ class LiveSuite:
     subjects: frozenset[str]
     platforms: int
     expected_calls: int = 2
+    #: The sentence the module must contain, stating what a run costs. Per-suite
+    #: because the suites cost different things and each should say its own
+    #: number rather than a shared form of words.
+    cost_phrase: str = "exactly one physical"
 
 
 SUITES: Final[dict[str, LiveSuite]] = {
@@ -79,6 +85,13 @@ SUITES: Final[dict[str, LiveSuite]] = {
         ABUSECH_LIVE,
         frozenset({"SMOKE_IOC", "SMOKE_URL", "SMOKE_HASH", "smoke_file"}),
         platforms=3,
+    ),
+    "hybrid_analysis": LiveSuite(
+        HYBRID_ANALYSIS_LIVE,
+        frozenset({"SMOKE_SHA256", "smoke_file"}),
+        platforms=1,
+        # Two: a search plus, at STANDARD depth, at most one report summary.
+        cost_phrase="at most two physical requests",
     ),
 }
 
@@ -195,7 +208,7 @@ def test_the_shared_outcome_is_computed_at_most_once(suite: LiveSuite) -> None:
 def test_the_live_module_documents_what_a_run_costs(suite: LiveSuite) -> None:
     """The prose and the structure have to agree, so both are checked."""
     docstring = ast.get_docstring(_tree(suite.path)) or ""
-    assert "exactly one physical" in docstring
+    assert suite.cost_phrase in docstring
 
 
 def test_the_censys_suite_performs_no_search_at_any_depth() -> None:
@@ -317,3 +330,71 @@ def test_the_abusech_helper_covers_three_platforms_and_no_more() -> None:
     )
     assert isinstance(plan, ast.Tuple)
     assert len(plan.elts) == SUITES["abusech"].platforms
+
+
+#: Hybrid Analysis routes that submit, detonate or transfer. None may appear in a
+#: live module, and none may be reachable from one.
+_HYBRID_ANALYSIS_FORBIDDEN_ROUTES: Final[frozenset[str]] = frozenset(
+    {
+        "submit",
+        "quick-scan",
+        "refresh",
+        "pcap",
+        "memory-dumps",
+        "screenshots",
+        "dropped-file",
+        "report/json",
+    }
+)
+
+
+def test_the_hybrid_analysis_suite_requests_no_transfer_route() -> None:
+    """The routes this provider must never touch, checked in the live file too.
+
+    A live suite is where a "just fetch the PCAP to check" would be most
+    tempting and least visible.
+    """
+    tree = _tree(HYBRID_ANALYSIS_LIVE)
+    called = {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+    for forbidden in ("search_hash", "report_summary", "key_current"):
+        # Direct client use bypasses the executor and the shared helper.
+        assert forbidden not in called, f"live suite calls the client directly: {forbidden}"
+
+    # Route-shaped literals only. The module docstring names the absent routes
+    # in prose precisely to explain that they are absent, and a scan that flagged
+    # that would fire on its own explanation.
+    routes = {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and ("api/v2" in node.value or node.value.startswith("/"))
+    }
+    for route in routes:
+        for forbidden in _HYBRID_ANALYSIS_FORBIDDEN_ROUTES:
+            assert forbidden not in route, f"live suite names route {forbidden}"
+
+
+def test_the_hybrid_analysis_suite_validates_no_credential_separately() -> None:
+    """A successful search already proves the key is accepted.
+
+    ``/key/current`` would be 20% of a minute's allowance on a restricted key.
+    """
+    tree = _tree(HYBRID_ANALYSIS_LIVE)
+    called = {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+    assert "validate_credentials" not in called
+    assert "health" not in called
+
+
+def test_the_hybrid_analysis_suite_stays_at_standard_depth() -> None:
+    """DEEP would add a third request for no additional coverage of the path."""
+    source = HYBRID_ANALYSIS_LIVE.read_text(encoding="utf-8")
+    assert "InvestigationDepth.DEEP" not in source

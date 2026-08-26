@@ -607,8 +607,8 @@ and every remaining provider integration — SecurityTrails, AbuseIPDB, Shodan,
 IPinfo — along with evidence fusion, verdict scoring, MCP, the Claude Skill and
 any web UI. Google Threat Intelligence (Task 7), urlscan.io
 (Task 8), GreyNoise and Censys (Task 9), and the three abuse.ch platforms
-ThreatFox, URLhaus and MalwareBazaar (Task 10) and MISP Warning Lists (Task 11)
-all run behind these controls today.
+ThreatFox, URLhaus and MalwareBazaar (Task 10), MISP Warning Lists (Task 11) and
+Hybrid Analysis (Task 12) all run behind these controls today.
 
 Task 11 is the first **credential-free, local** provider, and it needed almost
 nothing from this layer. `requires_credentials = False` was already supported
@@ -617,8 +617,15 @@ secret store, permits a shared cache scope only for providers in that position,
 and — since a credential-scoped cooldown needs a credential group it will not
 have — cannot put one on cooldown either. No provider-name branch was added.
 
-The one addition it did need is `ProviderDescriptor.dataset_version`, described in
-§4.2: a provider answering from a pinned local dataset has a cache-correctness
+Hybrid Analysis (Task 12) needed nothing from this layer at all, which is worth
+recording because it is the first provider whose *depth changes how many physical
+requests a lookup makes* — one search plus at most two report summaries. That
+budget lives entirely in the provider: this layer still sees one logical attempt,
+caches one answer per depth, and knows nothing about sandboxes. A test asserts no
+module here imports `ti_recon.sandbox` or names the provider.
+
+The one addition Task 11 did need is `ProviderDescriptor.dataset_version`,
+described in §4.2: a provider answering from a pinned local dataset has a cache-correctness
 problem no remote provider has, because refreshing the data invalidates every
 answer derived from it.
 

@@ -237,6 +237,26 @@ Two consequences the provider docs rely on:
   key that three providers depend on. Only a rejected key
   (`AUTHENTICATION_ERROR`) marks the credential invalid.
 
+## 9a. A response that returns your own credential
+
+Most providers never echo a key. Hybrid Analysis's `GET /key/current` does: its
+response body contains an `api_key` field holding the key that authenticated the
+call.
+
+That shapes how the response is read. The reader builds an **allow-listed
+dictionary** of the two fields it needs — authorization level and its name —
+rather than copying the payload and removing the key. Never picked up means it
+cannot be stored, logged, cached or attached to an error, and there is no
+filtering step to get wrong later. The `user` object is ignored for the same
+reason it is tempting: it identifies a person, and nothing in the credential path
+needs to know who owns a key.
+
+The endpoint is also never called before a lookup. A successful provider read
+already proves the key is accepted, and on a provider allowing roughly five
+requests a minute, asking permission first would spend a fifth of that budget on
+a question the next request answers anyway. See
+[providers/hybrid-analysis.md](providers/hybrid-analysis.md) §2.
+
 ## 10. Tested isolation guarantees
 
 From `tests/unit/test_credentials_isolation.py`:

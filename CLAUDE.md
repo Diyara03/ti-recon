@@ -20,7 +20,7 @@ Analyst -> Claude + TI Analyst Skill -> MCP -> TI Recon backend
 
 ## Current implementation boundary
 
-Implemented (Jira Tasks 1-11):
+Implemented (Jira Tasks 1-12):
 
 - Task 1 — product scope + investigation workflow foundation (docs, enums)
 - Task 2 — architecture foundation (docs, module boundaries)
@@ -56,9 +56,16 @@ Implemented (Jira Tasks 1-11):
   list; a URL's host stays visibly separate from the URL; profiles bound the
   dataset and every omission is reported.
 
-**GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar and MISP
-Warning Lists are the only providers.** Evidence fusion is not implemented, so
-there is still no multi-provider verdict.
+- Task 12 — sandbox intelligence framework (`sandbox/`) plus Hybrid Analysis
+  (`providers/hybrid_analysis/`): the first **dynamic-analysis** source, behind a
+  provider-neutral vocabulary for sample/report/environment. Strictly passive —
+  it finds detonations that already happened, and nothing submits, detonates or
+  downloads. One directional finding per sample; no verdict maps to
+  `SUPPORTS_BENIGN`; report divergence across environments is preserved.
+
+**GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
+Warning Lists and Hybrid Analysis are the only providers.** Evidence fusion is
+not implemented, so there is still no multi-provider verdict.
 
 **Not implemented — do not add without an explicit request:**
 
@@ -69,10 +76,22 @@ there is still no multi-provider verdict.
   `source_family = "misp"` so it cannot read as a second independent source
 - Regex matching of warninglists, and any claim of PCRE compatibility; automatic
   warninglist dataset refresh from a lookup or at startup
-- Any dynamic malware sandbox integration. A future task will distinguish
-  *passive sandbox report lookup* from *active file/URL detonation*; neither
-  exists, and nothing in Task 9 or 10 anticipates them — MalwareBazaar relays
-  sandbox output and therefore deliberately does *not* declare `FILE_BEHAVIOR`.
+- Any **active** sandbox operation: file or URL submission, detonation, rescan,
+  quick scan, `overview/{sha256}/refresh`, and every download (sample, dropped
+  file, PCAP, memory dump, screenshot, report archive). Task 12 implements the
+  passive half only. Do not add inactive submission code "for later": a future
+  active path needs explicit analyst approval, a privacy warning about a
+  community platform that may retain and redistribute what it receives, an
+  entitlement check and environment selection.
+- Hybrid Analysis host/domain/URL search, YARA hunting, advanced search, feeds,
+  file collections, `GET /overview/*`, and the deprecated `POST /search/hash`
+  and `POST /report/summary`
+- A second sandbox provider (CAPE, Triage, ANY.RUN). `sandbox/` is
+  provider-neutral so one can be added without changing passive evidence
+  semantics, but each would carry its own `source_family`.
+- MalwareBazaar still relays sandbox output and therefore deliberately does
+  *not* declare `FILE_BEHAVIOR` — relaying is not observing. Hybrid Analysis is
+  the direct integration that capability was reserved for.
 - Any abuse.ch write or bulk operation: `submit_ioc`, URL submission, rescan,
   `get_file`, `upload`, `update`, `add_comment`, `get_recent`, every feed, and
   ThreatFox/MalwareBazaar tag, family, signature, YARA and certificate hunting
@@ -266,6 +285,39 @@ there is still no multi-provider verdict.
     that varied by depth would mean an analyst had to know which depth ran to
     know what "no match" covered.
 
+34. **A sandbox report is an observation, not a verdict — and a sandbox that saw
+    nothing did not see safety.** No entry in `SANDBOX_VERDICT_EFFECT` maps to
+    `SUPPORTS_BENIGN`: `malicious` and `suspicious` point at malicious, while
+    `no specific threat`, `no verdict` and `whitelisted` are `CONTEXT_ONLY`. A
+    sample may sit still because the OS was wrong, it wanted a click, its C2 was
+    down, it was geofenced, or it noticed it was being watched — so a
+    non-detection must never earn exoneration. `SandboxAnalysisQuality` (state,
+    runtime, process and connection totals, network mode, warnings,
+    `observed_execution`) is what lets a later layer tell "nothing happened" from
+    "nothing could have happened".
+35. **Report state is not report verdict.** A run that errored has no
+    behavioural content, so only *completed* runs contribute a verdict or become
+    selection candidates — providers do emit `malicious` on failed reports, and
+    letting one through turns an infrastructure failure into an opinion.
+36. **Several reports from one sandbox are one source.** A hash detonated on
+    Windows 7, 10 and 11 is one provider observing one sample; it becomes one
+    directional finding sharing a sample-level lineage group, with behaviour
+    records `CONTEXT_ONLY` even when full of malicious signatures. Hundreds of
+    signatures and dozens of ATT&CK techniques from one run are bounded
+    attributes, never findings. `source_family` is per sandbox, not a generic
+    `"sandbox"`: two *independent* sandboxes agreeing is real corroboration.
+37. **Report divergence is preserved, not resolved.** Malicious on Windows 11
+    beside nothing on Windows 7 is environment-dependent malware describing
+    itself, recorded as `verdicts_by_environment` and `divergent_verdicts`.
+    `EvidenceConflict` relates two *pieces of evidence* and therefore does not
+    fit a provider that deliberately emits one.
+38. **Depth may buy requests only where the provider policy says so, and never
+    unboundedly.** Hybrid Analysis is the one provider whose depth changes the
+    physical request count — 1/2/3 for QUICK/STANDARD/DEEP — capped by
+    `MAX_SUMMARIES_PER_LOOKUP`. Which reports are read is deterministic
+    (strongest completed verdict, then a *contrasting* one) and recency is never
+    claimed, because a hash search carries no analysis timestamp.
+
 ## Security rules
 
 - **No secrets in the repo.** `.env` is git-ignored; `.env.example` holds
@@ -355,6 +407,35 @@ there is still no multi-provider verdict.
   there is no catastrophic-backtracking hang to have. If a future snapshot adds
   an *applicable* regex list, the lookup reports `PARTIAL` rather than skipping
   it silently.
+- **Nothing is ever submitted to or downloaded from a sandbox.** The Hybrid
+  Analysis client can issue exactly three `GET`s, checked against a frozen
+  `ALLOWED_PATHS` before a request is built: submission, detonation, quick scan,
+  `overview/*/refresh` and every artifact download are unreachable rather than
+  merely unused. A provider-returned report URL, domain, host or file path is
+  data and must never become an HTTP destination.
+- **A sandbox report carries other people's submission metadata, and it is never
+  read.** `document_password`, `comment`, `environment_variable`,
+  `custom_commandline` and `custom_system_date_time` belong to whoever uploaded
+  the sample — possibly years ago, possibly another organization's incident — and
+  `EXCLUDED_DETONATION_FIELDS` is data with a reason per field so a test asserts
+  it. Only the execution context that bears on analysis quality is kept. Process
+  `icon` (base64) is never read either.
+- **Observed process command lines are untrusted text, not instructions.** They
+  are bounded, stripped of control characters, and never executed, interpolated
+  into a shell, or allowed to choose an endpoint, a file or a destination. The
+  same holds for signature descriptions, file names and provider warnings.
+- **A response that returns your own credential is read by allow-list.** Hybrid
+  Analysis's `/key/current` body contains the API key; the reader builds a
+  two-field dictionary rather than filtering a copy, so the key is never picked
+  up, and the endpoint is never called before a lookup.
+- **Relayed AV and machine-learning output is not adopted.** GTI already provides
+  direct reputation; counting Hybrid Analysis, its relayed VirusTotal figure and
+  a direct GTI result as three sources is exactly the inflation the lineage rules
+  prevent.
+- **The two-source-address-per-hour limit is respected, not circumvented.** One
+  Hybrid Analysis key may use the API from at most two IP addresses per hour. No
+  egress rotation, no key rotation, no multiple accounts; a scaled deployment
+  needs stable centralized egress.
 - **GTI data is provider-policy-sensitive.** Do not expose raw or normalized GTI
   content to Claude, MCP or any AI layer before the applicable Google Threat
   Intelligence data-use terms have been reviewed. See `docs/providers/gti.md`.
@@ -425,6 +506,16 @@ src/ti_recon/
                      regex recognized, never run), loader (compiled index),
                      config (no host, no credential), descriptor, normalizer,
                      policy, adapter
+  sandbox/           Task 12: provider-neutral dynamic analysis. models (sample /
+                     report / environment / quality vocabulary; no verdict maps
+                     to SUPPORTS_BENIGN), selection (bounded deterministic
+                     representative choice), bounds (per-depth caps)
+  providers/hybrid_analysis/ Task 12: Hybrid Analysis (Falcon Sandbox). config
+                     (api-key header, User-Agent), descriptor (FILE_BEHAVIOR,
+                     files only), errors (statuses + quota prose; 410 as a
+                     state), client (three GETs behind a frozen path
+                     allow-list), models (raw -> neutral; privacy exclusions),
+                     normalizer, policy (request budget per depth), adapter
   artifacts/         Task 8: bounded, user-isolated, provider-neutral storage
                      for retrieved screenshots, DOM snapshots and response
                      bodies
@@ -443,10 +534,11 @@ tools/               Task 11: operator scripts. update_misp_warninglists.py
                      (build a snapshot from a local checkout; the only code that
                      runs git), measure_misp_warninglists.py (footprint report)
 docs/                scope, architecture, data model, credentials, provider
-                     framework, provider execution, artifacts, providers/gti,
-                     providers/urlscan, providers/greynoise, providers/censys,
-                     providers/threatfox, providers/urlhaus,
-                     providers/malwarebazaar, providers/misp-warninglists
+                     framework, provider execution, artifacts, sandbox,
+                     providers/gti, providers/urlscan, providers/greynoise,
+                     providers/censys, providers/threatfox, providers/urlhaus,
+                     providers/malwarebazaar, providers/misp-warninglists,
+                     providers/hybrid-analysis
 ```
 
 ## Conventions
