@@ -145,4 +145,7 @@ def build_misp_warninglists_planning_profile() -> ProviderPlanningProfile:
         planning_capabilities=MISP_WARNINGLISTS_CAPABILITIES,
         minimum_depth=InvestigationDepth.QUICK,
         priority=90,
+        # One local match pass over the selected lists; there is nothing to ask
+        # twice, and nothing a second pass would add.
+        capability_invariant_response=True,
     )

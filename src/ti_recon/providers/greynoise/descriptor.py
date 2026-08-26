@@ -136,4 +136,7 @@ def build_greynoise_planning_profile() -> ProviderPlanningProfile:
         planning_capabilities=GREYNOISE_CAPABILITIES,
         minimum_depth=InvestigationDepth.QUICK,
         priority=60,
+        # One address read answers classification, scanner detail, ownership and
+        # RIOT together — there is no per-capability endpoint to ask separately.
+        capability_invariant_response=True,
     )

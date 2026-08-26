@@ -197,15 +197,24 @@ class PlanningState:
         an unsupported observable all cost nothing — which is what makes
         cache-first ranking safe: the planner can pick the best source and let
         the execution layer answer for free if it already knows.
+
+        One call can answer several questions. Everything the request carried is
+        marked attempted, and coverage is credited for everything this one
+        response *answers* — which is more than was asked only where the provider
+        itself declared that one read returns its whole document. Crediting it is
+        what stops the planner buying that document again, at full price, the
+        moment a later goal activates.
         """
-        self.attempted.add((call.provider_id, call.capability))
+        self.attempted.update((call.provider_id, capability) for capability in call.capabilities)
 
         covered = outcome.status in COVERING_STATUSES
         partial = outcome.status in PARTIAL_STATUSES
         if covered:
-            self.covered_families.setdefault(call.capability, set()).add(call.source_family)
+            for capability in call.answered_capabilities:
+                self.covered_families.setdefault(capability, set()).add(call.source_family)
         elif partial:
-            self.partial_families.setdefault(call.capability, set()).add(call.source_family)
+            for capability in call.answered_capabilities:
+                self.partial_families.setdefault(capability, set()).add(call.source_family)
         elif (
             outcome.error_category is not None
             and outcome.error_category in BLOCKING_ERROR_CATEGORIES
@@ -213,7 +222,7 @@ class PlanningState:
             self.blocked.add(call.provider_id)
 
         produced = self._record_evidence(outcome)
-        if produced and call.capability is ProviderCapability.FALSE_POSITIVE_CONTEXT:
+        if produced and ProviderCapability.FALSE_POSITIVE_CONTEXT in call.answered_capabilities:
             # Recorded from the capability the planner *asked for*, not from any
             # provider-specific field. A claim-name heuristic would be provider
             # knowledge in the wrong layer, and would misread a coverage record

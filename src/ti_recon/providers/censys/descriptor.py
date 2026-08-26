@@ -147,4 +147,8 @@ def build_censys_planning_profile() -> ProviderPlanningProfile:
         planning_capabilities=CENSYS_CAPABILITIES,
         minimum_depth=InvestigationDepth.STANDARD,
         priority=30,
+        # One deterministic read per asset identity; the document that comes back
+        # carries exposure, ownership and certificate context together, whatever
+        # the request named.
+        capability_invariant_response=True,
     )

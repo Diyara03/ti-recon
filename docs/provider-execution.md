@@ -618,6 +618,13 @@ leaking into each other:
   a coalesced request, a cooldown short-circuit and an unconfigured credential all
   cost it nothing. That is deliberate: it lets the planner pick the *best* source
   and let this layer answer for free when it already knows.
+- **`requested_capabilities` stays in the cache key, and duplicate questions are
+  the planner's problem.** For a provider whose response is shaped by the request
+  — GTI's relationship plan, urlscan's artifact retrieval — two capability sets
+  are two different questions, so collapsing them here would serve one answer for
+  another. The consequence is that asking a provider once per capability cannot be
+  deduplicated below the planner; Task 13 bundles the capabilities of one decision
+  into one request instead.
 
 and every remaining provider integration — SecurityTrails, AbuseIPDB, Shodan,
 IPinfo — along with evidence fusion, verdict scoring, MCP, the Claude Skill and

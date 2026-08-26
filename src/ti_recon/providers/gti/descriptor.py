@@ -142,4 +142,9 @@ def build_gti_planning_profile() -> ProviderPlanningProfile:
         elevated_cost_capabilities=frozenset({ProviderCapability.FILE_BEHAVIOR}),
         minimum_depth=InvestigationDepth.QUICK,
         priority=70,
+        # The response is shaped by the request: `relationship_plan` is filtered by
+        # exactly the capabilities asked for, and the behaviour summary is fetched
+        # only when FILE_BEHAVIOR is among them. So a capability nobody asked for
+        # was not answered, and a later call for it is real incremental work.
+        capability_invariant_response=False,
     )

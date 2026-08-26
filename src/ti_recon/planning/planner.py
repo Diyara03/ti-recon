@@ -194,7 +194,7 @@ class AdaptiveEnrichmentPlanner:
             )
             return PlanningDecision(
                 sequence=state.sequence,
-                call=self._call_for(request, best),
+                call=self._call_for(request, best, candidates),
                 skipped=tuple(skipped),
             )
         return PlanningDecision(
@@ -204,12 +204,48 @@ class AdaptiveEnrichmentPlanner:
         )
 
     def _call_for(
-        self, request: EnrichmentPlanningRequest, candidate: Candidate
+        self,
+        request: EnrichmentPlanningRequest,
+        candidate: Candidate,
+        candidates: list[Candidate],
     ) -> PlannedProviderCall:
+        """Turn the winning candidate into one appropriately shaped call.
+
+        The other capabilities this same provider is *currently* an eligible
+        candidate for ride along, because one provider answering four active
+        goals is one question with four answers, not four questions. Asking it
+        once per capability would spend a budget unit and a real API call per
+        goal for the same document.
+
+        Only current candidates are bundled, which keeps three rules intact
+        without a single provider-specific condition: a goal that does not exist
+        at this depth is not a candidate, so depth can never be widened by a
+        bundle; a goal still waiting for its activation is not a candidate
+        either; and an elevated-cost capability is excluded outright, so a bundle
+        cannot spend the high-cost budget nobody decided to spend.
+        """
         profile = candidate.profile
+        bundled = frozenset(
+            {candidate.capability}
+            | {
+                other.capability
+                for other in candidates
+                if other.profile.provider_id == profile.provider_id
+                and profile.bundleable(other.capability)
+            }
+        )
+        answered = profile.answered_by_one_response(
+            bundled,
+            supported=self._supported_capabilities(candidate.adapter, request),
+        )
+        detail = f"{candidate.capability.value} via {profile.source_family}"
+        if len(bundled) > 1:
+            detail = f"{detail} (+{len(bundled) - 1} more in one request)"
         return PlannedProviderCall(
             provider_id=profile.provider_id,
             capability=candidate.capability,
+            capabilities=bundled,
+            answered_capabilities=answered,
             source_family=profile.source_family,
             locality=profile.locality,
             cost_class=profile.cost_for(candidate.capability),
@@ -221,7 +257,23 @@ class AdaptiveEnrichmentPlanner:
                 specialized=candidate.specialized,
             ),
             novelty=candidate.novelty,
-            detail=f"{candidate.capability.value} via {profile.source_family}",
+            detail=detail,
+        )
+
+    def _supported_capabilities(
+        self, adapter: ProviderAdapter, request: EnrichmentPlanningRequest
+    ) -> frozenset[ProviderCapability]:
+        """What this adapter declares for this observable type.
+
+        Read from the descriptor, so a capability-invariant provider is credited
+        only for questions it can actually answer about *this* kind of
+        observable.
+        """
+        object_type = request.intel_object.object_type
+        return frozenset(
+            capability
+            for capability in adapter.descriptor.capabilities
+            if adapter.descriptor.supports(object_type, capability)
         )
 
     # ------------------------------------------------------------------ #

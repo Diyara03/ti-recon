@@ -132,4 +132,7 @@ def build_threatfox_planning_profile() -> ProviderPlanningProfile:
         planning_capabilities=THREATFOX_CAPABILITIES,
         minimum_depth=InvestigationDepth.QUICK,
         priority=50,
+        # One search returns the IOC records whole; nothing in the request shapes
+        # what comes back.
+        capability_invariant_response=True,
     )

@@ -136,4 +136,7 @@ def build_urlscan_planning_profile() -> ProviderPlanningProfile:
         elevated_cost_capabilities=frozenset({ProviderCapability.WEB_FORENSICS}),
         minimum_depth=InvestigationDepth.QUICK,
         priority=40,
+        # The response is shaped by the request: retrieving and statically analysing
+        # stored page artifacts happens only when WEB_FORENSICS was asked for.
+        capability_invariant_response=False,
     )

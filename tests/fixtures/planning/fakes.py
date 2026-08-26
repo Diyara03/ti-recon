@@ -87,6 +87,8 @@ class FakeProviderSpec:
     auto_enrichment_allowed: bool = True
     supports_active: bool = False
     planning_capabilities: frozenset[ProviderCapability] | None = None
+    #: ``True`` models a provider whose one read returns its whole document.
+    capability_invariant_response: bool = False
 
 
 class FakePlanningAdapter(ProviderAdapter):
@@ -184,6 +186,7 @@ def profile_for(spec: FakeProviderSpec) -> ProviderPlanningProfile:
         minimum_depth=spec.minimum_depth,
         priority=spec.priority,
         auto_enrichment_allowed=spec.auto_enrichment_allowed,
+        capability_invariant_response=spec.capability_invariant_response,
     )
 
 

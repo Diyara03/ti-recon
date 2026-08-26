@@ -249,6 +249,53 @@ def test_the_sandbox_is_high_cost_and_not_a_shallow_default() -> None:
     assert profile.minimum_depth is InvestigationDepth.STANDARD
 
 
+@pytest.mark.parametrize("descriptor", real_descriptors(), ids=lambda d: d.provider_id)
+def test_every_profile_declares_how_its_response_is_shaped(
+    descriptor: ProviderDescriptor,
+) -> None:
+    """Capability invariance decides whether asking again is incremental work or a
+    duplicate request, so it must be a deliberate declaration per provider.
+
+    A provider whose response is shaped by the request is exactly a provider whose
+    adapter reads ``requested_capabilities``; today that is GTI (its relationship
+    plan is filtered by the set, and the behaviour summary is fetched only when
+    FILE_BEHAVIOR is in it) and urlscan (page artifacts only on WEB_FORENSICS).
+    Everything else performs one read and normalizes whatever came back.
+    """
+    profile = profiles_by_id()[descriptor.provider_id]
+    request_shaped = {"gti", "urlscan"}
+    assert profile.capability_invariant_response is (descriptor.provider_id not in request_shaped)
+
+
+def test_an_elevated_capability_is_never_bundleable() -> None:
+    """The two rules are linked on purpose: an expensive capability must win a
+    decision of its own, or a bundle becomes a way to spend the high-cost budget
+    nobody decided to spend."""
+    for profile in profiles_by_id().values():
+        for capability in profile.elevated_cost_capabilities:
+            assert not profile.bundleable(capability), profile.provider_id
+
+
+def test_a_capability_invariant_provider_credits_only_what_it_supports() -> None:
+    """MalwareBazaar answers files; being asked about one must not credit coverage
+    for capabilities it only offers elsewhere."""
+    profile = profiles_by_id()["malwarebazaar"]
+    answered = profile.answered_by_one_response(
+        frozenset({ProviderCapability.REPUTATION}),
+        supported=frozenset({ProviderCapability.REPUTATION}),
+    )
+    assert answered == frozenset({ProviderCapability.REPUTATION})
+
+
+def test_a_request_shaped_provider_credits_only_what_was_asked() -> None:
+    profile = profiles_by_id()["gti"]
+    answered = profile.answered_by_one_response(
+        frozenset({ProviderCapability.REPUTATION}),
+        supported=frozenset(ProviderCapability),
+    )
+    assert answered == frozenset({ProviderCapability.REPUTATION})
+
+
 def test_a_provider_cheap_for_summaries_and_expensive_for_content_says_so() -> None:
     """One cost class per provider cannot describe urlscan or GTI honestly."""
     assert (

@@ -64,7 +64,12 @@ class ProviderSelectionMetric(FrozenTiReconModel):
     """One provider chosen for one capability."""
 
     provider_id: str = Field(min_length=1, max_length=64)
+    #: The capability that won the ranking, and explains the decision.
     capability: ProviderCapability
+    #: How many capabilities the one request carried. A small integer rather than
+    #: the set, because the set is unbounded-ish and the useful aggregate is
+    #: whether bundling is happening at all.
+    capabilities_requested: int = Field(default=1, ge=1)
     object_type: IntelObjectType
     depth: InvestigationDepth
     locality: ProviderLocality

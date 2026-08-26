@@ -132,4 +132,6 @@ def build_urlhaus_planning_profile() -> ProviderPlanningProfile:
         planning_capabilities=URLHAUS_CAPABILITIES,
         minimum_depth=InvestigationDepth.QUICK,
         priority=55,
+        # One path-routed read returns the URL or host record whole.
+        capability_invariant_response=True,
     )

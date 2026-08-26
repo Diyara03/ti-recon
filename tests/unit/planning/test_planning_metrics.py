@@ -76,8 +76,7 @@ def orchestrator(
 async def run_once(metrics: PlanningMetricsSink | None = None, **overrides: object) -> None:
     request = EnrichmentPlanningRequest(
         intel_object=file_object(),
-        depth=InvestigationDepth.STANDARD,
-        **overrides,  # type: ignore[arg-type]
+        **{"depth": InvestigationDepth.STANDARD, **overrides},  # type: ignore[arg-type]
     )
     await orchestrator(metrics).run(
         request,
@@ -118,9 +117,15 @@ async def test_selections_and_skips_are_both_recorded() -> None:
 
 async def test_a_blocked_provider_is_visible_as_a_skip_reason() -> None:
     """No credential is configured for any of these fakes, so every remote
-    provider reports itself unconfigured through Task 6."""
+    provider reports itself unconfigured through Task 6.
+
+    Run at DEEP, where a later-activating goal (threat associations) gives a
+    blocked provider a second chance to be considered — at STANDARD the capability
+    would have been bundled into the first request and the skip would read
+    ``ALREADY_ATTEMPTED`` instead, which is also true and less interesting.
+    """
     sink = InMemoryPlanningMetricsSink()
-    await run_once(sink)
+    await run_once(sink, depth=InvestigationDepth.DEEP)
     assert sink.skips_by_reason()[SkipReason.BLOCKED] >= 1
 
 

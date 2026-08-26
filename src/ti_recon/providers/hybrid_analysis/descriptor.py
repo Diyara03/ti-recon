@@ -130,4 +130,7 @@ def build_hybrid_analysis_planning_profile() -> ProviderPlanningProfile:
         planning_capabilities=HYBRID_ANALYSIS_CAPABILITIES,
         minimum_depth=InvestigationDepth.STANDARD,
         priority=50,
+        # One hash search plus its bounded report reads. Only one capability is
+        # declared, so this is a statement about shape rather than a saving.
+        capability_invariant_response=True,
     )

@@ -118,7 +118,7 @@ class AdaptiveEnrichmentOrchestrator:
                 continue
             outcome = await self._executor.execute(
                 adapter,
-                self._provider_request(request, call.capability, investigation_id),
+                self._provider_request(request, call.capabilities, investigation_id),
                 context,
             )
             state.observe(call, outcome)
@@ -173,6 +173,7 @@ class AdaptiveEnrichmentOrchestrator:
                 ProviderSelectionMetric(
                     provider_id=call.provider_id,
                     capability=call.capability,
+                    capabilities_requested=len(call.capabilities),
                     object_type=object_type,
                     depth=request.depth,
                     locality=call.locality,
@@ -205,10 +206,16 @@ class AdaptiveEnrichmentOrchestrator:
     def _provider_request(
         self,
         request: EnrichmentPlanningRequest,
-        capability: ProviderCapability,
+        capabilities: frozenset[ProviderCapability],
         investigation_id: str,
     ) -> ProviderRequest:
         """Build the Task 5 request for one planned call.
+
+        Carries every capability the planner bundled into this decision, so a
+        provider that answers four active goals with one read is asked once. The
+        adapter decides what that means for its own request shape — Task 7 filters
+        GTI's relationship plan by exactly this set — which is why the planner
+        never needs to know how any provider spends it.
 
         The operation is always ``LOOKUP`` and the mode always ``PASSIVE``,
         carried from a request model that refuses to be anything else. There is no
@@ -218,7 +225,7 @@ class AdaptiveEnrichmentOrchestrator:
             investigation_id=investigation_id,
             intel_object=request.intel_object,
             operation=request.operation,
-            requested_capabilities=frozenset({capability}),
+            requested_capabilities=capabilities,
             depth=request.depth,
             activity_mode=request.activity_mode,
         )

@@ -392,7 +392,22 @@ what to ask and reports what was covered, and nothing decides what it means.
     returned a blocking category is simply not chosen again for that run. Nothing
     under `planning/` may import `httpx`, the credential layer or `SecretStr`.
 
-45. **An automatic plan is passive, and covers one observable.**
+45. **One provider answering several active goals is one call.** A provider that
+    serves four active capabilities is asked once, for all four: a request per
+    capability spends a budget unit and a real API call per goal and returns the
+    same document each time, and Task 6 cannot absorb it because
+    `requested_capabilities` is part of the cache key. Only *current candidates*
+    are bundled, so a bundle can never widen depth or activate a waiting goal, and
+    an `elevated_cost_capabilities` member is never bundled — it must win a
+    decision of its own, or a bundle becomes a way to spend the high-cost budget
+    and to reach web forensics without an explicit request.
+    `capability_invariant_response` is the provider's own statement that one read
+    returns its whole document; it alone lets coverage be credited for a
+    capability the request did not name, and where it is `False` — GTI, urlscan,
+    whose responses are shaped by the requested set — a later call for another
+    capability is genuine incremental work and is charged as such.
+
+46. **An automatic plan is passive, and covers one observable.**
     `EnrichmentPlanningRequest` refuses a non-passive mode or a non-`LOOKUP`
     operation at construction, so no plan that submits, detonates or rescans can
     be built; a test additionally asserts every `ProviderOperation` and

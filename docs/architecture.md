@@ -477,6 +477,11 @@ Four properties carry the design:
 - **Deterministic lexicographic ranking.** `RANKING_FACTORS` is the order, as
   data. No weighted score, because there is no evidence for any such constant and
   a made-up one cannot be explained to an analyst.
+- **One provider answering several active goals is one call.** The capabilities a
+  provider is currently an eligible candidate for travel in a single request, so a
+  provider is never asked four times for one document. Elevated-cost capabilities
+  are excluded from a bundle, and `capability_invariant_response` is what tells
+  the planner whether asking again later is incremental work or a duplicate.
 
 Two boundaries are structural rather than conventional. `EnrichmentPlanningRequest`
 refuses a non-passive mode or a non-`LOOKUP` operation at construction, so no plan

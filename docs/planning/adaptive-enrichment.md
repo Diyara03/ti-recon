@@ -95,6 +95,66 @@ effect: a provider in an already-covered family is still chosen readily for a
 capability nobody covers. Family independence bounds corroboration, not
 usefulness.
 
+### One provider, one call, several questions
+
+A provider that serves several *currently active* goals is asked **once**, for all
+of them. `PlannedProviderCall` therefore carries three capability sets:
+
+| Field | Meaning |
+|---|---|
+| `capability` | the one that won the ranking; explains the decision and sets the cost class |
+| `capabilities` | everything the provider request carries |
+| `answered_capabilities` | everything one response from this provider answers |
+
+Only *current candidates* are bundled, which keeps three rules intact without a
+single provider-specific condition:
+
+- a goal that does not exist at this depth is not a candidate, so a bundle can
+  never widen depth — QUICK asks nothing for `FILE_BEHAVIOR` however many
+  providers support it;
+- a goal still waiting for its activation is not a candidate either;
+- an **elevated-cost** capability is excluded outright. It has to win a decision
+  of its own, or a bundle becomes a way to spend the high-cost budget nobody
+  decided to spend — and, for retrieved page content, a way around the rule that
+  forensics needs an explicit request.
+
+Bundling therefore never costs more than the decision that created it: one
+bundled call is one logical run and one budget unit.
+
+### Whether asking again is incremental work or a duplicate
+
+`ProviderPlanningProfile.capability_invariant_response` is the provider's own
+statement about the shape of its answer:
+
+- **`True`** — one read returns everything it knows, whatever the request named.
+  Seven of the nine integrations are like this. Coverage is credited for every
+  capability that response answered (bounded by what the descriptor supports for
+  this observable), so a goal activating later finds itself already covered
+  instead of buying the identical document again at full price.
+- **`False`** — the response is *shaped* by the request. GTI filters its
+  relationship plan by exactly the requested capabilities and fetches the
+  behaviour summary only when `FILE_BEHAVIOR` is among them; urlscan retrieves
+  page artifacts only for `WEB_FORENSICS`. A capability nobody asked for was not
+  answered, so a later call for it is genuine incremental work and is allowed —
+  and charged.
+
+This is why the deduplication has to happen in the planner rather than in the
+cache: `requested_capabilities` is part of the Task 6 cache key, and correctly so,
+because for a request-shaped provider two sets are two different questions. A
+duplicate cannot be absorbed below the planner; it has to not be made.
+
+Worked example — DEEP file, shipped catalogue:
+
+```
+misp_warninglists  [false_positive_context]
+malwarebazaar      [reputation + malware_intelligence]   one read, two goals
+gti                [reputation]                          second independent family
+gti                [file_behavior]                       separate endpoint, real work
+```
+
+Four logical runs, three of them remote. GTI appears twice and that is correct;
+MalwareBazaar appears once where three separate calls would once have been made.
+
 ---
 
 ## 4. Locality: a passive lookup is still disclosure

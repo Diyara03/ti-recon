@@ -220,7 +220,28 @@ class ProviderPlanningProfile(FrozenTiReconModel):
     #: regardless of :attr:`cost_class`. One provider can be cheap for a summary
     #: read and expensive when asked to retrieve and analyse stored content, and
     #: a single per-provider class cannot express that.
+    #:
+    #: These are also the capabilities that are never *bundled* into a call
+    #: selected for something else: an expensive capability has to be chosen on
+    #: its own merits, or an implicit bundle becomes a way to spend the high-cost
+    #: budget without a decision — and, for retrieved page content, a way around
+    #: the rule that forensics needs an explicit request.
     elevated_cost_capabilities: frozenset[ProviderCapability] = frozenset()
+
+    #: ``True`` when one read returns everything this provider knows about an
+    #: observable, whatever capabilities the request named.
+    #:
+    #: Most integrations are like this: one deterministic lookup, one document,
+    #: normalized into whatever it happens to contain. Asking such a provider a
+    #: second time for a different capability re-fetches an identical response —
+    #: a real API call, a real budget unit and no new information. Declaring it
+    #: lets the planner credit every capability that one response answered.
+    #:
+    #: ``False`` means the response is *shaped* by the request, so a capability
+    #: nobody asked for was not answered and a later call for it is genuinely
+    #: incremental work. This is provider-owned knowledge and belongs in the
+    #: provider's own profile, never in a planner branch.
+    capability_invariant_response: bool = False
 
     #: Shallowest depth at which this provider may be chosen automatically. An
     #: explicit capability request still respects it — depth is the caller's
@@ -235,6 +256,36 @@ class ProviderPlanningProfile(FrozenTiReconModel):
     #: it callable directly. For a provider that must never be chosen on an
     #: analyst's behalf.
     auto_enrichment_allowed: bool = True
+
+    @model_validator(mode="after")
+    def _validate_profile(self) -> ProviderPlanningProfile:
+        if not self.elevated_cost_capabilities <= self.planning_capabilities:
+            msg = "elevated_cost_capabilities must be capabilities this profile plans"
+            raise ValueError(msg)
+        return self
+
+    def bundleable(self, capability: ProviderCapability) -> bool:
+        """Whether ``capability`` may ride along on a call chosen for another.
+
+        Only capabilities that change neither the cost class nor the shape of the
+        request qualify, so a bundle can never spend more than the decision that
+        created it.
+        """
+        return self.serves(capability) and capability not in self.elevated_cost_capabilities
+
+    def answered_by_one_response(
+        self, requested: frozenset[ProviderCapability], *, supported: frozenset[ProviderCapability]
+    ) -> frozenset[ProviderCapability]:
+        """Which capabilities one response actually answers.
+
+        For a capability-invariant provider that is everything it plans and the
+        observable supports — the document came back whole. Otherwise it is
+        exactly what was asked for: crediting more would claim coverage of a
+        question the request never carried.
+        """
+        if not self.capability_invariant_response:
+            return requested
+        return requested | (self.planning_capabilities & supported)
 
     def cost_for(self, capability: ProviderCapability) -> CallCostClass:
         """The cost class of asking this provider for ``capability``."""
@@ -379,10 +430,32 @@ class EnrichmentBudget(FrozenTiReconModel):
 
 
 class PlannedProviderCall(FrozenTiReconModel):
-    """One provider run the planner has decided to make."""
+    """One provider run the planner has decided to make.
+
+    One *run*, not one capability. A provider that answers several active goals
+    with one read is asked once, for all of them: repeating the request per
+    capability would spend a budget unit and an API call per goal and return the
+    same document each time.
+
+    Three capability sets, deliberately distinct:
+
+    * :attr:`capability` — the one that won the ranking. It is what the decision
+      is explained by, and what the cost class was computed from.
+    * :attr:`capabilities` — everything the request asks for. Always includes
+      :attr:`capability`, and never includes an elevated-cost capability that was
+      not itself selected.
+    * :attr:`answered_capabilities` — everything one response from this provider
+      answers. Larger than :attr:`capabilities` only when the provider declares
+      its response is capability-invariant.
+    """
 
     provider_id: str = Field(min_length=1, max_length=64)
     capability: ProviderCapability
+    #: What the provider request will carry. Defaults to the primary capability
+    #: alone, so a hand-built call needs nothing extra.
+    capabilities: frozenset[ProviderCapability] = frozenset()
+    #: What this one response covers. Defaults to :attr:`capabilities`.
+    answered_capabilities: frozenset[ProviderCapability] = frozenset()
     source_family: str = Field(min_length=1, max_length=64)
     locality: ProviderLocality
     cost_class: CallCostClass
@@ -391,6 +464,20 @@ class PlannedProviderCall(FrozenTiReconModel):
     novelty: NoveltyClass
     #: Short human-readable accompaniment to :attr:`reason`. Never load-bearing.
     detail: str | None = Field(default=None, max_length=200)
+
+    @model_validator(mode="after")
+    def _validate_capabilities(self) -> PlannedProviderCall:
+        requested = self.capabilities or frozenset({self.capability})
+        answered = self.answered_capabilities or requested
+        if self.capability not in requested:
+            msg = "the selected capability must be part of the request"
+            raise ValueError(msg)
+        if not requested <= answered:
+            msg = "answered_capabilities must include everything requested"
+            raise ValueError(msg)
+        object.__setattr__(self, "capabilities", requested)
+        object.__setattr__(self, "answered_capabilities", answered)
+        return self
 
 
 class SkippedCandidate(FrozenTiReconModel):
