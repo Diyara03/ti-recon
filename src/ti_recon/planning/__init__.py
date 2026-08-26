@@ -26,6 +26,17 @@ Two rules it will not break:
   answer is known. Every :class:`StopReason` is operational, and there is
   deliberately no member meaning "confident enough".
 
+Importing the catalogue
+-----------------------
+
+:mod:`ti_recon.planning.catalog` is **not** re-exported here, and must not be: it
+imports every provider package, while every provider descriptor imports the
+planning models from this package. Exporting it eagerly makes that a circular
+import — as it did, immediately. Import it by module path when you want the
+shipped registry::
+
+    from ti_recon.planning.catalog import build_default_planning_registry
+
 Scope boundaries: automatic planning is **passive only** — no submission,
 detonation or rescan can enter a plan — and it enriches **the requested
 observable only**. Providers return related objects; recursively enriching them
@@ -33,10 +44,6 @@ needs pivot-value judgement, graph deduplication and cycle prevention, and a tas
 of its own.
 """
 
-from ti_recon.planning.catalog import (
-    PLANNING_PROFILE_BUILDERS,
-    build_default_planning_registry,
-)
 from ti_recon.planning.goals import (
     DEPTH_ORDER,
     CapabilityGoal,
@@ -96,7 +103,6 @@ __all__ = [
     "MAX_PLANNING_ROUNDS",
     "NOVELTY_ORDER",
     "PARTIAL_STATUSES",
-    "PLANNING_PROFILE_BUILDERS",
     "RANKING_FACTORS",
     "AdaptiveEnrichmentOrchestrator",
     "AdaptiveEnrichmentPlanner",
@@ -122,7 +128,6 @@ __all__ = [
     "SkippedCandidate",
     "StopReason",
     "UnknownProviderError",
-    "build_default_planning_registry",
     "candidate_key",
     "depth_at_least",
     "selection_reason_for",
