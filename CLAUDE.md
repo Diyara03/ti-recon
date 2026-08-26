@@ -20,7 +20,7 @@ Analyst -> Claude + TI Analyst Skill -> MCP -> TI Recon backend
 
 ## Current implementation boundary
 
-Implemented (Jira Tasks 1-10):
+Implemented (Jira Tasks 1-11):
 
 - Task 1 — product scope + investigation workflow foundation (docs, enums)
 - Task 2 — architecture foundation (docs, module boundaries)
@@ -49,15 +49,26 @@ Implemented (Jira Tasks 1-10):
   `abuse_ch` credential group, one `abuse_ch` source family, per-platform
   lineage groups, and every relayed third-party finding attributed to its real
   origin.
+- Task 11 — MISP Warning Lists (`providers/misp_warninglists/`): **local,
+  zero-network false-positive and infrastructure context** from a pinned CC0
+  snapshot of the community dataset. No MISP server, no API key, no transport,
+  no credential. Every hit is `CONTEXT_ONLY`; `matching_attributes` gates every
+  list; a URL's host stays visibly separate from the URL; profiles bound the
+  dataset and every omission is reported.
 
-**GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus and MalwareBazaar are the
-only providers.** Evidence fusion is not implemented, so there is still no
-multi-provider verdict.
+**GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar and MISP
+Warning Lists are the only providers.** Evidence fusion is not implemented, so
+there is still no multi-provider verdict.
 
 **Not implemented — do not add without an explicit request:**
 
-- Any other provider API integration (SecurityTrails, AbuseIPDB, Shodan, IPinfo,
-  MISP Warning Lists)
+- Any other provider API integration (SecurityTrails, AbuseIPDB, Shodan, IPinfo)
+- Any MISP *instance* integration: events, attributes, galaxies, taxonomies,
+  sightings, the MISP REST API, PyMISP. Task 11 reads a local warninglist
+  snapshot and nothing else; a future instance provider shares
+  `source_family = "misp"` so it cannot read as a second independent source
+- Regex matching of warninglists, and any claim of PCRE compatibility; automatic
+  warninglist dataset refresh from a lookup or at startup
 - Any dynamic malware sandbox integration. A future task will distinguish
   *passive sandbox report lookup* from *active file/URL detonation*; neither
   exists, and nothing in Task 9 or 10 anticipates them — MalwareBazaar relays
@@ -213,6 +224,47 @@ multi-provider verdict.
     when a family signature is present. And an expiring feed's silence is a
     coverage fact: ThreatFox drops IOCs after ~6 months, so a miss means "nothing
     unexpired matched" and records that horizon explicitly.
+28. **A warninglist match is context, never a verdict — in either direction.**
+    Every MISP warninglist hit is `EvidenceClass.CONTEXT` with
+    `EvidenceEffect.CONTEXT_ONLY`. Never `SUPPORTS_BENIGN` and never
+    `SUPPORTS_MALICIOUS`: a cloud range hosts attacks, a CDN serves malware, a
+    popular domain has a malicious path on it, an EICAR hash is a test artifact
+    rather than an ordinary benign file, and a warninglist can be stale. A clean
+    lookup means "no selected list in this snapshot matched" and nothing else —
+    the record says `means_benign: false` rather than leaving it to be inferred.
+    What a malicious verdict plus shared-infrastructure context adds up to is
+    false-positive reasoning and belongs to the fusion layer.
+29. **`matching_attributes` is authoritative, and candidates are never
+    fabricated.** An observable is turned into the MISP attribute values it
+    legitimately *is*, and a list is offered only the candidates whose attribute
+    type it declares — a hostname list is never asked about an MD5. No
+    `domain|ip` for a bare domain, no `ip-src|port` for a portless address, no
+    `filename|md5` without a real filename. An absent `matching_attributes`
+    means ALL. Every hash a file carries is checked, because a local lookup
+    spends nothing and the false-positive lists differ in which they hold.
+30. **A URL's host is not the URL.** A derived hostname candidate is
+    `MatchScope.SAME_HOST`, tagged `url_host`, and flagged
+    `host_component_only`; the full URL is `EXACT_OBSERVABLE`. The host is
+    *parsed*, never searched for, so a path or query string cannot masquerade as
+    one. Losing that distinction is how a living-off-trusted-sites payload gets
+    waved through.
+31. **Upstream data is honoured, not repaired.** A leading dot in a `hostname`
+    entry means "subdomains only" and is preserved; the same dot in an exact
+    `string` list can never match a canonical domain and is counted
+    `unmatchable` rather than rewritten. Malformed CIDRs and blank entries are
+    skipped and diagnosed. One bad list costs one list, never the dataset.
+32. **A local dataset is pinned, provenanced and refreshed only by an operator.**
+    No lookup may fetch, clone, resolve or update anything; refresh is
+    `tools/update_misp_warninglists.py` against a *local checkout*, never a URL,
+    and it swaps atomically. Coverage carries the upstream commit, the dataset
+    and profile fingerprints, and both kinds of omission — lists the snapshot
+    never had and lists the profile excluded — so no result can imply "all MISP
+    warninglists checked".
+33. **Depth never changes which warninglists are checked.** Unlike a metered
+    remote provider there is nothing to spend, so every depth searches the same
+    lists and depth bounds only how many match records are rendered. Coverage
+    that varied by depth would mean an analyst had to know which depth ran to
+    know what "no match" covered.
 
 ## Security rules
 
@@ -288,6 +340,21 @@ multi-provider verdict.
   one. `ALLOWED_QUERIES` / `ALLOWED_PATHS` make those unreachable rather than
   merely unused, and no rate limit is ever evaded by rotating keys, switching
   accounts or scraping a web interface.
+- **A local dataset is read with the care given to untrusted input.** A snapshot
+  directory is operator-supplied, not trusted: slugs are pattern-checked before
+  they touch a path, resolved paths must stay inside the snapshot root (which
+  also catches a symlink out of the tree), file sizes are bounded before the
+  read, and per-list checksums are verified before a file is parsed. A manifest
+  that fails validation reports a stable message rather than echoing content.
+  Diagnostics are counts and short reasons — never raw list contents, which
+  would make a log a dataset leak.
+- **No warninglist regex is ever executed.** Upstream patterns are PHP
+  `preg_match` with delimiters and flags Python does not have, and the pinned
+  snapshot's two regex lists target email and phone attributes TI Recon cannot
+  produce. Patterns are recognized and counted, never compiled and never run, so
+  there is no catastrophic-backtracking hang to have. If a future snapshot adds
+  an *applicable* regex list, the lookup reports `PARTIAL` rather than skipping
+  it silently.
 - **GTI data is provider-policy-sensitive.** Do not expose raw or normalized GTI
   content to Claude, MCP or any AI layer before the applicable Google Threat
   Intelligence data-use terms have been reviewed. See `docs/providers/gti.md`.
@@ -350,6 +417,14 @@ src/ti_recon/
                      download, no upload), config, descriptor, normalizer (one
                      assertion, signing, YARA, vendor names only), policy,
                      adapter
+  providers/misp_warninglists/ Task 11: MISP Warning Lists. models (raw upstream
+                     schema, manifest, diagnostics), snapshot (local reader: path
+                     safety, checksums, staleness), profile (include/exclude,
+                     entry ceiling, fingerprint), candidates (observable -> MISP
+                     attributes), matchers (string/substring/hostname/cidr;
+                     regex recognized, never run), loader (compiled index),
+                     config (no host, no credential), descriptor, normalizer,
+                     policy, adapter
   artifacts/         Task 8: bounded, user-isolated, provider-neutral storage
                      for retrieved screenshots, DOM snapshots and response
                      bodies
@@ -362,9 +437,16 @@ src/ti_recon/
   versions.py        ENGINE_VERSION / POLICY_VERSION audit stamps
 tests/unit/          unit + contract tests
 tests/fixtures/      model-only and fake-adapter fixtures (no network)
+data/                Task 11: the pinned MISP warninglist snapshot (manifest +
+                     per-list files). Refreshed only by tools/, never at runtime
+tools/               Task 11: operator scripts. update_misp_warninglists.py
+                     (build a snapshot from a local checkout; the only code that
+                     runs git), measure_misp_warninglists.py (footprint report)
 docs/                scope, architecture, data model, credentials, provider
                      framework, provider execution, artifacts, providers/gti,
-                     providers/urlscan, providers/greynoise, providers/censys
+                     providers/urlscan, providers/greynoise, providers/censys,
+                     providers/threatfox, providers/urlhaus,
+                     providers/malwarebazaar, providers/misp-warninglists
 ```
 
 ## Conventions

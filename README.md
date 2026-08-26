@@ -8,8 +8,8 @@ eventually produce an explainable, auditable assessment.
 
 ## Current development state
 
-This repository currently contains the foundation plus its first seven providers
-(Jira Tasks 1-10):
+This repository currently contains the foundation plus its first eight providers
+(Jira Tasks 1-11):
 
 | Task | Scope | State |
 |------|-------|-------|
@@ -23,6 +23,7 @@ This repository currently contains the foundation plus its first seven providers
 | 8 | urlscan.io integration + web forensics | Implemented (passive enrichment; forensics on explicit request) |
 | 9 | GreyNoise + Censys integration | Implemented (passive enrichment) |
 | 10 | abuse.ch: ThreatFox + URLhaus + MalwareBazaar | Implemented (passive enrichment) |
+| 11 | MISP Warning Lists | Implemented (local, zero-network false-positive context) |
 
 **Seven providers are integrated**, all passive, each answering a different
 question. Google Threat Intelligence enriches with each analyst's own VirusTotal
@@ -39,6 +40,14 @@ samples.
 The three abuse.ch providers share **one** credential group and **one** source
 family, so an analyst stores one Auth-Key and a future fusion layer can see that
 two of them agreeing is one ecosystem agreeing with itself.
+
+MISP Warning Lists is different in kind from the other seven, and deliberately
+so. It needs **no server, no API key and no network**: it matches an observable
+against a pinned local snapshot of the community warninglist dataset, so the
+capability is available during offline triage. It is also the only provider that
+never expresses an opinion — every finding it produces is context, and a clean
+lookup means "nothing in the configured lists matched" rather than anything about
+safety.
 
 There is no SecurityTrails, AbuseIPDB, Shodan or IPinfo client yet, no sandbox
 integration of any kind, and there is no query planner, no provider selection, no
@@ -61,16 +70,18 @@ development foundation, not distributed coordination.
 | ThreatFox (abuse.ch) | Implemented | current family-attributed IOC search for IPv4, domain, URL and MD5/SHA-256, with `ip:port` records re-validated locally by parsing, the malware family as a linked object, and the six-month API horizon recorded in coverage | indicator submission, the recent feed, malware-family / tag / reporter queries, every bulk or hunting query, IPv6, SHA-1-only files |
 | URLhaus (abuse.ch) | Implemented | exact malware-distribution URL records kept distinct from host-level associations, `url_status` and takedown-report context, served-payload provenance and fingerprints, bounded URL pivots, and relayed VirusTotal / blocklist findings attributed to their real origin | URL submission, rescan, live scan, `/downloads/` sample retrieval, all feeds, Brand/Kit monitoring, the hostname and similarity APIs |
 | MalwareBazaar (abuse.ch) | Implemented | vetted sample records by MD5 / SHA-1 / SHA-256, family signature, fingerprint pivots (imphash, TLSH, telfhash, gimphash, ssdeep, icon dhash), code signing with CSCB status and a linked `x509-certificate`, bounded YARA and document context, and relayed vendor names only | sample download and upload, record updates, comments, the recent feed, tag / signature / YARA / certificate hunting, any dynamic analysis |
+| MISP Warning Lists | Implemented | local, zero-network false-positive and infrastructure context for addresses, domains, URLs and file hashes from a pinned CC0 snapshot of the community dataset — private and special-use ranges, public resolvers, scanners, cloud/CDN ranges, dynamic DNS, living-off-trusted-sites hosts, popular domains, known-good and test-artifact hashes — gated by `matching_attributes`, with a URL's host kept visibly separate from the URL | any MISP instance or REST API integration, regex matching, automatic dataset refresh, non-TI-Recon attribute families |
 
-All seven supply **evidence**, not verdicts. Weighing providers against each other
+All eight supply **evidence**, not verdicts. Weighing providers against each other
 and reaching a conclusion is the future evidence-fusion layer's job, and no such
 layer exists yet. See [docs/providers/gti.md](docs/providers/gti.md),
 [docs/providers/urlscan.md](docs/providers/urlscan.md),
 [docs/providers/greynoise.md](docs/providers/greynoise.md),
 [docs/providers/censys.md](docs/providers/censys.md),
 [docs/providers/threatfox.md](docs/providers/threatfox.md),
-[docs/providers/urlhaus.md](docs/providers/urlhaus.md) and
-[docs/providers/malwarebazaar.md](docs/providers/malwarebazaar.md).
+[docs/providers/urlhaus.md](docs/providers/urlhaus.md),
+[docs/providers/malwarebazaar.md](docs/providers/malwarebazaar.md) and
+[docs/providers/misp-warninglists.md](docs/providers/misp-warninglists.md).
 
 Two of them are deliberately *not* reputation sources. Censys answers "what is
 exposed here" and every piece of evidence it produces is context: an open RDP
@@ -109,7 +120,7 @@ TI Recon backend                 <-- this repository
    |-- provider registry          implemented
    |-- provider adapters          contract implemented; GTI, urlscan,
    |                               GreyNoise, Censys, ThreatFox, URLhaus,
-   |                               MalwareBazaar
+   |                               MalwareBazaar, MISP Warning Lists (local)
    |-- provider HTTP transport    implemented (SSRF-bounded)
    |-- provider executor          implemented (cache, retry, quota, cooldown,
    |                                           concurrency, single-flight)
@@ -195,10 +206,15 @@ In production, provider credentials are held per user by the credential layer
 
 ## Current limitations
 
-- **Seven providers only.** Google Threat Intelligence, urlscan.io, GreyNoise,
-  Censys, ThreatFox, URLhaus and MalwareBazaar are integrated; every other
-  provider named above is a later task, and no sandbox integration of any kind
-  exists.
+- **Eight providers only.** Google Threat Intelligence, urlscan.io, GreyNoise,
+  Censys, ThreatFox, URLhaus, MalwareBazaar and MISP Warning Lists are
+  integrated; every other provider named above is a later task, and no sandbox
+  integration of any kind exists.
+- **The warninglist dataset is a pinned snapshot, refreshed by hand.** Nothing
+  updates it automatically, and a lookup never fetches anything. Its default
+  profile deliberately excludes the million-entry popularity rankings, and every
+  omission is reported in coverage — no result claims to have checked lists it
+  never had.
 - **No provider selection.** The registry returns every compatible provider;
   nothing ranks or chooses between them.
 - **Every provider is passive only.** No submission, rescanning, live scanning,
@@ -246,4 +262,5 @@ In production, provider credentials are held per user by the credential layer
 - [docs/providers/threatfox.md](docs/providers/threatfox.md) — Task 10 ThreatFox
 - [docs/providers/urlhaus.md](docs/providers/urlhaus.md) — Task 10 URLhaus
 - [docs/providers/malwarebazaar.md](docs/providers/malwarebazaar.md) — Task 10 MalwareBazaar
+- [docs/providers/misp-warninglists.md](docs/providers/misp-warninglists.md) — Task 11 MISP Warning Lists
 - [docs/artifacts.md](docs/artifacts.md) — Task 8 bounded provider artifact storage

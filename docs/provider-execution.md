@@ -116,7 +116,7 @@ Built from request semantics, identifiers and version strings:
 ```
 cache scope · scope identity · provider · operation · observable canonical key
 capabilities (sorted) · depth · activity mode · max_results · max_pages
-api_version · adapter_version
+api_version · adapter_version · dataset_version
 ```
 
 Then SHA-256'd, and stored under `v1|<scope identity>|<digest>` so the store is
@@ -134,6 +134,18 @@ Two deliberate exclusions:
 `api_version` and `adapter_version` are included so that upgrading an adapter,
 or a provider moving to a new API version, does not serve results parsed by the
 old code.
+
+`dataset_version` extends the same rule to a provider that answers from a
+**pinned local dataset**. Refreshing the data would otherwise leave every cached
+answer describing a dataset that no longer exists — a problem no remote provider
+has, since its data version is whatever its API returned. It is `None` for every
+provider without local data, so their keys are unchanged.
+
+MISP Warning Lists sets it to `<profile fingerprint>:<dataset fingerprint>`, and
+both halves matter: the snapshot alone would serve one profile's answers to
+another, the profile alone would serve yesterday's data after a refresh. The
+executor knows none of that — it hashes a string a descriptor supplied, which is
+what keeps the mechanism generic rather than a special case.
 
 ### 4.3 Policy
 
@@ -591,12 +603,24 @@ distributed locks         distributed semaphores  shared rate-limit state
 real quota API calls      provider selection      query planning
 ```
 
-and every remaining provider integration — MISP Warning Lists, SecurityTrails,
-AbuseIPDB, Shodan, IPinfo — along with evidence fusion, verdict scoring, MCP, the
-Claude Skill and any web UI. Google Threat Intelligence (Task 7), urlscan.io
+and every remaining provider integration — SecurityTrails, AbuseIPDB, Shodan,
+IPinfo — along with evidence fusion, verdict scoring, MCP, the Claude Skill and
+any web UI. Google Threat Intelligence (Task 7), urlscan.io
 (Task 8), GreyNoise and Censys (Task 9), and the three abuse.ch platforms
-ThreatFox, URLhaus and MalwareBazaar (Task 10) all run behind these controls
-today.
+ThreatFox, URLhaus and MalwareBazaar (Task 10) and MISP Warning Lists (Task 11)
+all run behind these controls today.
+
+Task 11 is the first **credential-free, local** provider, and it needed almost
+nothing from this layer. `requires_credentials = False` was already supported
+generically: the executor skips the `NOT_CONFIGURED` gate, never touches the
+secret store, permits a shared cache scope only for providers in that position,
+and — since a credential-scoped cooldown needs a credential group it will not
+have — cannot put one on cooldown either. No provider-name branch was added.
+
+The one addition it did need is `ProviderDescriptor.dataset_version`, described in
+§4.2: a provider answering from a pinned local dataset has a cache-correctness
+problem no remote provider has, because refreshing the data invalidates every
+answer derived from it.
 
 The abuse.ch three are worth a note here, because they are the first providers to
 share a credential. Task 6 resolves by the descriptor's credential group, so one

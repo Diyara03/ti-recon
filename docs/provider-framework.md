@@ -12,7 +12,9 @@
 > [providers/threatfox.md](providers/threatfox.md),
 > [providers/urlhaus.md](providers/urlhaus.md) and
 > [providers/malwarebazaar.md](providers/malwarebazaar.md)) — three adapters
-> sharing one credential group and one source family.
+> sharing one credential group and one source family — plus MISP Warning Lists
+> (Task 11, see [providers/misp-warninglists.md](providers/misp-warninglists.md)),
+> the first provider with no transport, no credential and no network at all.
 >
 > Covers capabilities, descriptor, request, result envelope, error taxonomy,
 > the adapter contract, the registry and the shared HTTP transport.

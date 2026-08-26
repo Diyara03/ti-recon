@@ -1,0 +1,2050 @@
+{
+  "dataset_fingerprint": "b5ab02ed5b3d369b9c788876b7f17ef0cd259e51840fa4d06913d7d8baae09a7",
+  "diagnostics": {
+    "invalid_cidr_count": 0,
+    "invalid_entry_count": 0,
+    "invalid_regex_count": 0,
+    "malformed_list_count": 0,
+    "notes": [],
+    "skipped_list_count": 0,
+    "unmatchable_entry_count": 0,
+    "unsupported_matcher_count": 0
+  },
+  "entry_count": 428971,
+  "generated_at": "2026-08-25T15:51:11.436932Z",
+  "generator": "tools/update_misp_warninglists.py ti-recon/0.1.0",
+  "license": "CC0-1.0",
+  "list_count": 135,
+  "lists": [
+    {
+      "entry_count": 268,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known Akamai IP ranges",
+      "sha256": "2fa7401d99f62c55e48c53edd554433eea8d05ac8bf6dbc91f894da5f72e4020",
+      "slug": "akamai",
+      "version": 20240422
+    },
+    {
+      "entry_count": 1000,
+      "matcher": "hostname",
+      "matching_attributes": [
+        "hostname",
+        "domain",
+        "url",
+        "domain|ip"
+      ],
+      "name": "Top 1000 website from Alexa",
+      "sha256": "eb2af408840849f97977edeaa97a50efd7141dcbbbf2a654073a8e23550ab3f8",
+      "slug": "alexa",
+      "version": 20230511
+    },
+    {
+      "entry_count": 22,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Alphastrike research IP Ranges Used for Scanning",
+      "sha256": "d7743e019a39db73d99d9a3d33ce5d12ee3ece50786c5ef2837ba7d2041b3a26",
+      "slug": "alphastrike-research-nt-scanning",
+      "version": 26081010
+    },
+    {
+      "entry_count": 2,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Alpha Strike Labs IP Ranges Used for Scanning",
+      "sha256": "4578ec3e424b3e17b4119072146f3c215b217a384cfcaacdf87d1b19e305219c",
+      "slug": "alphastrike-scanning",
+      "version": 1
+    },
+    {
+      "entry_count": 3847,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known Amazon AWS IP address ranges",
+      "sha256": "59d7df2e841e5fd5b75b1c4af218916770f4b4af5fca8b4979307df99e74ea70",
+      "slug": "amazon-aws",
+      "version": 20260811
+    },
+    {
+      "entry_count": 4,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known Apple IP ranges",
+      "sha256": "c4ddbc33f958dee17173060d14b67ba6db786e292736a9b547ccf593cfe572ed",
+      "slug": "apple",
+      "version": 20241023
+    },
+    {
+      "entry_count": 26,
+      "matcher": "substring",
+      "matching_attributes": [
+        "domain",
+        "hostname",
+        "domain|ip",
+        "url"
+      ],
+      "name": "List of known domains used by automated malware analysis services & security vendors",
+      "sha256": "1a8bee084d9ceeb8325301db9de1f9a537950cb1a3f0a7c23808b04ab2516732",
+      "slug": "automated-malware-analysis",
+      "version": 5
+    },
+    {
+      "entry_count": 2226,
+      "matcher": "hostname",
+      "matching_attributes": [
+        "domain",
+        "hostname",
+        "domain|ip",
+        "url"
+      ],
+      "name": "List of known bank domains",
+      "sha256": "2d5dc79b93dff7d1fca8282d9072901833e747ebec85f2bb812e2232b75bc72f",
+      "slug": "bank-website",
+      "version": 9
+    },
+    {
+      "entry_count": 31,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Bufferover IP Ranges Used for Scanning",
+      "sha256": "92cfffdb9b5b89d9a0170a830b0803d06c071494c37b33ff944dd2f538e02537",
+      "slug": "bufferover-nt-scanning",
+      "version": 26081010
+    },
+    {
+      "entry_count": 901,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known Bunny.net CDN ranges",
+      "sha256": "a39b1b79f86a0e5d06e4c1da038de633b93366c80f0ed56fe987624ba6f22a0a",
+      "slug": "bunny-net",
+      "version": 20260811
+    },
+    {
+      "entry_count": 21,
+      "matcher": "string",
+      "matching_attributes": [
+        "hostname",
+        "domain",
+        "url",
+        "domain|ip"
+      ],
+      "name": "Captive Portal Detection Hostnames",
+      "sha256": "81bc30255c10fdb274e174ed222fb7dc092d4ab261f291e673a756a553a3f1a8",
+      "slug": "captive-portals",
+      "version": 20230130
+    },
+    {
+      "entry_count": 13,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Censys IP Ranges Used for Scanning",
+      "sha256": "9046b5822ecc7bb22056bb67e139cbf7a611dde94fb729bc0abd355325d80f23",
+      "slug": "censys-scanning",
+      "version": 3
+    },
+    {
+      "entry_count": 42,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip"
+      ],
+      "name": "List of known check-host.net IP address ranges",
+      "sha256": "19428416b17edd3cf678a4b804c13fcc350a510f0971966a92fd9c63fa22fcb2",
+      "slug": "check-host-net",
+      "version": 20240402
+    },
+    {
+      "entry_count": 20,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "domain|ip",
+        "ip-src|port"
+      ],
+      "name": "CIRCL IP address used for security scanning",
+      "sha256": "64669e8f430af95b31fc0042abc0d4ca4022b1b4e1c988683482eff70aeb517b",
+      "slug": "circl-security-scanning",
+      "version": 26081401
+    },
+    {
+      "entry_count": 2,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "domain|ip",
+        "ip-src|port"
+      ],
+      "name": "CIRCL IP address used for SSH scanning",
+      "sha256": "7752c6806d402b24c44cf7360735f11c4d4909624151508b19f6e0a92233077d",
+      "slug": "circl-ssh-scanning",
+      "version": 26081401
+    },
+    {
+      "entry_count": 1000,
+      "matcher": "string",
+      "matching_attributes": [
+        "hostname",
+        "domain",
+        "url",
+        "domain|ip"
+      ],
+      "name": "Top 1000 websites from Cisco Umbrella",
+      "sha256": "46d12103036afae1a460693e9e498a06a0cc6fb7f83e777aa77e73e46b01b5eb",
+      "slug": "cisco_top1000",
+      "version": 20260811
+    },
+    {
+      "entry_count": 10000,
+      "matcher": "string",
+      "matching_attributes": [
+        "hostname",
+        "domain",
+        "url",
+        "domain|ip"
+      ],
+      "name": "Top 10 000 websites from Cisco Umbrella",
+      "sha256": "7b5f052c9a7335e7f0b6d69071d99d7ce242d91929a9005e978f2d7f64a2be32",
+      "slug": "cisco_top10k",
+      "version": 20260811
+    },
+    {
+      "entry_count": 20000,
+      "matcher": "string",
+      "matching_attributes": [
+        "hostname",
+        "domain",
+        "url",
+        "domain|ip"
+      ],
+      "name": "Top 20 000 websites from Cisco Umbrella",
+      "sha256": "14ed9fcd2379a2698a325ef8808b47fd06974ea986c68b33cdb8c79340c58bed",
+      "slug": "cisco_top20k",
+      "version": 20260811
+    },
+    {
+      "entry_count": 5000,
+      "matcher": "string",
+      "matching_attributes": [
+        "hostname",
+        "domain",
+        "url",
+        "domain|ip"
+      ],
+      "name": "Top 5000 websites from Cisco Umbrella",
+      "sha256": "4acd8532b95eb95ee94c3f1d158a780436ebc82f9e4ac1902a6829f6b7ea22a3",
+      "slug": "cisco_top5k",
+      "version": 20260811
+    },
+    {
+      "entry_count": 22,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known Cloudflare IP ranges",
+      "sha256": "34dd3cdcb35a402a805a025cd12cc382938759cee4a3cb348cb4939305228b8d",
+      "slug": "cloudflare",
+      "version": 20260811
+    },
+    {
+      "entry_count": 10001,
+      "matcher": "string",
+      "matching_attributes": [
+        "hostname",
+        "domain",
+        "url",
+        "domain|ip"
+      ],
+      "name": "Top 10,000 domains from Cloudflare Radar",
+      "sha256": "d2b33bb042d5d8d2fcee77dad687f5cbe0762af68c75f4caa8b0076862c2c117",
+      "slug": "cloudflare-top10k",
+      "version": 20260810
+    },
+    {
+      "entry_count": 1001,
+      "matcher": "string",
+      "matching_attributes": [
+        "hostname",
+        "domain",
+        "url",
+        "domain|ip"
+      ],
+      "name": "Top 1,000 domains from Cloudflare Radar",
+      "sha256": "f1297e3434025cd87d239adb5a7654236b10f89216bfcc97b0b330e2bfc73ce7",
+      "slug": "cloudflare-top1k",
+      "version": 20260810
+    },
+    {
+      "entry_count": 201,
+      "matcher": "string",
+      "matching_attributes": [
+        "hostname",
+        "domain",
+        "url",
+        "domain|ip"
+      ],
+      "name": "Top 200 domains from Cloudflare Radar",
+      "sha256": "f6f8117992cea4851ade5722d28a8fd28e5ab5b7cbb8ecc5370cfbf32f984fe7",
+      "slug": "cloudflare-top200",
+      "version": 20260810
+    },
+    {
+      "entry_count": 20001,
+      "matcher": "string",
+      "matching_attributes": [
+        "hostname",
+        "domain",
+        "url",
+        "domain|ip"
+      ],
+      "name": "Top 20,000 domains from Cloudflare Radar",
+      "sha256": "fd857bec73e0b7171c413844cbd4080d2f5f072cc3b3019e136523fc8a700bd6",
+      "slug": "cloudflare-top20k",
+      "version": 20260810
+    },
+    {
+      "entry_count": 2001,
+      "matcher": "string",
+      "matching_attributes": [
+        "hostname",
+        "domain",
+        "url",
+        "domain|ip"
+      ],
+      "name": "Top 2,000 domains from Cloudflare Radar",
+      "sha256": "47136d8bfeee1adadf45781fdae88353b5378c56de0dc4cb1c7a3d2f592ba666",
+      "slug": "cloudflare-top2k",
+      "version": 20260810
+    },
+    {
+      "entry_count": 50001,
+      "matcher": "string",
+      "matching_attributes": [
+        "hostname",
+        "domain",
+        "url",
+        "domain|ip"
+      ],
+      "name": "Top 50,000 domains from Cloudflare Radar",
+      "sha256": "dab70cffca9a0a50cb5ba097f8495dcf6a3f681398aad2006a8b7a74dce98d05",
+      "slug": "cloudflare-top50k",
+      "version": 20260810
+    },
+    {
+      "entry_count": 5001,
+      "matcher": "string",
+      "matching_attributes": [
+        "hostname",
+        "domain",
+        "url",
+        "domain|ip"
+      ],
+      "name": "Top 5,000 domains from Cloudflare Radar",
+      "sha256": "a1e5c084e9ec2d0c3b8151ee2d01de9c34edd934f639d9885bb32af815b41cfd",
+      "slug": "cloudflare-top5k",
+      "version": 20260810
+    },
+    {
+      "entry_count": 1307,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Coalition signals intelligence IP Ranges Used for Scanning",
+      "sha256": "ed065e1571636067eaadd38f374feca3a96cac351d243b01841c970c1c0f475b",
+      "slug": "coalition-signals-intelligence-nt-scanning",
+      "version": 26081010
+    },
+    {
+      "entry_count": 1,
+      "matcher": "regex",
+      "matching_attributes": [
+        "email-dst",
+        "email-src",
+        "target-email"
+      ],
+      "name": "Common contact e-mail addresses",
+      "sha256": "2fe081064dc9912919d84c2e81a09e9faa88c652c5dc804b6558c377dfc42f5c",
+      "slug": "common-contact-emails",
+      "version": 20200226
+    },
+    {
+      "entry_count": 69,
+      "matcher": "string",
+      "matching_attributes": [
+        "md5",
+        "sha1",
+        "sha224",
+        "sha256",
+        "sha512",
+        "filename|md5",
+        "filename|sha1",
+        "filename|sha224",
+        "filename|sha256",
+        "filename|sha512"
+      ],
+      "name": "List of known hashes with common false-positives (based on Florian Roth input list)",
+      "sha256": "cf4de02630c91d8a2ac3e1cbd532c5a2f7c694cd55b4659734b632d028395df5",
+      "slug": "common-ioc-false-positive",
+      "version": 2
+    },
+    {
+      "entry_count": 319,
+      "matcher": "hostname",
+      "matching_attributes": [
+        "domain",
+        "hostname",
+        "url"
+      ],
+      "name": "Valid covid-19 related domains",
+      "sha256": "441f19e37b91b33dca80f409b1ee36ebe0b7f6e4b7f35d2fc8deeeb8a1514d58",
+      "slug": "covid",
+      "version": 9
+    },
+    {
+      "entry_count": 753,
+      "matcher": "hostname",
+      "matching_attributes": [
+        "domain",
+        "hostname",
+        "url"
+      ],
+      "name": "Covid-19 Cyber Threat Coalition's Whitelist",
+      "sha256": "203c6a471c0ae88f4149eef28a4257a3f898b51dfaee6a4a9df2b7de6b9e76ff",
+      "slug": "covid-19-cyber-threat-coalition-whitelist",
+      "version": 20260811
+    },
+    {
+      "entry_count": 99,
+      "matcher": "hostname",
+      "matching_attributes": [
+        "domain",
+        "hostname",
+        "url"
+      ],
+      "name": "Covid-19 Krassi's Whitelist",
+      "sha256": "7d13182a612925f3f826946d1bde4b062dd157207c168fd43891b6fa5203ba45",
+      "slug": "covid-19-krassi-whitelist",
+      "version": 20260811
+    },
+    {
+      "entry_count": 222,
+      "matcher": "string",
+      "matching_attributes": [
+        "hostname",
+        "domain",
+        "domain|ip"
+      ],
+      "name": "CRL and OCSP domains",
+      "sha256": "ef277ccde7d5b76dea71b60ed61c48c8dd7c22a79a094a735fca1bb7ae30c1f6",
+      "slug": "crl-hostname",
+      "version": 20260811
+    },
+    {
+      "entry_count": 391,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "CRL and OCSP IP addresses",
+      "sha256": "b122c50931da3c4ba23b0945cad3188b4ba880818d2e3d2f7a056ed33a51b5b7",
+      "slug": "crl-ip",
+      "version": 20260811
+    },
+    {
+      "entry_count": 1,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Cybergreen IP Ranges Used for Scanning",
+      "sha256": "2cdceb34c761563519b5e2a0b4d87668e1f783ffdf5750768369b449ed4c9bbe",
+      "slug": "cybergreen-nt-scanning",
+      "version": 25121022
+    },
+    {
+      "entry_count": 15,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Cyberresilience IP Ranges Used for Scanning",
+      "sha256": "0ddac01fcda61114db4ff0a6f986fd7f64fd8ee2a9dd7973df9d4361d0a71c35",
+      "slug": "cyberresilience-nt-scanning",
+      "version": 26081010
+    },
+    {
+      "entry_count": 10,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Cypex IP Ranges Used for Scanning",
+      "sha256": "8ac7c3e153986185008cadb17a16bf8fb244594b07871b48a8a4402392ac49f1",
+      "slug": "cypex-nt-scanning",
+      "version": 26040914
+    },
+    {
+      "entry_count": 13,
+      "matcher": "hostname",
+      "matching_attributes": [
+        "domain",
+        "hostname",
+        "domain|ip"
+      ],
+      "name": "List of known dax30 webpages",
+      "sha256": "1689911fc6b3f0538682c94e638a3141aa3558f5eaf4868365431d941220cc08",
+      "slug": "dax30",
+      "version": 1
+    },
+    {
+      "entry_count": 43,
+      "matcher": "hostname",
+      "matching_attributes": [
+        "hostname",
+        "domain"
+      ],
+      "name": "OSINT.DigitalSide.IT Warning List",
+      "sha256": "484a9a5f5f54872618ee83e16d9d8c62793dae19b65139890b65fb7d68ac007d",
+      "slug": "digitalside",
+      "version": 20260811
+    },
+    {
+      "entry_count": 8201,
+      "matcher": "substring",
+      "matching_attributes": [
+        "email-src",
+        "email-dst",
+        "whois-registrant-email",
+        "domain|ip",
+        "dns-soa-email"
+      ],
+      "name": "List of disposable email domains",
+      "sha256": "d2dda03997268898bcf7ad34e9d22fbaa91832d440ebcbeaa3293bfa91eeb454",
+      "slug": "disposable-email",
+      "version": 20260811
+    },
+    {
+      "entry_count": 35467,
+      "matcher": "hostname",
+      "matching_attributes": [
+        "domain",
+        "hostname",
+        "domain|ip"
+      ],
+      "name": "List of known dynamic DNS domains",
+      "sha256": "9b39d87b52e9bd32f7fce304cf9bef602ec8e11a652e29f30ba334d9686b2efc",
+      "slug": "dynamic-dns",
+      "version": 2
+    },
+    {
+      "entry_count": 15,
+      "matcher": "string",
+      "matching_attributes": [
+        "md5",
+        "sha1",
+        "sha256",
+        "sha512",
+        "filename|md5",
+        "filename|sha1",
+        "filename|sha256",
+        "filename|sha512"
+      ],
+      "name": "List of hashes for EICAR test virus",
+      "sha256": "1c713b6b3babc01dc9e9cb8640fda27cdf06be8564e087327456b082b1b09128",
+      "slug": "eicar.com",
+      "version": 2
+    },
+    {
+      "entry_count": 6,
+      "matcher": "string",
+      "matching_attributes": [
+        "md5",
+        "sha1",
+        "sha224",
+        "sha256",
+        "sha512",
+        "filename|md5",
+        "filename|sha1",
+        "filename|sha224",
+        "filename|sha256",
+        "filename|sha512",
+        "ssdeep",
+        "filename|ssdeep"
+      ],
+      "name": "List of known hashes for empty files",
+      "sha256": "aa4e100e9e15f50737af24e9eff52621041e61f021e4af924bc975ab36199cc5",
+      "slug": "empty-hashes",
+      "version": 3
+    },
+    {
+      "entry_count": 2,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "F6 IP Ranges Used for Scanning",
+      "sha256": "890f3437833897a4273887eb91b6f9744c86897e2f9ae10bb65c8e7d0001334a",
+      "slug": "f6-nt-scanning",
+      "version": 26081010
+    },
+    {
+      "entry_count": 21,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known Fastly IP address ranges",
+      "sha256": "9976922532fa0eaab9faeb4f85be14f118af9eee2b512132127ccd7f7db50506",
+      "slug": "fastly",
+      "version": 20260819
+    },
+    {
+      "entry_count": 24,
+      "matcher": "hostname",
+      "matching_attributes": [
+        "domain",
+        "hostname",
+        "domain|ip"
+      ],
+      "name": "List of known hostname used for querying your source IP. This can be used as exclusion for your Passive DNS lookup.",
+      "sha256": "10063a8c7288f79ba6adb7ce51d6021e3553be59a3eacb3d7ed2fa54f0d99de2",
+      "slug": "findip-host",
+      "version": 8
+    },
+    {
+      "entry_count": 5446,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known GitHub IP ranges (https://api.github.com/meta)",
+      "sha256": "8beb655eb44851aead01999d54d1f2fe76815a69111cf2e46803889d5e149aaf",
+      "slug": "github",
+      "version": 20260811
+    },
+    {
+      "entry_count": 669,
+      "matcher": "string",
+      "matching_attributes": [
+        "domain",
+        "hostname",
+        "domain|ip",
+        "url"
+      ],
+      "name": "List of known google domains",
+      "sha256": "feffb8664424cb58a89b279b875081c22eee53d8b639c3c411230fba40e77268",
+      "slug": "google",
+      "version": 7
+    },
+    {
+      "entry_count": 471,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known GCP (Google Cloud Platform) IP address ranges",
+      "sha256": "ca7010222f337a5cb7c7bbdb56656ba1524aa15722af172574ef85adae7442b9",
+      "slug": "google-gcp",
+      "version": 20260811
+    },
+    {
+      "entry_count": 8,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known Gmail sending IP ranges",
+      "sha256": "6dca4bf0a228c198c2787dbb87cef1271694b488736bbf6dda39090920174331",
+      "slug": "google-gmail-sending-ips",
+      "version": 20260811
+    },
+    {
+      "entry_count": 65,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known Googlebot IP ranges (https://developers.google.com/search/apis/ipranges/googlebot.json)",
+      "sha256": "0edb66fcc4a87c61137c7b875b84651d777d9342d391ea8390310c1f547bf16f",
+      "slug": "googlebot",
+      "version": 20260811
+    },
+    {
+      "entry_count": 13747,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known iCloud Private Relay egress IP address ranges",
+      "sha256": "87c957edd48e3f87962c0ce7b5d978db0cb1b0e50b05451c73a0990599ae1ced",
+      "slug": "icloud-private-relay",
+      "version": 20260811
+    },
+    {
+      "entry_count": 264,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Internet census IP Ranges Used for Scanning",
+      "sha256": "a430f0de3ce48b990f559aaa81fbadbafe4116f75f41cabb1332bed4b87eba54",
+      "slug": "internet-census-nt-scanning",
+      "version": 26081010
+    },
+    {
+      "entry_count": 6,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of published IP address ranges for Internet Cleanup Foundation scanners",
+      "sha256": "5d05d1b4f264c5fea5c2b4a51d9c3ff2a57b5b8e560d6fe506cf49c87ce4e6be",
+      "slug": "internetcleanup-scanner",
+      "version": 20260811
+    },
+    {
+      "entry_count": 3,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Intrinsec IP Ranges Used for Scanning",
+      "sha256": "5a4a3eea2e49e11eb15fa73c020a05aff4a4ca309f72660b36812ff70c39ed56",
+      "slug": "intrinsec-nt-scanning",
+      "version": 26081010
+    },
+    {
+      "entry_count": 18,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Ipinfo IP Ranges Used for Scanning",
+      "sha256": "7d0c29a06af65fd9c34379c393278708561f001926f099c385eddd5bd967c370",
+      "slug": "ipinfo-nt-scanning",
+      "version": 26081010
+    },
+    {
+      "entry_count": 22,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Ipip IP Ranges Used for Scanning",
+      "sha256": "13e6ac6fffcd20c3ad9edd36364981162dff49760b8749661e2373939e4f455f",
+      "slug": "ipip-nt-scanning",
+      "version": 26081010
+    },
+    {
+      "entry_count": 1,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "List of IPv6 link local blocks",
+      "sha256": "fd67d60225868f1f4f7062469826e946e8072ed0d4a8dbcfd73bafe78e96fc97",
+      "slug": "ipv6-linklocal",
+      "version": 3
+    },
+    {
+      "entry_count": 91,
+      "matcher": "hostname",
+      "matching_attributes": [
+        "domain",
+        "hostname",
+        "domain|ip",
+        "url"
+      ],
+      "name": "List of known link in Bio domains",
+      "sha256": "2ad6dcd87684599e0e1ecb181ac00c95dbcd2190160182bd45d784a0bae4f57e",
+      "slug": "link-in-bio",
+      "version": 12
+    },
+    {
+      "entry_count": 175,
+      "matcher": "hostname",
+      "matching_attributes": [
+        "domain",
+        "domain|ip",
+        "hostname",
+        "hostname|port",
+        "url"
+      ],
+      "name": "List of LOTS (Living Off Trusted Sites) Project Domains",
+      "sha256": "363eef9324d6dd83270a7cace59a13a9c14919fadf4ab39df973a18ae16363ef",
+      "slug": "lots-project",
+      "version": 20241104
+    },
+    {
+      "entry_count": 9999,
+      "matcher": "string",
+      "matching_attributes": [
+        "hostname",
+        "domain"
+      ],
+      "name": "Top 10000 websites from Majestic Million",
+      "sha256": "dbcc19d872a739492762d9e4a5dc82649024a36f90c76d6e48faf97d7d89687a",
+      "slug": "majestic_million",
+      "version": 20231002
+    },
+    {
+      "entry_count": 191,
+      "matcher": "string",
+      "matching_attributes": [
+        "domain",
+        "hostname",
+        "domain|ip",
+        "url"
+      ],
+      "name": "List of known microsoft domains",
+      "sha256": "0324be8426720254f3c4d79b3208f519a6c1c1dc9b7e050af2f835ea40e42ab2",
+      "slug": "microsoft",
+      "version": 5
+    },
+    {
+      "entry_count": 141,
+      "matcher": "substring",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain",
+        "domain|ip",
+        "hostname",
+        "url"
+      ],
+      "name": "List of known Office 365 Attack Simulator used for phishing awareness campaigns",
+      "sha256": "e940bf89425bda64fd628a4277e4d80be3a837cd023270fe4cce72060321bd51",
+      "slug": "microsoft-attack-simulator",
+      "version": 20260405
+    },
+    {
+      "entry_count": 2683,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known Microsoft Azure Datacenter IP Ranges",
+      "sha256": "257816f331af4a01be3259175021de3fae7d8748541b977a4afd69c213b62b34",
+      "slug": "microsoft-azure",
+      "version": 20241203
+    },
+    {
+      "entry_count": 4,
+      "matcher": "string",
+      "matching_attributes": [
+        "azure-application-id"
+      ],
+      "name": "List of Azure Applicaiton IDs",
+      "sha256": "b65ab6e7e0b514903a70f350c738266f961f4392696b5ac2091af8fbe407cb29",
+      "slug": "microsoft-azure-appid",
+      "version": 20260811
+    },
+    {
+      "entry_count": 211,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known Microsoft Azure China Datacenter IP Ranges",
+      "sha256": "d4a4b8cdd8f5baadadca15478acc8c734c334f3a4fefa818a49f888aede5303f",
+      "slug": "microsoft-azure-china",
+      "version": 20241203
+    },
+    {
+      "entry_count": 36,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known Microsoft Azure Germany Datacenter IP Ranges",
+      "sha256": "e434a9953c1c1925ba289ba4e4f81e162fd76e6d67dc70cda828c64ccdd95d63",
+      "slug": "microsoft-azure-germany",
+      "version": 20241203
+    },
+    {
+      "entry_count": 201,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known Microsoft Azure US Government Cloud Datacenter IP Ranges",
+      "sha256": "97afc996be1f3c9f2a41e7a9ab79b985fb13f60fc5977cbb5b60a7d6522c21ec",
+      "slug": "microsoft-azure-us-gov",
+      "version": 20241203
+    },
+    {
+      "entry_count": 16,
+      "matcher": "hostname",
+      "matching_attributes": [
+        "hostname",
+        "domain",
+        "url",
+        "domain|ip"
+      ],
+      "name": "List of known Microsoft Defender for Cloud Apps (MDCA/MCAS) proxy hostnames",
+      "sha256": "d0b77272b5bb847d87e4e91930c9349dd8463c6d13ef657c165e887f7985f0b8",
+      "slug": "microsoft-mdca-proxy",
+      "version": 20260819
+    },
+    {
+      "entry_count": 183,
+      "matcher": "string",
+      "matching_attributes": [
+        "domain",
+        "domain|ip",
+        "hostname"
+      ],
+      "name": "List of known Office 365 URLs",
+      "sha256": "cbf8ba71af907055c84b41e263c6ffb828364c9334c25e0902c3d99bb563cbcd",
+      "slug": "microsoft-office365",
+      "version": 20260811
+    },
+    {
+      "entry_count": 67,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known Office 365 IP address ranges in China",
+      "sha256": "7776ec69797b590863834a1d2a9fabd980e2f162e2e2bb203fa2d0024af24431",
+      "slug": "microsoft-office365-cn",
+      "version": 20260811
+    },
+    {
+      "entry_count": 82,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known Office 365 IP address ranges",
+      "sha256": "2f33565a818a72ff8842af90b065503be9bfd7132c34172535f0c8b4c971dcd8",
+      "slug": "microsoft-office365-ip",
+      "version": 20260811
+    },
+    {
+      "entry_count": 144,
+      "matcher": "string",
+      "matching_attributes": [
+        "domain",
+        "hostname",
+        "domain|ip"
+      ],
+      "name": "List of known Windows 10 connection endpoints",
+      "sha256": "be0dd5944691a70194e3aeec7359a934332a6d9c0bce27acc84be53f33d24cf9",
+      "slug": "microsoft-win10-connection-endpoints",
+      "version": 3
+    },
+    {
+      "entry_count": 39,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Modat IP Ranges Used for Scanning",
+      "sha256": "319ccb6238ac1cbbaca625fb877dc0659ed340db49bce826744b8217a8154ff6",
+      "slug": "modat-nt-scanning",
+      "version": 26081010
+    },
+    {
+      "entry_count": 42,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of published IP address ranges for Modat Scanner",
+      "sha256": "780e8659f54e53726115306b6636af2c182c2b0fa46dcfd269ce0d9aed4ed76f",
+      "slug": "modat-scanner",
+      "version": 20260811
+    },
+    {
+      "entry_count": 500,
+      "matcher": "string",
+      "matching_attributes": [
+        "hostname",
+        "domain",
+        "uri",
+        "url"
+      ],
+      "name": "Top 500 domains and pages from https://moz.com/top500",
+      "sha256": "13359d40e38da7c7ff09b8229666193213e03fecde9b69fea86a97093b8931de",
+      "slug": "moz-top500",
+      "version": 20260811
+    },
+    {
+      "entry_count": 516,
+      "matcher": "string",
+      "matching_attributes": [
+        "md5",
+        "sha1",
+        "sha256",
+        "filename|md5",
+        "filename|sha1",
+        "filename|sha256",
+        "x509-fingerprint-md5",
+        "x509-fingerprint-sha1",
+        "x509-fingerprint-sha256"
+      ],
+      "name": "Fingerprint of trusted CA certificates",
+      "sha256": "ee48a1027a35eec20a486eca1c5267c7297ca0446948d96585b0a3a6688e7651",
+      "slug": "mozilla-CA",
+      "version": 20260811
+    },
+    {
+      "entry_count": 7668,
+      "matcher": "string",
+      "matching_attributes": [
+        "md5",
+        "sha1",
+        "sha256",
+        "filename|md5",
+        "filename|sha1",
+        "filename|sha256",
+        "x509-fingerprint-md5",
+        "x509-fingerprint-sha1",
+        "x509-fingerprint-sha256"
+      ],
+      "name": "Fingerprint of known intermediate of trusted certificates",
+      "sha256": "cf29b467b66befe38294b68e9c48a7610dbce7c346c182867dedeedb2bedddd5",
+      "slug": "mozilla-IntermediateCA",
+      "version": 20260811
+    },
+    {
+      "entry_count": 16,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of RFC 5771 multicast CIDR blocks",
+      "sha256": "6c49fc922c5137b1af61c1d526cd9ef7dd9c144a35d4ea91139aca9226784a88",
+      "slug": "multicast",
+      "version": 4
+    },
+    {
+      "entry_count": 11,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Netsecscan IP Ranges Used for Scanning",
+      "sha256": "215ac66223184bba1e543b0a600cf2fa4a0f9154c22074fa37d75870d1171a21",
+      "slug": "netsecscan-nt-scanning",
+      "version": 25121022
+    },
+    {
+      "entry_count": 11,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "NetSecScan IP-Ranges, pot. used for Scanning",
+      "sha256": "f93f0fbff4ff18e4dbda5460ce7f27461d676d7feec039b6970a67671d25b36d",
+      "slug": "netsecscan-scanning",
+      "version": 1
+    },
+    {
+      "entry_count": 151,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Onyphe IP Ranges Used for Scanning",
+      "sha256": "5f034d76d1056c960c9c8ab90ef7bfba84ec357968646f7c73a4c0aa79a525c0",
+      "slug": "onyphe-nt-scanning",
+      "version": 26081010
+    },
+    {
+      "entry_count": 9,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of published IP address ranges for Onyphe Scanner",
+      "sha256": "6ba37cd27192d9d5b3ef45061faefc516accfcd1ebbde8c7482898aa0ecede67",
+      "slug": "onyphe-scanner",
+      "version": 20260811
+    },
+    {
+      "entry_count": 2,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known IP address ranges for OpenAI GPT crawler bot",
+      "sha256": "25c1f3783c53b1efc2843f3dfda95e8a5cbe9e4e7233ebeaec9fe0bd30259e68",
+      "slug": "openai-gptbot",
+      "version": 20240426
+    },
+    {
+      "entry_count": 793,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known Oracle Cloud Infrastructure (OCI) IP address ranges",
+      "sha256": "1b7c2697516e848f33c75c92e4b4cdbd623de219e38777c54809dad5edfca3d2",
+      "slug": "oracle-oci",
+      "version": 20260808
+    },
+    {
+      "entry_count": 622,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known OVH Cluster IPs",
+      "sha256": "53193834bbbd9badb24e5bb6b8c90c30346f15a55e374ceced94356dc56959a6",
+      "slug": "ovh-cluster",
+      "version": 20260819
+    },
+    {
+      "entry_count": 276,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known Palo Alto Cortex Cloud IP ranges",
+      "sha256": "b6ba314d52a45fd63e82cfddcb65d814a2d81dae1244f0b4fe848d824c23d2f9",
+      "slug": "palo-alto-networks-cortex-cloud",
+      "version": 20260819
+    },
+    {
+      "entry_count": 12,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known IP address ranges for Palo Alto Networks Cortex Xpanse",
+      "sha256": "040c0f5bd53cc147b6487ed14351a49cea3c67e5a8882261aaf724e9df891b7f",
+      "slug": "palo-alto-networks-cortex-xpanse",
+      "version": 20260208
+    },
+    {
+      "entry_count": 108,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "Parking domains",
+      "sha256": "bcf871236e10ea8fac0134377906f09cfd74d4bfaa7975481b3959f055e770d7",
+      "slug": "parking-domain",
+      "version": 20240422
+    },
+    {
+      "entry_count": 129,
+      "matcher": "hostname",
+      "matching_attributes": [
+        "domain|ip",
+        "domain",
+        "hostname"
+      ],
+      "name": "Parking domains name server",
+      "sha256": "a36d326e6bb2f7775314db093fface4953219e3f2f6da0a35fb34a8c099e12bc",
+      "slug": "parking-domain-ns",
+      "version": 20221024
+    },
+    {
+      "entry_count": 33,
+      "matcher": "regex",
+      "matching_attributes": [
+        "phone-number",
+        "whois-registrant-phone"
+      ],
+      "name": "Unattributed phone number.",
+      "sha256": "e3216548f60c92f72d0a3b842871ec1c4d381d346d219e65ed3b7ecd9ae2f13f",
+      "slug": "phone_numbers",
+      "version": 20260811
+    },
+    {
+      "entry_count": 6,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Probethenet IP Ranges Used for Scanning",
+      "sha256": "679725bb1aa61e141b7846e7f66a82cd0c36c340cc7f32e74d69e853c5fb4874",
+      "slug": "probethenet-nt-scanning",
+      "version": 26070809
+    },
+    {
+      "entry_count": 34783,
+      "matcher": "hostname",
+      "matching_attributes": [
+        "hostname",
+        "domain",
+        "url",
+        "domain|ip"
+      ],
+      "name": "List of known public DNS resolvers expressed as hostname",
+      "sha256": "80cc51de1550fc3190bd55392544dc4a677d076255e7733553b42baf1b01a5e1",
+      "slug": "public-dns-hostname",
+      "version": 20240615
+    },
+    {
+      "entry_count": 62745,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known IPv4 public DNS resolvers",
+      "sha256": "29bcdc8da800be0d77e88fe76794bea0d509efa75b1393fe3d330d10e61e119c",
+      "slug": "public-dns-v4",
+      "version": 20240615
+    },
+    {
+      "entry_count": 269,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known IPv6 public DNS resolvers",
+      "sha256": "7217262bd8503d2fa967462eccc89640a9480076d0d47f5f2ad09ff2d3ce2445",
+      "slug": "public-dns-v6",
+      "version": 20240615
+    },
+    {
+      "entry_count": 89,
+      "matcher": "string",
+      "matching_attributes": [
+        "domain",
+        "hostname",
+        "domain|ip",
+        "url",
+        "uri"
+      ],
+      "name": "List of known public IPFS gateways",
+      "sha256": "5d1f28c364d35bd0d3b87ee0c7fc595308abe646e771519f7ea19f485114b423",
+      "slug": "public-ipfs-gateways",
+      "version": 1
+    },
+    {
+      "entry_count": 18,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Rapid7 IP Ranges Used for Scanning",
+      "sha256": "70d4e89adb98e2236d5cf2e8b7f6435421ee5f9533bed8492856421fb9758fc7",
+      "slug": "rapid7-nt-scanning",
+      "version": 26081010
+    },
+    {
+      "entry_count": 25,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Research scanner IP Ranges Used for Scanning",
+      "sha256": "86dda97e310fd6a80e48f254888a69072c958c46ce2094af41f038d7dc04bf6b",
+      "slug": "research-scanner-nt-scanning",
+      "version": 26081010
+    },
+    {
+      "entry_count": 3,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "List of RFC 1918 CIDR blocks",
+      "sha256": "7e4ef64feb547f78baacc53ac87a56fc41a435dd830bfb1911a41685c8c35865",
+      "slug": "rfc1918",
+      "version": 5
+    },
+    {
+      "entry_count": 1,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "List of RFC 3849 CIDR blocks",
+      "sha256": "1cf0fd0991c30bd6924c1a6f99bac539214d114c2762a617d88a1ed7772a1ee4",
+      "slug": "rfc3849",
+      "version": 4
+    },
+    {
+      "entry_count": 15,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "List of RFC 5735 CIDR blocks",
+      "sha256": "0b413612d127b1e432b1fe97980d6a9a901c9bf3b8316bbae9033c50c9eb7296",
+      "slug": "rfc5735",
+      "version": 5
+    },
+    {
+      "entry_count": 1,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "List of RFC 6598 CIDR blocks",
+      "sha256": "837536fe158cc006294a52eaa59f3db1a9d22aa74a2a732ead71de6b1682dbb5",
+      "slug": "rfc6598",
+      "version": 5
+    },
+    {
+      "entry_count": 21,
+      "matcher": "string",
+      "matching_attributes": [
+        "hostname",
+        "domain",
+        "domain|ip"
+      ],
+      "name": "List of RFC 6761 Special-Use Domain Names",
+      "sha256": "11a475fa8fbf3830cae35a0bc8cdbd1769d7c692d36f10fe4d9d36fb2d8b8364",
+      "slug": "rfc6761",
+      "version": 2
+    },
+    {
+      "entry_count": 10231,
+      "matcher": "string",
+      "matching_attributes": [
+        "hostname",
+        "domain",
+        "domain|ip"
+      ],
+      "name": "Second level TLDs as known by Mozilla Foundation",
+      "sha256": "38f1b3661d66b2f1f3ec005984d78132538e96a073beede67e40524ea169deb1",
+      "slug": "second-level-tlds",
+      "version": 20260811
+    },
+    {
+      "entry_count": 647,
+      "matcher": "hostname",
+      "matching_attributes": [
+        "domain",
+        "domain|ip",
+        "hostname",
+        "url",
+        "uri"
+      ],
+      "name": "List of known security providers/vendors blog domain",
+      "sha256": "da63ec252b8bc092e79876f40a8f4c8721e6b34a10cfc018591972bd5636329d",
+      "slug": "security-provider-blogpost",
+      "version": 5
+    },
+    {
+      "entry_count": 21,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Shadowforce IP Ranges Used for Scanning",
+      "sha256": "c806e6c0892260e09536c670e77c82b074133f5c4bbfe1224567b3f4cdd1f58a",
+      "slug": "shadowforce-nt-scanning",
+      "version": 26081010
+    },
+    {
+      "entry_count": 2,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Shadowforce IP-Ranges, pot. used for Scanning",
+      "sha256": "ee66886872affe5e4426192b4df2c011389973eb07efbbd2d4775063d8136dc2",
+      "slug": "shadowforce-scanning",
+      "version": 1
+    },
+    {
+      "entry_count": 27,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Shadowserver IP-Ranges, pot. used for Scanning",
+      "sha256": "1c75903322229e19b932abf4adb1143ebbcd3e6e261f86010738a4a66e6d3956",
+      "slug": "shadowserver",
+      "version": 1
+    },
+    {
+      "entry_count": 9,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Shadowserver IP Ranges Used for Scanning",
+      "sha256": "ff1d735cb70ced0a3abc2b1283eeb725b9b08cebc1ffb32c02737db7759747cd",
+      "slug": "shadowserver-nt-scanning",
+      "version": 26070809
+    },
+    {
+      "entry_count": 28,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Shodan IP Ranges Used for Scanning",
+      "sha256": "5902677601e6a95897f0146775ecfe3e50da90938a2249173690cd822bca397b",
+      "slug": "shodan-nt-scanning",
+      "version": 26081010
+    },
+    {
+      "entry_count": 42,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Shodan IP-Ranges, pot. used for Scanning",
+      "sha256": "34bed72511dc94767e212fbbec4518ff8dee245ed583e30669710f75ebaba186",
+      "slug": "shodan-scanning",
+      "version": 1
+    },
+    {
+      "entry_count": 107,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known sinkholes",
+      "sha256": "985b6884cfe3dc1eba64a72c12e3f623448fddc768d389a31cd2daa1cc3b9f39",
+      "slug": "sinkholes",
+      "version": 2
+    },
+    {
+      "entry_count": 1,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Skipa IP Ranges Used for Scanning",
+      "sha256": "168d5caab12570dad5d6a6c5c2a38343613a69652a0b5a211cd7d0b68feb8020",
+      "slug": "skipa-nt-scanning",
+      "version": 26031314
+    },
+    {
+      "entry_count": 270,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known SMTP receiving IP addresses",
+      "sha256": "37b8c2b29bbea7459093ead749aaf0d3ce3a3a447e4ef1bbce6db7234ef8357f",
+      "slug": "smtp-receiving-ips",
+      "version": 20260811
+    },
+    {
+      "entry_count": 1002,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known SMTP sending IP ranges",
+      "sha256": "38a01c96c7e0fd7dca45b513d83cc22411b9d25d97979d0fff6b1a22ed722978",
+      "slug": "smtp-sending-ips",
+      "version": 20260811
+    },
+    {
+      "entry_count": 247,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known Stackpath CDN IP ranges",
+      "sha256": "1db2e91cdd384ef448c86895483e9b529afe90283b1485c7b98a39c7e5677be0",
+      "slug": "stackpath",
+      "version": 20240422
+    },
+    {
+      "entry_count": 1839,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-dst|port",
+        "ip-src|port"
+      ],
+      "name": "Stretchoid IP Ranges Used for Scanning",
+      "sha256": "6c8014ac79e8fc907b4dd702d3ffd8ef272b799d3700e8471ae09da5d620a689",
+      "slug": "stretchoid-nt-scanning",
+      "version": 26081010
+    },
+    {
+      "entry_count": 14,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known Telegram IP address ranges",
+      "sha256": "4773aa05fbc34f9be5392658e587a2615c3bf02ffb732a207f0dea4a9d0248eb",
+      "slug": "telegram-ips",
+      "version": 20260119
+    },
+    {
+      "entry_count": 39,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known Tenable Cloud Sensors IPv4",
+      "sha256": "5140a11df60170cbbbc5c99a8c43cd4f8d9eac6ffbc93465d2cfb5249d4f0027",
+      "slug": "tenable-cloud-ipv4",
+      "version": 20260811
+    },
+    {
+      "entry_count": 17,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known Tenable Cloud Sensors IPv6",
+      "sha256": "603bcbccb837bd7ebdef99b03ac291ba335df1ef3170c8af9c2f532d339dfc00",
+      "slug": "tenable-cloud-ipv6",
+      "version": 20260811
+    },
+    {
+      "entry_count": 24645,
+      "matcher": "string",
+      "matching_attributes": [
+        "md5",
+        "sha1",
+        "sha256",
+        "filename|md5",
+        "filename|sha1",
+        "filename|sha256"
+      ],
+      "name": "Hashes that are often included in IOC lists but are false positives.",
+      "sha256": "7d68fe0443733c52527653044deb585a117adc72ce9221813204c212313d54c2",
+      "slug": "ti-falsepositives",
+      "version": 1
+    },
+    {
+      "entry_count": 1438,
+      "matcher": "string",
+      "matching_attributes": [
+        "hostname",
+        "domain",
+        "domain|ip"
+      ],
+      "name": "TLDs as known by IANA",
+      "sha256": "fc9a3b1c1c0d01f28d90c1bebb3e26b5a0a6dae3657603f699b9d7c8d4070500",
+      "slug": "tlds",
+      "version": 20260811
+    },
+    {
+      "entry_count": 10000,
+      "matcher": "hostname",
+      "matching_attributes": [
+        "hostname",
+        "domain",
+        "url",
+        "domain|ip"
+      ],
+      "name": "Top 10K most-used sites from Tranco",
+      "sha256": "f33f2ec2a3a4a39387b6e80987e2fd0b61506331f2d4cb4a559be6cd9c26a89c",
+      "slug": "tranco10k",
+      "version": 20250115
+    },
+    {
+      "entry_count": 5,
+      "matcher": "hostname",
+      "matching_attributes": [
+        "hostname",
+        "domain",
+        "url",
+        "domain|ip"
+      ],
+      "name": "cisco-umbrella-blockpage-hostname",
+      "sha256": "34c27645db079e3f133b3d715ce5eda5fff25bb9d319e4b815c657b939b19722",
+      "slug": "umbrella-blockpage-hostname",
+      "version": 20260811
+    },
+    {
+      "entry_count": 6,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip"
+      ],
+      "name": "cisco-umbrella-blockpage-ipv4",
+      "sha256": "e7af5494de020bbad60f3a911710fb850f0948fb05e2de0c9629b0edd35d66d0",
+      "slug": "umbrella-blockpage-v4",
+      "version": 20260811
+    },
+    {
+      "entry_count": 6,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip"
+      ],
+      "name": "cisco-umbrella-blockpage-ipv6",
+      "sha256": "e0e1efb2f7336f209ddf618506e52f22ab1c1a65418176f166c84e40c03d8138",
+      "slug": "umbrella-blockpage-v6",
+      "version": 20260811
+    },
+    {
+      "entry_count": 6,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "University of Michigan CSE connection-attempt network ranges",
+      "sha256": "113774b338e48dd59eeef82493e5ce123db8eeb9530fa5a1d1d3a3ef0a78c543",
+      "slug": "umich-cse-connection-attempts",
+      "version": 20260528
+    },
+    {
+      "entry_count": 10578,
+      "matcher": "string",
+      "matching_attributes": [
+        "hostname",
+        "domain",
+        "url",
+        "domain|ip"
+      ],
+      "name": "University domains",
+      "sha256": "c690edf4936cb5307fe3cd34a1c43140224dca37d9a27203dffedf1af6d6e59d",
+      "slug": "university_domains",
+      "version": 20260811
+    },
+    {
+      "entry_count": 255,
+      "matcher": "hostname",
+      "matching_attributes": [
+        "domain",
+        "hostname",
+        "domain|ip",
+        "url",
+        "uri"
+      ],
+      "name": "List of known URL Shorteners domains",
+      "sha256": "d7439a1ab1a0d5011e23b9c9c74d3f5e80aced813a48e03fb815e7461735cf5d",
+      "slug": "url-shortener",
+      "version": 27
+    },
+    {
+      "entry_count": 42426,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "Specialized list of vpn-ipv4 addresses belonging to common VPN providers and datacenters",
+      "sha256": "00ca22914b8c87f1eac5c0525d26eb8d61399c0d0c32627c231406e6c9aabc10",
+      "slug": "vpn-ipv4",
+      "version": 20260811
+    },
+    {
+      "entry_count": 1250,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "Specialized list of IPv6 addresses belonging to common VPN providers and datacenters",
+      "sha256": "634fd84b6f99db80403fe0a70c9c56db477eff7a17e39abf550d5df831e550de",
+      "slug": "vpn-ipv6",
+      "version": 20240422
+    },
+    {
+      "entry_count": 234,
+      "matcher": "hostname",
+      "matching_attributes": [
+        "domain",
+        "hostname",
+        "domain|ip",
+        "uri",
+        "url"
+      ],
+      "name": "List of known domains to know external IP",
+      "sha256": "3ab5f313d32eff20d8ea81d55b4a6b8038e3882f4deeaf00cb441daf30905eb6",
+      "slug": "whats-my-ip",
+      "version": 10
+    },
+    {
+      "entry_count": 10,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known Wikimedia address ranges",
+      "sha256": "6c8a9172c381b86f40d4f6a2502a68275a8824dba72bb43e5e9a8bb731931503",
+      "slug": "wikimedia",
+      "version": 20260819
+    },
+    {
+      "entry_count": 78,
+      "matcher": "cidr",
+      "matching_attributes": [
+        "ip-src",
+        "ip-dst",
+        "domain|ip",
+        "ip-src|port",
+        "ip-dst|port"
+      ],
+      "name": "List of known Zscaler IP address ranges",
+      "sha256": "a9c9476f8db5a69b33585dfaba7d9ac673828a2a63cbcfe7a7e98451a3283ffd",
+      "slug": "zscaler",
+      "version": 20260811
+    }
+  ],
+  "omitted": [
+    {
+      "detail": "more than 100000 entries",
+      "entry_count": 100001,
+      "reason": "oversized_at_build",
+      "slug": "cloudflare-top100k"
+    },
+    {
+      "detail": "more than 100000 entries",
+      "entry_count": 1000125,
+      "reason": "oversized_at_build",
+      "slug": "cloudflare-top1m"
+    },
+    {
+      "detail": "more than 100000 entries",
+      "entry_count": 200001,
+      "reason": "oversized_at_build",
+      "slug": "cloudflare-top200k"
+    },
+    {
+      "detail": "more than 100000 entries",
+      "entry_count": 500003,
+      "reason": "oversized_at_build",
+      "slug": "cloudflare-top500k"
+    },
+    {
+      "detail": "more than 100000 entries",
+      "entry_count": 998682,
+      "reason": "oversized_at_build",
+      "slug": "google-chrome-crux-1million"
+    },
+    {
+      "detail": "more than 100000 entries",
+      "entry_count": 197415,
+      "reason": "oversized_at_build",
+      "slug": "nioc-filehash"
+    },
+    {
+      "detail": "more than 100000 entries",
+      "entry_count": 1000000,
+      "reason": "oversized_at_build",
+      "slug": "tranco"
+    },
+    {
+      "detail": "more than 100000 entries",
+      "entry_count": 789700,
+      "reason": "oversized_at_build",
+      "slug": "windows-binary-hashes"
+    }
+  ],
+  "schema_fingerprint": "f42493267c4769a9c02458ae87d497016730d2300977e0391631412afc47e1b6",
+  "snapshot_format": 1,
+  "upstream_commit": "84f0610aaf3b32159285c9b85510d0f415ea6b27",
+  "upstream_committed_at": "2026-08-20T06:05:35Z",
+  "upstream_repository": "https://github.com/MISP/misp-warninglists"
+}

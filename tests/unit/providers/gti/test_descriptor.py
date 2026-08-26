@@ -130,7 +130,12 @@ def test_the_descriptor_names_a_credential_group_but_holds_no_credential() -> No
         "supports_active",
         "supports_batch",
         "requires_credentials",
+        # A local dataset fingerprint, for providers that have one. Non-secret
+        # by construction: it is a digest of public data, and a remote provider
+        # leaves it unset.
+        "dataset_version",
     }
+    assert descriptor.dataset_version is None
     serialized = descriptor.model_dump_json()
     assert "vt-key" not in serialized
     assert descriptor.credential_group == "virustotal"

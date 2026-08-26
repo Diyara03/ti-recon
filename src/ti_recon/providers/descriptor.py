@@ -42,6 +42,18 @@ class ProviderDescriptor(FrozenTiReconModel):
     supports_batch: bool = False
     requires_credentials: bool = True
 
+    #: Identity of the local dataset this adapter answers from, when it has one.
+    #:
+    #: ``None`` for every provider that answers from a remote API — their data
+    #: version is whatever the API returned, and there is nothing local to
+    #: version. A provider that reads a pinned local dataset sets it to that
+    #: dataset's fingerprint, and the cache key includes it for exactly the
+    #: reason it already includes ``api_version`` and ``adapter_version``:
+    #: results parsed from one version of something must not be served after it
+    #: changes. Refreshing a dataset therefore invalidates its cached answers
+    #: with no provider-specific handling anywhere in the execution layer.
+    dataset_version: str | None = Field(default=None, max_length=200)
+
     @model_validator(mode="after")
     def _validate_descriptor(self) -> ProviderDescriptor:
         if not self.credential_group:
