@@ -17,7 +17,12 @@
            |
      TI Recon backend
            |
-     Capability Planner            FUTURE — object type + depth -> capability set
+     Enrichment Planner            IMPLEMENTED — Task 13. capability goals,
+           |                                     source-family coverage, budgets,
+           |                                     deterministic ranking, stop rules
+           |
+     Enrichment Orchestrator       IMPLEMENTED — Task 13. plan -> execute ->
+           |                                     observe -> re-plan, sequential
            |
      Provider Registry             IMPLEMENTED — capability/object-type lookup
            |
@@ -94,8 +99,10 @@ This yields three properties:
 3. **Substitutability.** Several providers may serve one capability; adding a
    provider is registration, not an engine change.
 
-Provider *selection* among candidates (scoring, prioritization, cost) is a later
-task. The registry returns all compatible providers in deterministic order.
+The registry returns all compatible providers in deterministic order and ranks
+nothing. Choosing between them is Task 13's job, and it is a separate layer on
+purpose: the registry answers "who *could* answer this?", the planner answers
+"who should we ask next, and is another answer worth buying?".
 
 ## 4. Evidence, not votes
 
@@ -345,11 +352,21 @@ src/ti_recon/
     coordination.py   ConcurrencyLimiter, SingleFlight
     metrics.py        ExecutionMetricsSink + no-op / in-memory sinks
     executor.py       ProviderExecutor
+  planning/
+    models.py         locality, cost, novelty, budgets, decisions, result
+    goals.py          CapabilityGoal, GoalActivation, depth ordering
+    policy.py         per-depth budgets, goal templates, profile registry
+    state.py          coverage per capability and source family, blocking
+    ranking.py        RANKING_FACTORS + lexicographic candidate key
+    planner.py        AdaptiveEnrichmentPlanner (no I/O, deterministic)
+    orchestrator.py   AdaptiveEnrichmentOrchestrator (plan -> execute -> observe)
+    metrics.py        PlanningMetricsSink + no-op / in-memory sinks
+    catalog.py        the only module here that may name a provider
 ```
 
 ## 10. Provider execution (Task 6)
 
-Between the future planner and each adapter sits `ProviderExecutor`, which runs
+Between the planner and each adapter sits `ProviderExecutor`, which runs
 a *selected* provider under caching, retry/backoff, rate-limit and quota
 tracking, cooldowns, bounded concurrency and in-flight request coalescing. It
 decides how to call a provider safely and never what to call or what a result
@@ -434,7 +451,47 @@ Note the data-use boundary recorded in the GTI document: GTI content must not be
 exposed to Claude, MCP or any AI layer before the applicable provider terms are
 reviewed.
 
-## 12. Deferred architecture (Task 11+)
+## 12. Adaptive enrichment planning (Task 13)
+
+The layer that decides **what to ask next**, sitting above the executor and below
+the future fusion engine.
+
+`AdaptiveEnrichmentPlanner` turns an observable, a depth and any explicitly
+requested capabilities into one decision at a time: this provider, for this
+capability, or stop with this reason. `AdaptiveEnrichmentOrchestrator` executes
+each decision through Task 6, folds the outcome back into planning state, and
+plans again — sequentially, so an answer can change what is worth asking next.
+
+Four properties carry the design:
+
+- **Capabilities, not vendors.** Goals name a `ProviderCapability`, never a
+  provider. Exactly one module in `planning/` may name a provider — `catalog.py`,
+  the shipped registry — and a test reads the AST of every other one to prove it.
+- **Coverage per source family.** Three abuse.ch platforms answering is one family
+  covered, and one sandbox's four environment reports are one family too. Novelty
+  ranks a new *kind* of answer above a new family above the same family again.
+- **Budgets charged on real calls.** `2/4/6` remote runs for QUICK/STANDARD/DEEP,
+  charged on `ProviderExecutionOutcome.called_provider`. A cache hit, a coalesced
+  request, an unconfigured credential and a local provider all cost nothing, which
+  is what makes cache-first ranking safe.
+- **Deterministic lexicographic ranking.** `RANKING_FACTORS` is the order, as
+  data. No weighted score, because there is no evidence for any such constant and
+  a made-up one cannot be explained to an analyst.
+
+Two boundaries are structural rather than conventional. `EnrichmentPlanningRequest`
+refuses a non-passive mode or a non-`LOOKUP` operation at construction, so no plan
+that submits or detonates can be built; and a run enriches the requested
+observable only, because recursive pivoting needs judgement and limits it does not
+have.
+
+Nothing here produces a verdict, a risk score or a confidence, and no
+`StopReason` means the answer is known — `GOALS_SATISFIED` says the requested
+coverage was *collected*. `NO_DATA` covers a source and never the observable, and
+false-positive context never substitutes for threat intelligence.
+
+Full detail: [planning/adaptive-enrichment.md](planning/adaptive-enrichment.md).
+
+## 13. Deferred architecture (Task 14+)
 
 Documented so the shape is known; not implemented:
 
@@ -453,9 +510,16 @@ Documented so the shape is known; not implemented:
   MalwareBazaar YARA and certificate hunting, and every historical-timeline
   endpoint. These belong with the query planner rather than with a per-observable
   lookup.
-- Capability planner, provider selection and adaptive enrichment (widen
-  capabilities when evidence is thin).
-- Lineage-aware correlation, evidence fusion and verdict scoring.
+- Lineage-aware correlation, evidence fusion and verdict scoring. Task 13 chose
+  what to ask and recorded what was covered; deciding what the answers *mean* is
+  the next layer, and it is the only one that may weigh a source, resolve a
+  conflict or apply decay.
+- Recursive pivoting: enriching the related objects a provider returns needs
+  pivot-value judgement, graph deduplication, fan-out limits and cycle
+  prevention. Task 13 enriches the requested observable only.
+- Planning *waves*: the orchestrator is sequential so each answer can inform the
+  next decision. Bounded parallelism within one round is possible later, with
+  real latency numbers rather than an assumption.
 - Persistence (PostgreSQL), raw-response object storage, a durable backend for
   the artifact store (Task 8 ships an in-memory one), production secret vault.
 - MCP server, Claude connector, TI Analyst Skill, web frontend.

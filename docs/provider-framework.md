@@ -323,10 +323,13 @@ Properties, all tested:
 - **No vendor branching.** A test greps the registry source for vendor names and
   fails if any appears. Registering a brand-new provider requires no registry
   change.
-- **No scoring or prioritization.** `find_compatible` returns every match.
-  Choosing which to call, in what order, at what cost is a later task; a test
+- **No scoring or prioritization.** `find_compatible` returns every match. A test
   asserts there is no `rank`/`score`/`prioritize`/`select` method, so a policy
-  cannot quietly accrete inside a lookup table.
+  cannot quietly accrete inside a lookup table. Choosing which to call, in what
+  order and at what cost is the Task 13 planner's job — a separate layer that
+  reads descriptors and adds its own `ProviderPlanningProfile` rather than
+  extending this one. The registry answers "who *could* answer this?"; the planner
+  answers "who should we ask next?".
 
 `activity_mode` (default `PASSIVE`) is a filter rather than a hint: a passive
 investigation must never be handed an adapter that can only act, and an active

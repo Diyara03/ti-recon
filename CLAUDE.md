@@ -20,7 +20,7 @@ Analyst -> Claude + TI Analyst Skill -> MCP -> TI Recon backend
 
 ## Current implementation boundary
 
-Implemented (Jira Tasks 1-12):
+Implemented (Jira Tasks 1-13):
 
 - Task 1 — product scope + investigation workflow foundation (docs, enums)
 - Task 2 — architecture foundation (docs, module boundaries)
@@ -63,9 +63,18 @@ Implemented (Jira Tasks 1-12):
   downloads. One directional finding per sample; no verdict maps to
   `SUPPORTS_BENIGN`; report divergence across environments is preserved.
 
+- Task 13 — adaptive enrichment planner and orchestrator (`planning/`): decides
+  **what to ask next**. Capability goals per observable type per depth, coverage
+  tracked per *source family*, per-depth budgets charged on
+  `called_provider`, deterministic lexicographic ranking, activation rules for
+  expensive follow-ups, and operational stop reasons only. The orchestrator loops
+  plan -> execute (Task 6) -> observe -> re-plan, sequentially, over the requested
+  observable alone. Not the fusion layer: no verdict, risk score or confidence.
+
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Evidence fusion is
-not implemented, so there is still no multi-provider verdict.
+not implemented, so there is still no multi-provider verdict — Task 13 chooses
+what to ask and reports what was covered, and nothing decides what it means.
 
 **Not implemented — do not add without an explicit request:**
 
@@ -107,8 +116,26 @@ not implemented, so there is still no multi-provider verdict.
   deletion, saved searches, incidents
 - urlscan paging beyond the first search page, Brand/Kit monitoring, hostname
   and similarity APIs
-- Query/capability planner, provider selection, adaptive enrichment, evidence
-  fusion, verdict scoring
+- Evidence fusion, conflict resolution, decay and verdict scoring. Task 13 stops
+  at coverage; weighing sources belongs to the next layer, the only one allowed
+  to weigh a source or resolve a conflict
+- Any planner-side retry, waiting or transport. Task 6 owns retry, backoff,
+  cooldown and cache; a planner-side retry would multiply a policy it cannot see
+- Recursive enrichment of related objects a provider returned. A plan enriches
+  the requested observable only; pivoting needs pivot-value judgement, graph
+  deduplication, fan-out limits and cycle prevention
+- Parallel provider fan-out inside one planning round ("waves"). The orchestrator
+  is sequential so each answer can inform the next decision; changing that needs
+  real latency data, not an assumption
+- Any LLM, Claude call or external ranking service inside the planner. AI clients
+  will call TI Recon; AI must not choose which intelligence sources TI Recon
+  queries internally
+- A `StopReason`, `SkipReason` or `SelectionReason` that asserts knowledge —
+  `CONFIDENCE_HIGH_ENOUGH`, `VERDICT_CONFIRMED`, `DEFINITELY_MALICIOUS`,
+  `DEFINITELY_BENIGN`. Every reason is operational
+- A weighted provider score (`priority * 0.4 - cost * 0.2`, ...). Ranking is
+  lexicographic over `RANKING_FACTORS` and stays that way
+- Provider names anywhere under `planning/` except `catalog.py`
 - Redis or any distributed coordination: every execution store, and the artifact
   store, is in-memory and single-process
 - PostgreSQL, production secret vault, Kafka, Celery, Neo4j
@@ -318,6 +345,63 @@ not implemented, so there is still no multi-provider verdict.
     (strongest completed verdict, then a *contrasting* one) and recency is never
     claimed, because a hash search carries no analysis timestamp.
 
+39. **The planner asks what is missing, never who has not been called.** A goal
+    names a `ProviderCapability`; a provider being added, removed, renamed,
+    unconfigured or denied changes who answers it and never whether the goal
+    exists. `catalog.py` is the only module under `planning/` that may name a
+    provider, and a test reads the AST of every other one to prove it. A goal no
+    registered provider can serve for this observable is dropped rather than
+    carried, because a permanently unsatisfiable goal reports a catalogue blind
+    spot as a provider failure.
+
+40. **Coverage is counted per source family, and satisfaction is not knowledge.**
+    Three abuse.ch platforms answering is one family; one provider's twenty
+    evidence records are one family; one sandbox's four environment reports are
+    one family. Every `StopReason` is operational, `GOALS_SATISFIED` means the
+    requested coverage was *collected*, and there is deliberately no reason
+    meaning "confident enough". `NO_DATA` covers a source and never the
+    observable, `PARTIAL` satisfies no family target, and false-positive context
+    never substitutes for threat intelligence — a warninglist match explains
+    evidence rather than replacing the need for any.
+
+41. **Locality is declared, never inferred from credentials.** A credential-free
+    HTTP API still discloses the observable to a third party, so
+    `requires_credentials == False` must never be read as `LOCAL`.
+    `allow_remote_lookup = False` is a disclosure control rather than a cost
+    control, and a run under it stops with `REMOTE_LOOKUPS_DISABLED` rather than
+    implying it finished.
+
+42. **The remote budget is charged on `called_provider`, not on decisions.** A
+    cache hit, a coalesced request, a cooldown short-circuit, an unconfigured
+    credential and every local provider cost nothing — which is what makes
+    cache-first ranking safe. A caller may lower a budget and never raise it;
+    `max_remote_provider_runs` is reduction-only. `elevated_cost_capabilities`
+    exists because one cost class per provider cannot describe a provider that is
+    cheap for a summary and expensive for retrieved content.
+
+43. **Ranking is lexicographic over `RANKING_FACTORS` and never a weighted
+    score.** There is no evidence for any such constant, and a made-up one looks
+    principled, cannot be explained to an analyst, and shifts unpredictably when a
+    provider is added. Every decision must be explainable by naming the first
+    factor that separated two candidates, and identical inputs must produce
+    identical plans regardless of registration order.
+
+44. **The planner selects and observes; Task 6 executes.** No I/O, no credential
+    resolution, no cache read, no adapter client and no retry — a planner-side
+    retry would silently multiply a policy it cannot see, so a provider that
+    returned a blocking category is simply not chosen again for that run. Nothing
+    under `planning/` may import `httpx`, the credential layer or `SecretStr`.
+
+45. **An automatic plan is passive, and covers one observable.**
+    `EnrichmentPlanningRequest` refuses a non-passive mode or a non-`LOOKUP`
+    operation at construction, so no plan that submits, detonates or rescans can
+    be built; a test additionally asserts every `ProviderOperation` and
+    `ActivityMode` name written anywhere in the package is the passive one. A run
+    enriches the requested observable only — the related objects providers return
+    are never planned. And no LLM is in the loop: AI clients will call TI Recon,
+    but must not choose which intelligence sources it queries internally, or
+    provider selection stops being reproducible.
+
 ## Security rules
 
 - **No secrets in the repo.** `.env` is git-ignored; `.env.example` holds
@@ -436,6 +520,11 @@ not implemented, so there is still no multi-provider verdict.
   Hybrid Analysis key may use the API from at most two IP addresses per hour. No
   egress rotation, no key rotation, no multiple accounts; a scaled deployment
   needs stable centralized egress.
+- **A planning trace carries no secret, because planning cannot reach one.**
+  `planning/` imports no secret store, no `SecretStr` and no HTTP client, and a
+  test asserts it. Planning metrics are enum members, bounded provider ids, small
+  integers and bools — no observable value and no free text, so a metrics pipeline
+  can never become a log of everything every analyst has investigated.
 - **GTI data is provider-policy-sensitive.** Do not expose raw or normalized GTI
   content to Claude, MCP or any AI layer before the applicable Google Threat
   Intelligence data-use terms have been reviewed. See `docs/providers/gti.md`.
@@ -524,6 +613,14 @@ src/ti_recon/
                      credential-scoped key for a refused credential),
                      concurrency + single-flight, policy, bounded executor,
                      metrics
+  planning/          Task 13: adaptive enrichment planning. models (locality,
+                     cost class, novelty, budgets, decisions, result), goals
+                     (capability goals + activation), policy (per-depth budgets,
+                     goal templates, profile registry), state (coverage per
+                     capability and source family), ranking (RANKING_FACTORS,
+                     lexicographic key), planner (no I/O, deterministic),
+                     orchestrator (plan -> execute -> observe), metrics,
+                     catalog (the only module here that may name a provider)
   security.py        credential-key guards and text redaction
   versions.py        ENGINE_VERSION / POLICY_VERSION audit stamps
 tests/unit/          unit + contract tests
@@ -538,7 +635,8 @@ docs/                scope, architecture, data model, credentials, provider
                      providers/gti, providers/urlscan, providers/greynoise,
                      providers/censys, providers/threatfox, providers/urlhaus,
                      providers/malwarebazaar, providers/misp-warninglists,
-                     providers/hybrid-analysis
+                     providers/hybrid-analysis,
+                     planning/adaptive-enrichment
 ```
 
 ## Conventions

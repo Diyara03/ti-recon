@@ -3,9 +3,9 @@
 > Task 6. Describes `src/ti_recon/execution/`.
 >
 > This layer decides **how** to call a selected provider safely. It does not
-> decide **which** provider to call — that is the query planner, a later task —
-> and it decides nothing about maliciousness: no verdict, risk score or
-> confidence is computed here.
+> decide **which** provider to call — that is the Task 13 enrichment planner,
+> layered above it — and it decides nothing about maliciousness: no verdict, risk
+> score or confidence is computed here.
 >
 > **All execution state is in-memory and single-process.** This is a development
 > foundation, not distributed coordination. See §11.
@@ -13,7 +13,7 @@
 ## 1. Where this sits
 
 ```
-        Query planner                     FUTURE — chooses the provider
+    Enrichment planner                    Task 13 — chooses the provider
              |
         ProviderExecutor                  this layer
              |
@@ -602,6 +602,22 @@ Redis                     PostgreSQL              production secret vault
 distributed locks         distributed semaphores  shared rate-limit state
 real quota API calls      provider selection      query planning
 ```
+
+Provider *selection* arrived in Task 13 as a layer above this one, not inside it.
+The boundary held: the planner reads `ProviderExecutionOutcome` — `called_provider`,
+`cache_hit`, `status`, `error_category` — and needed no new execution behaviour.
+Two consequences are worth stating, because they are what keeps the layers from
+leaking into each other:
+
+- **The planner never retries.** Retry, backoff and cooldown are decided here from
+  normalized categories. A planner-side retry would silently multiply a policy it
+  cannot see, so a provider that returned a blocking category is simply not chosen
+  again for the rest of that run.
+- **`called_provider` is the billing truth.** The planner charges its remote
+  budget on `attempts > 0` rather than on its own decision count, so a cache hit,
+  a coalesced request, a cooldown short-circuit and an unconfigured credential all
+  cost it nothing. That is deliberate: it lets the planner pick the *best* source
+  and let this layer answer for free when it already knows.
 
 and every remaining provider integration — SecurityTrails, AbuseIPDB, Shodan,
 IPinfo — along with evidence fusion, verdict scoring, MCP, the Claude Skill and
