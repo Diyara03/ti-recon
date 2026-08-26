@@ -319,6 +319,19 @@ src/ti_recon/
     normalizer.py     one context finding + coverage; every hit CONTEXT_ONLY
     policy.py         depth presentation bounds, execution policy
     adapter.py        MispWarningListsAdapter
+  sandbox/
+    models.py         provider-neutral dynamic-analysis vocabulary
+    selection.py      bounded deterministic representative-report choice
+    bounds.py         per-depth presentation caps with hard ceilings
+  providers/hybrid_analysis/
+    config.py         host, api-key header, User-Agent (no credential field)
+    descriptor.py     FILE_BEHAVIOR, files only, nothing active
+    errors.py         statuses + quota prose -> categories; 410 as a state
+    client.py         three GETs behind a frozen path allow-list
+    models.py         Falcon Sandbox JSON -> neutral models; privacy exclusions
+    normalizer.py     one sample finding + bounded behaviour + coverage
+    policy.py         request budget per depth, cache TTLs, concurrency 1
+    adapter.py        HybridAnalysisAdapter
   artifacts/
     models.py         ArtifactScope, ArtifactKind, StoredArtifact
     store.py          bounded, user-isolated artifact store (in-memory)
@@ -350,7 +363,7 @@ Full detail: [provider-execution.md](provider-execution.md).
 
 ## 11. Providers
 
-Eight providers are integrated, each answering a different question and all of
+Nine providers are integrated, each answering a different question and all of
 them passive:
 
 | Provider | Question it answers | Detail |
@@ -363,6 +376,7 @@ them passive:
 | URLhaus | has this URL been seen distributing malware? | [providers/urlhaus.md](providers/urlhaus.md) |
 | MalwareBazaar | is this file a known, vetted malware sample? | [providers/malwarebazaar.md](providers/malwarebazaar.md) |
 | MISP Warning Lists | is there local context that should change how I read the rest? | [providers/misp-warninglists.md](providers/misp-warninglists.md) |
+| Hybrid Analysis | what did this sample *do* when it was run, and where? | [providers/hybrid-analysis.md](providers/hybrid-analysis.md) |
 
 Every one of them reaches the engine entirely through the Task 5 contract: the
 registry finds it by capability with no vendor branch, and each passes the same
@@ -400,6 +414,17 @@ malicious path on it, and an EICAR hash is a test artifact. Deciding what a
 malicious verdict plus shared-infrastructure context adds up to is false-positive
 reasoning and belongs to the fusion layer.
 
+Task 12 adds a layer rather than just a provider. `sandbox/` is the
+provider-neutral vocabulary for dynamic analysis — sample, report, environment and
+analysis quality as three separate identities — so a second sandbox writes a
+reader and a descriptor instead of a data model. Two rules in it are worth
+repeating here because they are false-positive rules rather than plumbing: **no
+sandbox verdict maps to `SUPPORTS_BENIGN`**, because a sample may sit still for a
+dozen reasons that say nothing about its intent; and **several reports from one
+provider are one source**, because a well-studied hash must not outvote
+independent intelligence by having been run more often. Report divergence across
+environments is preserved rather than resolved.
+
 The one deviation from the framework is documented and contained: GTI uses the
 official `vt-py` SDK rather than the shared HTTP transport, and that SDK is
 imported by exactly one module so its types never reach the core. Every other
@@ -416,9 +441,13 @@ Documented so the shape is known; not implemented:
 - Distributed execution state: Redis-backed cache, quota and cooldown stores,
   shared rate-limit state and cross-worker concurrency limits.
 - Further provider adapters (SecurityTrails, AbuseIPDB, Shodan, IPinfo) alongside
-  the eight integrated ones, and a MISP *instance* integration — which would share
+  the nine integrated ones, and a MISP *instance* integration — which would share
   `source_family = "misp"` with the warninglists so it cannot read as an
   independent second source.
+- A second sandbox provider (CAPE, Triage, ANY.RUN). The Task 12 framework is
+  provider-neutral so one can be added without touching passive evidence
+  semantics, and each would carry its own `source_family` — two independent
+  sandboxes agreeing is genuine corroboration.
 - Hunting and query interfaces the current adapters deliberately omit: GreyNoise
   GNQL, Censys CenQL search, ThreatFox family/tag queries, URLhaus feeds,
   MalwareBazaar YARA and certificate hunting, and every historical-timeline
@@ -430,8 +459,11 @@ Documented so the shape is known; not implemented:
 - Persistence (PostgreSQL), raw-response object storage, a durable backend for
   the artifact store (Task 8 ships an in-memory one), production secret vault.
 - MCP server, Claude connector, TI Analyst Skill, web frontend.
-- Active operations and sandbox integration. A future task will distinguish
-  *passive sandbox report lookup* from *active detonation*; neither exists, and
-  MalwareBazaar's relayed `vendor_intel` deliberately does not anticipate them —
-  relaying is not observing, which is why that adapter declines the
-  `FILE_BEHAVIOR` capability.
+- **Active** sandboxing. Task 12 implements the passive half of that
+  distinction: Hybrid Analysis reads detonations that already happened and
+  declares `FILE_BEHAVIOR`, which MalwareBazaar deliberately does not because
+  relaying somebody else's sandbox output is not observing behaviour. Submission
+  and detonation remain unimplemented and unstubbed — they need explicit analyst
+  approval, a privacy warning about whichever platform receives the file, an
+  entitlement check and environment selection, and inactive submission code is
+  submission code waiting for someone to call it.

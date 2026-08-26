@@ -8,8 +8,8 @@ eventually produce an explainable, auditable assessment.
 
 ## Current development state
 
-This repository currently contains the foundation plus its first eight providers
-(Jira Tasks 1-11):
+This repository currently contains the foundation plus its first nine providers
+(Jira Tasks 1-12):
 
 | Task | Scope | State |
 |------|-------|-------|
@@ -24,6 +24,7 @@ This repository currently contains the foundation plus its first eight providers
 | 9 | GreyNoise + Censys integration | Implemented (passive enrichment) |
 | 10 | abuse.ch: ThreatFox + URLhaus + MalwareBazaar | Implemented (passive enrichment) |
 | 11 | MISP Warning Lists | Implemented (local, zero-network false-positive context) |
+| 12 | Sandbox framework + Hybrid Analysis | Implemented (passive historical reports only) |
 
 **Seven providers are integrated**, all passive, each answering a different
 question. Google Threat Intelligence enriches with each analyst's own VirusTotal
@@ -49,10 +50,18 @@ never expresses an opinion — every finding it produces is context, and a clean
 lookup means "nothing in the configured lists matched" rather than anything about
 safety.
 
-There is no SecurityTrails, AbuseIPDB, Shodan or IPinfo client yet, no sandbox
-integration of any kind, and there is no query planner, no provider selection, no
-evidence fusion, no verdict scoring, no MCP server and no Claude Skill. Those are
-later Jira tasks.
+Task 12 adds the first **dynamic-analysis** source, behind a provider-neutral
+sandbox framework. Hybrid Analysis answers what a sample *did* when somebody ran
+it — in which environment, and how informative that run was. It is strictly
+passive: it searches for detonations that already happened and never starts one,
+because uploading a customer's file to a community platform whose terms allow
+retention and redistribution is a decision a human makes with a warning in front
+of them.
+
+There is no SecurityTrails, AbuseIPDB, Shodan or IPinfo client yet, no *active*
+sandboxing, and there is no query planner, no provider selection, no evidence
+fusion, no verdict scoring, no MCP server and no Claude Skill. Those are later
+Jira tasks.
 
 Task 6 added the execution layer every adapter runs behind — caching, retry and
 backoff, rate-limit and quota tracking, cooldowns, bounded concurrency and
@@ -70,9 +79,10 @@ development foundation, not distributed coordination.
 | ThreatFox (abuse.ch) | Implemented | current family-attributed IOC search for IPv4, domain, URL and MD5/SHA-256, with `ip:port` records re-validated locally by parsing, the malware family as a linked object, and the six-month API horizon recorded in coverage | indicator submission, the recent feed, malware-family / tag / reporter queries, every bulk or hunting query, IPv6, SHA-1-only files |
 | URLhaus (abuse.ch) | Implemented | exact malware-distribution URL records kept distinct from host-level associations, `url_status` and takedown-report context, served-payload provenance and fingerprints, bounded URL pivots, and relayed VirusTotal / blocklist findings attributed to their real origin | URL submission, rescan, live scan, `/downloads/` sample retrieval, all feeds, Brand/Kit monitoring, the hostname and similarity APIs |
 | MalwareBazaar (abuse.ch) | Implemented | vetted sample records by MD5 / SHA-1 / SHA-256, family signature, fingerprint pivots (imphash, TLSH, telfhash, gimphash, ssdeep, icon dhash), code signing with CSCB status and a linked `x509-certificate`, bounded YARA and document context, and relayed vendor names only | sample download and upload, record updates, comments, the recent feed, tag / signature / YARA / certificate hunting, any dynamic analysis |
+| Hybrid Analysis (Falcon Sandbox) | Implemented | passive historical sandbox reports for file hashes: the report index (environments, states, verdicts) plus bounded behaviour from at most two representative report summaries — processes, network observations, dropped files, signatures, MITRE techniques, certificates and analysis-quality context, with report divergence across environments preserved | any submission or detonation, sample / PCAP / memory / screenshot / dropped-file download, quick scan, overview refresh, host / domain / URL search, YARA hunting, feeds |
 | MISP Warning Lists | Implemented | local, zero-network false-positive and infrastructure context for addresses, domains, URLs and file hashes from a pinned CC0 snapshot of the community dataset — private and special-use ranges, public resolvers, scanners, cloud/CDN ranges, dynamic DNS, living-off-trusted-sites hosts, popular domains, known-good and test-artifact hashes — gated by `matching_attributes`, with a URL's host kept visibly separate from the URL | any MISP instance or REST API integration, regex matching, automatic dataset refresh, non-TI-Recon attribute families |
 
-All eight supply **evidence**, not verdicts. Weighing providers against each other
+All nine supply **evidence**, not verdicts. Weighing providers against each other
 and reaching a conclusion is the future evidence-fusion layer's job, and no such
 layer exists yet. See [docs/providers/gti.md](docs/providers/gti.md),
 [docs/providers/urlscan.md](docs/providers/urlscan.md),
@@ -81,7 +91,8 @@ layer exists yet. See [docs/providers/gti.md](docs/providers/gti.md),
 [docs/providers/threatfox.md](docs/providers/threatfox.md),
 [docs/providers/urlhaus.md](docs/providers/urlhaus.md),
 [docs/providers/malwarebazaar.md](docs/providers/malwarebazaar.md) and
-[docs/providers/misp-warninglists.md](docs/providers/misp-warninglists.md).
+[docs/providers/misp-warninglists.md](docs/providers/misp-warninglists.md) and
+[docs/providers/hybrid-analysis.md](docs/providers/hybrid-analysis.md).
 
 Two of them are deliberately *not* reputation sources. Censys answers "what is
 exposed here" and every piece of evidence it produces is context: an open RDP
@@ -120,7 +131,9 @@ TI Recon backend                 <-- this repository
    |-- provider registry          implemented
    |-- provider adapters          contract implemented; GTI, urlscan,
    |                               GreyNoise, Censys, ThreatFox, URLhaus,
-   |                               MalwareBazaar, MISP Warning Lists (local)
+   |                               MalwareBazaar, MISP Warning Lists (local),
+   |                               Hybrid Analysis (passive sandbox)
+   |-- sandbox framework          implemented (provider-neutral dynamic analysis)
    |-- provider HTTP transport    implemented (SSRF-bounded)
    |-- provider executor          implemented (cache, retry, quota, cooldown,
    |                                           concurrency, single-flight)
@@ -206,10 +219,14 @@ In production, provider credentials are held per user by the credential layer
 
 ## Current limitations
 
-- **Eight providers only.** Google Threat Intelligence, urlscan.io, GreyNoise,
-  Censys, ThreatFox, URLhaus, MalwareBazaar and MISP Warning Lists are
-  integrated; every other provider named above is a later task, and no sandbox
-  integration of any kind exists.
+- **Nine providers only.** Google Threat Intelligence, urlscan.io, GreyNoise,
+  Censys, ThreatFox, URLhaus, MalwareBazaar, MISP Warning Lists and Hybrid
+  Analysis are integrated; every other provider named above is a later task.
+- **Sandboxing is passive only.** Hybrid Analysis finds detonations that already
+  happened; nothing submits, detonates or downloads. A sandbox result that
+  observed nothing is never benign evidence — it is context about one execution
+  in one environment, and the analysis-quality record is what makes it
+  interpretable.
 - **The warninglist dataset is a pinned snapshot, refreshed by hand.** Nothing
   updates it automatically, and a lookup never fetches anything. Its default
   profile deliberately excludes the million-entry popularity rankings, and every
@@ -263,4 +280,6 @@ In production, provider credentials are held per user by the credential layer
 - [docs/providers/urlhaus.md](docs/providers/urlhaus.md) — Task 10 URLhaus
 - [docs/providers/malwarebazaar.md](docs/providers/malwarebazaar.md) — Task 10 MalwareBazaar
 - [docs/providers/misp-warninglists.md](docs/providers/misp-warninglists.md) — Task 11 MISP Warning Lists
+- [docs/sandbox.md](docs/sandbox.md) — Task 12 provider-neutral sandbox framework
+- [docs/providers/hybrid-analysis.md](docs/providers/hybrid-analysis.md) — Task 12 Hybrid Analysis
 - [docs/artifacts.md](docs/artifacts.md) — Task 8 bounded provider artifact storage

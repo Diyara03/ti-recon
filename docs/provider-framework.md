@@ -14,7 +14,12 @@
 > [providers/malwarebazaar.md](providers/malwarebazaar.md)) — three adapters
 > sharing one credential group and one source family — plus MISP Warning Lists
 > (Task 11, see [providers/misp-warninglists.md](providers/misp-warninglists.md)),
-> the first provider with no transport, no credential and no network at all.
+> the first provider with no transport, no credential and no network at all, and
+> Hybrid Analysis (Task 12, see
+> [providers/hybrid-analysis.md](providers/hybrid-analysis.md)), the first
+> provider whose *depth controls how many requests a lookup makes* and the first
+> to sit behind a provider-neutral domain framework
+> ([../sandbox.md](../sandbox.md)).
 >
 > Covers capabilities, descriptor, request, result envelope, error taxonomy,
 > the adapter contract, the registry and the shared HTTP transport.
