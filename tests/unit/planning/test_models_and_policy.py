@@ -207,6 +207,20 @@ def test_the_registry_reports_itself_deterministically() -> None:
     assert "profiles=2" in repr(registry)
 
 
+def test_a_profile_cannot_elevate_a_capability_it_does_not_plan() -> None:
+    """An elevated capability that is not planned would silently do nothing —
+    and, worse, would read as a cost control that was never in force."""
+    with pytest.raises(ValueError, match="must be capabilities this profile plans"):
+        ProviderPlanningProfile(
+            provider_id="one",
+            source_family="one",
+            locality=ProviderLocality.REMOTE,
+            cost_class=CallCostClass.LOW,
+            planning_capabilities=frozenset({ProviderCapability.REPUTATION}),
+            elevated_cost_capabilities=frozenset({ProviderCapability.WEB_FORENSICS}),
+        )
+
+
 def test_a_profile_may_withhold_a_capability_it_really_has() -> None:
     """ "Integrated" and "chosen on an analyst's behalf" are separate decisions."""
     withheld = ProviderPlanningProfile(
