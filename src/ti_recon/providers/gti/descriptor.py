@@ -23,7 +23,12 @@ from __future__ import annotations
 
 from typing import Final
 
-from ti_recon.enums import IntelObjectType, ProviderCapability
+from ti_recon.enums import IntelObjectType, InvestigationDepth, ProviderCapability
+from ti_recon.planning.models import (
+    CallCostClass,
+    ProviderLocality,
+    ProviderPlanningProfile,
+)
 from ti_recon.providers.descriptor import ProviderDescriptor
 
 __all__ = [
@@ -36,6 +41,7 @@ __all__ = [
     "GTI_SOURCE_FAMILY",
     "GTI_SUPPORTED_OBJECT_TYPES",
     "build_gti_descriptor",
+    "build_gti_planning_profile",
 ]
 
 GTI_PROVIDER_ID: Final[str] = "gti"
@@ -110,4 +116,30 @@ def build_gti_descriptor() -> ProviderDescriptor:
         supports_active=False,
         supports_batch=False,
         requires_credentials=True,
+    )
+
+
+#: How the planner may use this provider (Task 13).
+#:
+#: ``MEDIUM`` because the allowance is metered per lookup and shared across an
+#: analyst's whole use of the key. Highest remote priority for broad reputation:
+#: it covers every observable type and is usually the most informative single
+#: remote question for triage — a tie-break among equals, not a quality score.
+#:
+#: ``FILE_BEHAVIOR`` is elevated to the high-cost budget. The descriptor does
+#: declare it, so GTI is a genuine second source family for sandbox behaviour —
+#: which matters, because it means behaviour coverage does not depend on one
+#: provider being configured. But asking for it pulls a deep file report, so it
+#: is priced accordingly rather than treated as another cheap read.
+def build_gti_planning_profile() -> ProviderPlanningProfile:
+    """The Task 13 planning profile for this provider."""
+    return ProviderPlanningProfile(
+        provider_id=GTI_PROVIDER_ID,
+        source_family=GTI_SOURCE_FAMILY,
+        locality=ProviderLocality.REMOTE,
+        cost_class=CallCostClass.MEDIUM,
+        planning_capabilities=GTI_CAPABILITIES,
+        elevated_cost_capabilities=frozenset({ProviderCapability.FILE_BEHAVIOR}),
+        minimum_depth=InvestigationDepth.QUICK,
+        priority=70,
     )

@@ -80,6 +80,7 @@ from ti_recon.providers.censys.descriptor import (
     CENSYS_SOURCE_FAMILY,
     CENSYS_SUPPORTED_OBJECT_TYPES,
     build_censys_descriptor,
+    build_censys_planning_profile,
 )
 from ti_recon.providers.censys.errors import (
     CENSYS_STATUS_CATEGORIES,
@@ -197,6 +198,7 @@ __all__ = [
     "asset_for",
     "build_censys_descriptor",
     "build_censys_execution_policy",
+    "build_censys_planning_profile",
     "build_transport_config",
     "category_for_status",
     "credential_status_for",

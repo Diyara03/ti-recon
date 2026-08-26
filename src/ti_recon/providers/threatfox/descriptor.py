@@ -30,7 +30,12 @@ from __future__ import annotations
 
 from typing import Final
 
-from ti_recon.enums import IntelObjectType, ProviderCapability
+from ti_recon.enums import IntelObjectType, InvestigationDepth, ProviderCapability
+from ti_recon.planning.models import (
+    CallCostClass,
+    ProviderLocality,
+    ProviderPlanningProfile,
+)
 from ti_recon.providers.abusech.family import (
     ABUSE_CH_CREDENTIAL_GROUP,
     ABUSE_CH_SOURCE_FAMILY,
@@ -47,6 +52,7 @@ __all__ = [
     "THREATFOX_SOURCE_FAMILY",
     "THREATFOX_SUPPORTED_OBJECT_TYPES",
     "build_threatfox_descriptor",
+    "build_threatfox_planning_profile",
 ]
 
 THREATFOX_PROVIDER_ID: Final[str] = "threatfox"
@@ -107,4 +113,23 @@ def build_threatfox_descriptor() -> ProviderDescriptor:
         supports_active=False,
         supports_batch=False,
         requires_credentials=True,
+    )
+
+
+#: How the planner may use this provider (Task 13).
+#:
+#: One form POST per lookup, so ``LOW``. Shares ``source_family = "abuse_ch"``
+#: with URLhaus and MalwareBazaar, which is the point: the planner treats a
+#: second abuse.ch dataset as a new *dataset* rather than a new *source*, so
+#: three of them agreeing can never rank as three independent confirmations.
+def build_threatfox_planning_profile() -> ProviderPlanningProfile:
+    """The Task 13 planning profile for this provider."""
+    return ProviderPlanningProfile(
+        provider_id=THREATFOX_PROVIDER_ID,
+        source_family=THREATFOX_SOURCE_FAMILY,
+        locality=ProviderLocality.REMOTE,
+        cost_class=CallCostClass.LOW,
+        planning_capabilities=THREATFOX_CAPABILITIES,
+        minimum_depth=InvestigationDepth.QUICK,
+        priority=50,
     )

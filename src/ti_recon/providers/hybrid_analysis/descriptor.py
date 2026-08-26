@@ -28,7 +28,12 @@ from __future__ import annotations
 
 from typing import Final
 
-from ti_recon.enums import IntelObjectType, ProviderCapability
+from ti_recon.enums import IntelObjectType, InvestigationDepth, ProviderCapability
+from ti_recon.planning.models import (
+    CallCostClass,
+    ProviderLocality,
+    ProviderPlanningProfile,
+)
 from ti_recon.providers.descriptor import ProviderDescriptor
 
 __all__ = [
@@ -40,6 +45,7 @@ __all__ = [
     "HYBRID_ANALYSIS_SOURCE_FAMILY",
     "HYBRID_ANALYSIS_SUPPORTED_OBJECT_TYPES",
     "build_hybrid_analysis_descriptor",
+    "build_hybrid_analysis_planning_profile",
     "lineage_group_for_sample",
 ]
 
@@ -100,4 +106,28 @@ def build_hybrid_analysis_descriptor() -> ProviderDescriptor:
         supports_active=False,
         supports_batch=False,
         requires_credentials=True,
+    )
+
+
+#: How the planner may use this provider (Task 13).
+#:
+#: ``HIGH`` and ``STANDARD``-minimum, for one measured reason: a lookup can
+#: spend up to three physical requests against a restricted key documented at
+#: roughly five per minute. That is the scarcest allowance of any provider here,
+#: so a QUICK triage must not spend it — and QUICK allows no high-cost runs, so
+#: it cannot.
+#:
+#: Its several sandbox reports are one provider contribution and one source
+#: family. The planner never sees the report count, and could not treat it as
+#: corroboration if it did.
+def build_hybrid_analysis_planning_profile() -> ProviderPlanningProfile:
+    """The Task 13 planning profile for this provider."""
+    return ProviderPlanningProfile(
+        provider_id=HYBRID_ANALYSIS_PROVIDER_ID,
+        source_family=HYBRID_ANALYSIS_SOURCE_FAMILY,
+        locality=ProviderLocality.REMOTE,
+        cost_class=CallCostClass.HIGH,
+        planning_capabilities=HYBRID_ANALYSIS_CAPABILITIES,
+        minimum_depth=InvestigationDepth.STANDARD,
+        priority=50,
     )

@@ -56,6 +56,7 @@ from ti_recon.providers.threatfox.descriptor import (
     THREATFOX_SOURCE_FAMILY,
     THREATFOX_SUPPORTED_OBJECT_TYPES,
     build_threatfox_descriptor,
+    build_threatfox_planning_profile,
 )
 from ti_recon.providers.threatfox.matching import (
     MatchedComponent,
@@ -112,6 +113,7 @@ __all__ = [
     "ThreatFoxRecord",
     "build_threatfox_descriptor",
     "build_threatfox_execution_policy",
+    "build_threatfox_planning_profile",
     "match_for",
     "normalize_coverage",
     "normalize_hash_association",

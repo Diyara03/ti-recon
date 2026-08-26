@@ -26,7 +26,12 @@ from __future__ import annotations
 
 from typing import Final
 
-from ti_recon.enums import IntelObjectType, ProviderCapability
+from ti_recon.enums import IntelObjectType, InvestigationDepth, ProviderCapability
+from ti_recon.planning.models import (
+    CallCostClass,
+    ProviderLocality,
+    ProviderPlanningProfile,
+)
 from ti_recon.providers.descriptor import ProviderDescriptor
 
 __all__ = [
@@ -39,6 +44,7 @@ __all__ = [
     "URLSCAN_SOURCE_FAMILY",
     "URLSCAN_SUPPORTED_OBJECT_TYPES",
     "build_urlscan_descriptor",
+    "build_urlscan_planning_profile",
 ]
 
 URLSCAN_PROVIDER_ID: Final[str] = "urlscan"
@@ -107,4 +113,27 @@ def build_urlscan_descriptor() -> ProviderDescriptor:
         supports_active=False,
         supports_batch=False,
         requires_credentials=True,
+    )
+
+
+#: How the planner may use this provider (Task 13).
+#:
+#: ``MEDIUM`` for ordinary reads, and ``WEB_FORENSICS`` elevated to the
+#: high-cost budget: retrieving and statically analysing stored screenshots, DOM
+#: snapshots and response bodies is a different order of work from reading a
+#: scan summary, and one per-provider cost class cannot say so.
+#:
+#: That elevation is also what keeps forensics out of a QUICK run, since QUICK
+#: allows no high-cost runs at all.
+def build_urlscan_planning_profile() -> ProviderPlanningProfile:
+    """The Task 13 planning profile for this provider."""
+    return ProviderPlanningProfile(
+        provider_id=URLSCAN_PROVIDER_ID,
+        source_family=URLSCAN_SOURCE_FAMILY,
+        locality=ProviderLocality.REMOTE,
+        cost_class=CallCostClass.MEDIUM,
+        planning_capabilities=URLSCAN_CAPABILITIES,
+        elevated_cost_capabilities=frozenset({ProviderCapability.WEB_FORENSICS}),
+        minimum_depth=InvestigationDepth.QUICK,
+        priority=40,
     )

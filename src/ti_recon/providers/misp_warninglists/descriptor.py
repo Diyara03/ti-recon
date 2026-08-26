@@ -25,7 +25,12 @@ from __future__ import annotations
 
 from typing import Final
 
-from ti_recon.enums import IntelObjectType, ProviderCapability
+from ti_recon.enums import IntelObjectType, InvestigationDepth, ProviderCapability
+from ti_recon.planning.models import (
+    CallCostClass,
+    ProviderLocality,
+    ProviderPlanningProfile,
+)
 from ti_recon.providers.descriptor import ProviderDescriptor
 
 __all__ = [
@@ -37,6 +42,7 @@ __all__ = [
     "MISP_WARNINGLISTS_SOURCE_FAMILY",
     "MISP_WARNINGLISTS_SUPPORTED_OBJECT_TYPES",
     "build_misp_warninglists_descriptor",
+    "build_misp_warninglists_planning_profile",
     "lineage_group_for_dataset",
 ]
 
@@ -112,4 +118,31 @@ def build_misp_warninglists_descriptor(dataset_version: str | None = None) -> Pr
         # No key, no connection, no secret store access. See the module docstring.
         requires_credentials=False,
         dataset_version=dataset_version,
+    )
+
+
+#: How the planner may use this provider (Task 13).
+#:
+#: Local and free, so it is ranked ahead of every remote provider: collecting
+#: cheap context first cannot delay anything, and it may explain whatever the
+#: remote providers go on to report.
+#:
+#: ``LOCAL`` is declared here rather than inferred from ``requires_credentials``,
+#: which happens to be ``False`` for this provider and would be the wrong test
+#: for the next one — a credential-free HTTP provider still discloses the
+#: observable.
+#:
+#: ``FALSE_POSITIVE_CONTEXT`` and nothing else. It must never look like a
+#: substitute for reputation: a warninglist match explains evidence, it does not
+#: replace the need for any.
+def build_misp_warninglists_planning_profile() -> ProviderPlanningProfile:
+    """The Task 13 planning profile for this provider."""
+    return ProviderPlanningProfile(
+        provider_id=MISP_WARNINGLISTS_PROVIDER_ID,
+        source_family=MISP_WARNINGLISTS_SOURCE_FAMILY,
+        locality=ProviderLocality.LOCAL,
+        cost_class=CallCostClass.ZERO,
+        planning_capabilities=MISP_WARNINGLISTS_CAPABILITIES,
+        minimum_depth=InvestigationDepth.QUICK,
+        priority=90,
     )

@@ -70,6 +70,7 @@ from ti_recon.providers.greynoise.descriptor import (
     GREYNOISE_SOURCE_FAMILY,
     GREYNOISE_SUPPORTED_OBJECT_TYPES,
     build_greynoise_descriptor,
+    build_greynoise_planning_profile,
 )
 from ti_recon.providers.greynoise.errors import (
     CREDENTIAL_STATUS_BY_CATEGORY,
@@ -166,6 +167,7 @@ __all__ = [
     "NormalizationContext",
     "build_greynoise_descriptor",
     "build_greynoise_execution_policy",
+    "build_greynoise_planning_profile",
     "build_transport_config",
     "category_for_status",
     "credential_status_for",

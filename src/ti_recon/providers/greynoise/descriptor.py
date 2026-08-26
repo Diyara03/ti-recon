@@ -28,7 +28,12 @@ from __future__ import annotations
 
 from typing import Final
 
-from ti_recon.enums import IntelObjectType, ProviderCapability
+from ti_recon.enums import IntelObjectType, InvestigationDepth, ProviderCapability
+from ti_recon.planning.models import (
+    CallCostClass,
+    ProviderLocality,
+    ProviderPlanningProfile,
+)
 from ti_recon.providers.descriptor import ProviderDescriptor
 
 __all__ = [
@@ -41,6 +46,7 @@ __all__ = [
     "GREYNOISE_SOURCE_FAMILY",
     "GREYNOISE_SUPPORTED_OBJECT_TYPES",
     "build_greynoise_descriptor",
+    "build_greynoise_planning_profile",
 ]
 
 GREYNOISE_PROVIDER_ID: Final[str] = "greynoise"
@@ -109,4 +115,25 @@ def build_greynoise_descriptor() -> ProviderDescriptor:
         supports_active=False,
         supports_batch=False,
         requires_credentials=True,
+    )
+
+
+#: How the planner may use this provider (Task 13).
+#:
+#: One request per lookup and an IPv4-only scope, so ``LOW``. Ranked highly for
+#: addresses because scanner context is the single most common explanation for a
+#: noisy IP, and learning it early can change what else is worth asking.
+#:
+#: The IPv4-only limit needs no planner condition: an IPv6 lookup simply finds
+#: this provider does not support the observable and moves on.
+def build_greynoise_planning_profile() -> ProviderPlanningProfile:
+    """The Task 13 planning profile for this provider."""
+    return ProviderPlanningProfile(
+        provider_id=GREYNOISE_PROVIDER_ID,
+        source_family=GREYNOISE_SOURCE_FAMILY,
+        locality=ProviderLocality.REMOTE,
+        cost_class=CallCostClass.LOW,
+        planning_capabilities=GREYNOISE_CAPABILITIES,
+        minimum_depth=InvestigationDepth.QUICK,
+        priority=60,
     )

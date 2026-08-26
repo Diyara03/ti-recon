@@ -60,6 +60,7 @@ from ti_recon.providers.urlhaus.descriptor import (
     URLHAUS_SOURCE_FAMILY,
     URLHAUS_SUPPORTED_OBJECT_TYPES,
     build_urlhaus_descriptor,
+    build_urlhaus_planning_profile,
 )
 from ti_recon.providers.urlhaus.normalizer import (
     BLOCKLIST_FIELDS,
@@ -109,6 +110,7 @@ __all__ = [
     "UrlhausOperation",
     "build_urlhaus_descriptor",
     "build_urlhaus_execution_policy",
+    "build_urlhaus_planning_profile",
     "normalize_blocklists",
     "normalize_host_association",
     "normalize_not_tracked",

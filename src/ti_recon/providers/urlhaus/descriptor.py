@@ -26,7 +26,12 @@ from __future__ import annotations
 
 from typing import Final
 
-from ti_recon.enums import IntelObjectType, ProviderCapability
+from ti_recon.enums import IntelObjectType, InvestigationDepth, ProviderCapability
+from ti_recon.planning.models import (
+    CallCostClass,
+    ProviderLocality,
+    ProviderPlanningProfile,
+)
 from ti_recon.providers.abusech.family import (
     ABUSE_CH_CREDENTIAL_GROUP,
     ABUSE_CH_SOURCE_FAMILY,
@@ -43,6 +48,7 @@ __all__ = [
     "URLHAUS_SOURCE_FAMILY",
     "URLHAUS_SUPPORTED_OBJECT_TYPES",
     "build_urlhaus_descriptor",
+    "build_urlhaus_planning_profile",
 ]
 
 URLHAUS_PROVIDER_ID: Final[str] = "urlhaus"
@@ -108,4 +114,22 @@ def build_urlhaus_descriptor() -> ProviderDescriptor:
         supports_active=False,
         supports_batch=False,
         requires_credentials=True,
+    )
+
+
+#: How the planner may use this provider (Task 13).
+#:
+#: One read per lookup, so ``LOW``. Priority slightly above its abuse.ch
+#: siblings for URL work, where exact malware-distribution records are the most
+#: directly relevant thing the family holds — a tie-break, not a quality claim.
+def build_urlhaus_planning_profile() -> ProviderPlanningProfile:
+    """The Task 13 planning profile for this provider."""
+    return ProviderPlanningProfile(
+        provider_id=URLHAUS_PROVIDER_ID,
+        source_family=URLHAUS_SOURCE_FAMILY,
+        locality=ProviderLocality.REMOTE,
+        cost_class=CallCostClass.LOW,
+        planning_capabilities=URLHAUS_CAPABILITIES,
+        minimum_depth=InvestigationDepth.QUICK,
+        priority=55,
     )
