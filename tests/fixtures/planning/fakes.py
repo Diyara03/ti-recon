@@ -275,10 +275,12 @@ def fake_outcome(
     """
     evidence: tuple[Evidence, ...] = ()
     if effect is not None:
+        # The model forces CONTEXT evidence to be CONTEXT_ONLY, so the class has
+        # to follow the direction rather than the other way round.
         cls = (
-            EvidenceClass.CURATED_THREAT_ASSERTION
-            if effect is EvidenceEffect.SUPPORTS_MALICIOUS
-            else EvidenceClass.CONTEXT
+            EvidenceClass.CONTEXT
+            if effect is EvidenceEffect.CONTEXT_ONLY
+            else EvidenceClass.CURATED_THREAT_ASSERTION
         )
         family = source_family or provider_id
         evidence = tuple(
