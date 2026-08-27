@@ -80,6 +80,7 @@ from ti_recon.planning.models import (
 from ti_recon.planning.orchestrator import (
     MAX_PLANNING_ROUNDS,
     AdaptiveEnrichmentOrchestrator,
+    EnrichmentOutcomeSink,
 )
 from ti_recon.planning.planner import AdaptiveEnrichmentPlanner, Candidate
 from ti_recon.planning.policy import (
@@ -119,6 +120,7 @@ __all__ = [
     "Candidate",
     "CapabilityGoal",
     "EnrichmentBudget",
+    "EnrichmentOutcomeSink",
     "EnrichmentPlanningRequest",
     "EnrichmentPolicy",
     "GoalActivation",

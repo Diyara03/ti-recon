@@ -29,9 +29,11 @@ them appear in the trace rather than being swallowed.
 
 from __future__ import annotations
 
+from typing import Protocol, runtime_checkable
+
 from ti_recon.enums import ProviderCapability
 from ti_recon.execution.executor import ProviderExecutor
-from ti_recon.execution.models import ExecutionContext
+from ti_recon.execution.models import ExecutionContext, ProviderExecutionOutcome
 from ti_recon.planning.metrics import (
     NoOpPlanningMetricsSink,
     PlanningMetricsSink,
@@ -50,7 +52,33 @@ from ti_recon.providers.adapter import ProviderAdapter
 from ti_recon.providers.registry import ProviderRegistry
 from ti_recon.providers.request import ProviderRequest
 
-__all__ = ["MAX_PLANNING_ROUNDS", "AdaptiveEnrichmentOrchestrator"]
+__all__ = [
+    "MAX_PLANNING_ROUNDS",
+    "AdaptiveEnrichmentOrchestrator",
+    "EnrichmentOutcomeSink",
+]
+
+
+@runtime_checkable
+class EnrichmentOutcomeSink(Protocol):
+    """Somewhere to hand each provider outcome as it arrives.
+
+    :class:`~ti_recon.planning.models.AdaptiveEnrichmentResult` is a report: it
+    carries what was decided and what was covered, deliberately not the provider
+    payloads, because planning state that held them would be unbounded and would
+    put provider content somewhere nobody was looking for it.
+
+    A correlation layer needs those payloads — the objects and relationships are
+    the whole input to a graph. Rather than widening the result model and pushing
+    payloads through planning, the outcome is offered here as it happens. The
+    orchestrator neither reads it back nor changes any decision because of it, so
+    a sink cannot influence what gets asked.
+    """
+
+    def record_outcome(self, outcome: ProviderExecutionOutcome) -> None:
+        """Take one completed provider execution, including its result envelope."""
+        ...
+
 
 #: Hard bound on planning rounds, independent of budget.
 #:
@@ -71,15 +99,35 @@ class AdaptiveEnrichmentOrchestrator:
         executor: ProviderExecutor,
         registry: ProviderRegistry,
         metrics: PlanningMetricsSink | None = None,
+        outcome_sink: EnrichmentOutcomeSink | None = None,
     ) -> None:
         self._planner = planner
         self._executor = executor
         self._registry = registry
         self._metrics = NoOpPlanningMetricsSink() if metrics is None else metrics
+        self._outcome_sink = outcome_sink
 
     @property
     def planner(self) -> AdaptiveEnrichmentPlanner:
         return self._planner
+
+    def with_outcome_sink(
+        self, outcome_sink: EnrichmentOutcomeSink
+    ) -> AdaptiveEnrichmentOrchestrator:
+        """The same orchestrator, offering each outcome to ``outcome_sink``.
+
+        A copy rather than a mutation: the planner, executor and registry are
+        shared, so nothing about provider selection changes, and a caller that
+        needs the payloads for one run cannot accidentally attach a collector to
+        somebody else's.
+        """
+        return AdaptiveEnrichmentOrchestrator(
+            planner=self._planner,
+            executor=self._executor,
+            registry=self._registry,
+            metrics=self._metrics,
+            outcome_sink=outcome_sink,
+        )
 
     async def run(
         self,
@@ -121,6 +169,8 @@ class AdaptiveEnrichmentOrchestrator:
                 self._provider_request(request, call.capabilities, investigation_id),
                 context,
             )
+            if self._outcome_sink is not None:
+                self._outcome_sink.record_outcome(outcome)
             state.observe(call, outcome)
         else:
             # Ran out of rounds without a stop decision. Reported honestly rather

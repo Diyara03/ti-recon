@@ -531,6 +531,7 @@ def normalize_network_ownership(
                 target_object_id=asn_object.id,
                 last_seen=document.observed_at,
                 evidence_refs=(evidence.id,),
+                raw_relationship_type="autonomous_system",
             )
         )
     return CensysNormalization(
@@ -656,6 +657,7 @@ def normalize_dns_names(
             target_object_id=context.anchor_object_id,
             last_seen=document.observed_at,
             evidence_refs=(evidence.id,),
+            raw_relationship_type="dns.names",
         )
         for item in objects
         if item.id != context.anchor_object_id
@@ -707,6 +709,7 @@ def normalize_tls_certificates(
             target_object_id=item.id,
             last_seen=document.observed_at,
             evidence_refs=(evidence.id,),
+            raw_relationship_type="services.tls.certificate",
         )
         for item in objects
     )

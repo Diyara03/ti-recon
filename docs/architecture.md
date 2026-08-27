@@ -35,7 +35,14 @@
            |
      Normalized Evidence           MODELS IMPLEMENTED — Task 3
            |
-     Lineage / Correlation         MODELS IMPLEMENTED, engine FUTURE
+     Correlation Engine            IMPLEMENTED — Task 14. exact identity,
+           |                                     assertion edges, lineage
+           |
+     Investigation Graph           IMPLEMENTED — Task 14. nodes + edges +
+           |                                     assertions, per investigation
+           |
+     Pivot Candidate Engine        IMPLEMENTED — Task 14. bounded, explicit,
+           |                                     one hop; executes via Task 13
            |
      Evidence Fusion               FUTURE — weighting, independence, decay
            |
@@ -362,6 +369,17 @@ src/ti_recon/
     orchestrator.py   AdaptiveEnrichmentOrchestrator (plan -> execute -> observe)
     metrics.py        PlanningMetricsSink + no-op / in-memory sinks
     catalog.py        the only module here that may name a provider
+  correlation/
+    models.py         nodes, edges, assertions, issues, limits, truncation
+    identity.py       canonical node keys + conservative file-hash resolver
+    relationships.py  canonical vocabulary, orientation, pivot safety classes
+    graph.py          InvestigationGraph (dicts + adjacency, bounded)
+    engine.py         CorrelationEngine.ingest(provider result)
+    policy.py         pivot modes, global budgets, depth downshift, hop limit
+    pivots.py         PivotCandidate + lexicographic ranking + privacy rules
+    orchestrator.py   root -> correlate -> bounded pivots via Task 13
+    results.py        CorrelatedEnrichmentResult, PivotRun
+    metrics.py        CorrelationMetricsSink + no-op / in-memory sinks
 ```
 
 ## 10. Provider execution (Task 6)
@@ -496,7 +514,52 @@ false-positive context never substitutes for threat intelligence.
 
 Full detail: [planning/adaptive-enrichment.md](planning/adaptive-enrichment.md).
 
-## 13. Deferred architecture (Task 14+)
+## 13. Correlation and controlled pivots (Task 14)
+
+Above the planner and below the future fusion engine: what everything that came
+back actually adds up to, structurally.
+
+`CorrelationEngine` folds each provider result into an `InvestigationGraph` — in
+memory, scoped to one user and one investigation, and never shared, because a
+common correlation store would make one analyst's pivots visible in another's work
+and leak *who is looking at what*. There is no graph database: the queries are
+"neighbours" and "one hop", which a dict answers, and persistence can later be
+PostgreSQL without changing any semantics here.
+
+Four rules carry it:
+
+- **Exact identity.** Nodes key on the Task 3 canonical key. Records merge when
+  they are the same object — never on a shared ASN, /24, certificate issuer,
+  malware family or fuzzy hash. Files use a conservative resolver: a shared
+  SHA-256 merges, a weaker digest merges only when nothing stronger disagrees, and
+  a contradicting stronger digest refuses the merge and files an issue.
+- **Edges aggregate assertions.** Two providers claiming one relationship is one
+  edge with two `RelationshipAssertion`s, each keeping transport, origin, source
+  family, lineage, the provider's own field name and its own times. The edge key
+  carries no provider, which is what makes them meet; inverse provider semantics
+  are flipped onto one canonical orientation.
+- **Derived is not observed.** The URL → host relationship TI Recon parses for
+  itself is `ENGINE_DERIVED`, names no provider and no source family, and never
+  counts as somebody having observed anything.
+- **No inference.** A→B plus B→C never yields A→C, two samples contacting one
+  address are not related, and no edge is ever created from a label.
+
+Pivoting is a separate decision from discovery. `PivotMode` defaults to building
+and recommending; remote enrichment needs both the root's `allow_remote_lookup`
+and an explicit `allow_remote_pivot_lookup`, is capped per depth across the whole
+session (0/0, 2/3, 5/8 targets/remote runs), runs one depth down, and stops one hop
+from the root. Non-global addresses and URLs carrying userinfo or credential-shaped
+parameters are graphed and never disclosed. Every pivot goes back through Task 13 —
+Task 14 selects no providers, holds no credentials and performs no network access
+of any kind.
+
+Nothing here produces a verdict, confidence or risk score. A warninglist match
+explains a node; it never deletes an edge.
+
+Full detail: [correlation/investigation-graph.md](correlation/investigation-graph.md)
+and [correlation/controlled-pivots.md](correlation/controlled-pivots.md).
+
+## 14. Deferred architecture (Task 15+)
 
 Documented so the shape is known; not implemented:
 
@@ -515,13 +578,19 @@ Documented so the shape is known; not implemented:
   MalwareBazaar YARA and certificate hunting, and every historical-timeline
   endpoint. These belong with the query planner rather than with a per-observable
   lookup.
-- Lineage-aware correlation, evidence fusion and verdict scoring. Task 13 chose
-  what to ask and recorded what was covered; deciding what the answers *mean* is
+- Evidence fusion and verdict scoring. Task 13 chose what to ask, Task 14
+  recorded what came back and how it connects; deciding what the answers *mean* is
   the next layer, and it is the only one that may weigh a source, resolve a
   conflict or apply decay.
-- Recursive pivoting: enriching the related objects a provider returns needs
-  pivot-value judgement, graph deduplication, fan-out limits and cycle
-  prevention. Task 13 enriches the requested observable only.
+- Freshness and false-positive reasoning over the graph. Task 14 preserves
+  per-assertion times and warninglist context without interpreting either — no
+  age thresholds, no "still active", no benign verdict.
+- Inference and similarity: transitive rules, ssdeep/TLSH/imphash clustering,
+  CIDR and ASN grouping. If TI Recon ever infers, it will label inferred
+  relationships as inferred, the way OpenCTI does, so an analyst can tell an
+  observation from a conclusion.
+- Multi-hop pivoting and a persistent, cross-investigation graph. Task 14 is one
+  hop and one investigation.
 - Planning *waves*: the orchestrator is sequential so each answer can inform the
   next decision. Bounded parallelism within one round is possible later, with
   real latency numbers rather than an assumption.

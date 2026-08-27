@@ -284,6 +284,7 @@ def normalize_host_association(
                 target_object_id=target.id,
                 first_seen=parse_utc_timestamp(entry.get("date_added")),
                 evidence_refs=(evidence.id,),
+                raw_relationship_type="urls",
             )
         )
     return AbuseChNormalization(
@@ -389,6 +390,7 @@ def normalize_payload_record(
                 first_seen=parse_utc_timestamp(entry.get("firstseen")),
                 last_seen=parse_utc_timestamp(entry.get("lastseen")),
                 evidence_refs=(evidence.id,),
+                raw_relationship_type="urls",
             )
         )
     return AbuseChNormalization(
@@ -530,6 +532,7 @@ def _host_link(
         target_object_id=context.subject_object_id,
         first_seen=observed_at,
         evidence_refs=(evidence_id,),
+        raw_relationship_type="host",
     )
     return AbuseChNormalization(objects=(target,), relationships=(link,))
 
@@ -570,6 +573,7 @@ def _served_payloads(
                 target_object_id=target.id,
                 first_seen=parse_utc_timestamp(entry.get("firstseen")),
                 evidence_refs=(evidence_id,),
+                raw_relationship_type="payloads",
             )
         )
     if not objects:

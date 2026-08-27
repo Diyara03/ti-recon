@@ -689,6 +689,7 @@ def normalize_network_context(
                 first_seen=document.first_seen,
                 last_seen=document.last_seen,
                 evidence_refs=(evidence.id,),
+                raw_relationship_type="metadata.asn",
             )
         )
 
@@ -706,6 +707,7 @@ def normalize_network_context(
                 first_seen=document.first_seen,
                 last_seen=document.last_seen,
                 evidence_refs=(evidence.id,),
+                raw_relationship_type="metadata.rdns",
             )
         )
 

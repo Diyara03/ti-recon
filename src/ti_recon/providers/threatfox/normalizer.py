@@ -381,6 +381,7 @@ def normalize_hash_association(
                 first_seen=record.first_seen,
                 last_seen=record.last_seen,
                 evidence_refs=(evidence.id,),
+                raw_relationship_type="ioc",
             )
         )
 
@@ -424,6 +425,7 @@ def normalize_related_samples(
                     first_seen=record.first_seen,
                     last_seen=record.last_seen,
                     evidence_refs=(evidence_id,),
+                    raw_relationship_type="malware_samples",
                 )
             )
     unique = _unique(objects)
@@ -544,6 +546,7 @@ def _malware_association(
                 first_seen=record.first_seen,
                 last_seen=record.last_seen,
                 evidence_refs=(evidence_id,),
+                raw_relationship_type="malware_printable",
             )
         )
     if not objects:

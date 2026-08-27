@@ -419,6 +419,24 @@ services and telemetry, and the sandbox cannot tell those from a C2 either.
 `sandbox_role` without reinterpreting it as attacker-owned — it may be a hijacked
 WordPress site.
 
+### Observed, and still not an accusation
+
+Network and extracted-file links carry `Relationship.directly_observed = True`
+when the report's state is complete: a sandbox *watched* this sample open that
+connection and write that file, which is a stronger basis than a passive-DNS row
+saying two things were once associated.
+
+That is a statement about provenance and nothing else. The evidence stays
+`EvidenceClass.CONTEXT` with `CONTEXT_ONLY` effect, the verdict is untouched, and a
+watched connection to a CDN is still a watched connection to a CDN. How something
+was learned and what it accuses anyone of are different questions, and the flag
+answers only the first.
+
+An errored, queued or in-progress report has no behaviour to have watched, so its
+links are emitted — an errored run listing a host is a fact about the report —
+without the flag. The gate is `SandboxReportState.is_complete`, the same condition
+Task 12 already uses to decide which runs may contribute a verdict.
+
 **Extracted files** become `file` objects linked by `drops`, from whatever hashes
 are present. Never downloaded, and never one malicious vote per file: a dropper
 writing forty files must not become forty findings.

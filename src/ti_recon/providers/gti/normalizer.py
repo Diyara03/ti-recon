@@ -971,6 +971,7 @@ def normalize_related_items(
                 relationship_type=spec.relationship_type,
                 target_object_id=target.id,
                 evidence_refs=(claim.id,),
+                raw_relationship_type=spec.name,
             )
         )
         evidence.append(claim)
@@ -1095,6 +1096,7 @@ def _normalize_threat_items(
                 relationship_type=RelationshipType.ASSOCIATED_WITH_MALWARE,
                 target_object_id=malware.id,
                 evidence_refs=(claim.id,),
+                raw_relationship_type=spec.name,
             )
         )
 
@@ -1412,6 +1414,7 @@ def normalize_file_behavior(
                     relationship_type=relationship_type,
                     target_object_id=related.id,
                     evidence_refs=(claim.id,),
+                    raw_relationship_type=source_field,
                 )
             )
 

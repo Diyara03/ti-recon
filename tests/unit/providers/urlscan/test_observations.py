@@ -217,13 +217,25 @@ def test_contact_is_context_rather_than_accusation() -> None:
 
 
 def test_relationship_types_match_what_was_observed() -> None:
+    """A page contacts an address; it does not resolve to one.
+
+    `lists.ips` holds the addresses the browser's own requests reached, so both
+    the domains and the addresses are *contact*. Writing the addresses as
+    `resolves-to` described the wrong thing and, worse, put a live connection in
+    the same bucket as passive DNS — a name that once pointed somewhere is a much
+    weaker link than an address this page actually talked to.
+    """
     result = normalize_contacted_infrastructure(context(), document())
     types = {link.relationship_type for link in result.relationships}
-    assert types == {
-        RelationshipType.CONTACTS,
-        RelationshipType.RESOLVES_TO,
-        RelationshipType.BELONGS_TO_ASN,
-    }
+    assert types == {RelationshipType.CONTACTS, RelationshipType.BELONGS_TO_ASN}
+    assert RelationshipType.RESOLVES_TO not in types
+
+
+def test_every_relationship_keeps_the_field_it_came_from() -> None:
+    """The canonical mapping is a judgement, so the original stays visible."""
+    result = normalize_contacted_infrastructure(context(), document())
+    raw = {link.raw_relationship_type for link in result.relationships}
+    assert raw == {"lists.domains", "lists.ips", "lists.asns"}
 
 
 def test_an_asn_is_derived_infrastructure_not_an_observable() -> None:
