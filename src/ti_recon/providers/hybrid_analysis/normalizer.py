@@ -398,7 +398,20 @@ def _related_objects(
     certificate revocation lists, CDNs, time servers and telemetry endpoints, and
     the sandbox cannot tell those from a C2 either — so these are observations
     with a relationship, and significance is the correlation layer's to decide.
+
+    They are nonetheless *observations*: a sandbox watched this sample open that
+    connection and write that file. ``directly_observed`` records exactly that and
+    nothing more. It does not touch the evidence class or the effect, which stay
+    ``CONTEXT`` / ``CONTEXT_ONLY``, because how something was learned and what it
+    accuses anyone of are different questions — a watched connection to a CDN is
+    still a watched connection to a CDN.
+
+    Only a run that finished carries the flag. A report that errored, is queued or
+    is still running has no behavioural content, so whatever it lists was not
+    watched happening; claiming otherwise would turn an infrastructure failure into
+    an eyewitness account.
     """
+    observed = summary.quality.state.is_complete
     objects: list[IntelObject] = []
     relationships: list[Relationship] = []
 
@@ -428,6 +441,7 @@ def _related_objects(
                 target_object_id=node.id,
                 evidence_refs=(evidence_id,),
                 raw_relationship_type="network_observations",
+                directly_observed=observed,
             )
         )
 
@@ -463,6 +477,7 @@ def _related_objects(
                 target_object_id=node.id,
                 evidence_refs=(evidence_id,),
                 raw_relationship_type="extracted_files",
+                directly_observed=observed,
             )
         )
     return SandboxNormalization(objects=tuple(objects), relationships=tuple(relationships))

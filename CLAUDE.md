@@ -465,9 +465,15 @@ what to ask and reports what was covered, and nothing decides what it means.
     searched for and never resolved. It is `ENGINE_DERIVED`, names no provider and
     no source family — validated, not merely documented — and shares one edge with
     any provider asserting the same thing without contributing to the family
-    count. Evidence class maps to basis one-directionally: only
-    `DIRECT_OBSERVATION` earns `PROVIDER_OBSERVED`, so correlation can understate
-    how something was learned and never overstate it.
+    count. **How a relationship was learned is orthogonal to what kind of claim it
+    is**: a sandbox's contacted domain is `EvidenceClass.CONTEXT` with
+    `CONTEXT_ONLY` effect *and* something the sandbox watched, so a provider says
+    so via `Relationship.directly_observed` and correlation reads that field
+    generically — never by branching on a provider id. Either that flag or
+    `EvidenceClass.DIRECT_OBSERVATION` earns `PROVIDER_OBSERVED`; silence leaves
+    `PROVIDER_REPORTED`, so nothing is ever overstated. Marking a link observed
+    changes no class, effect, direction, safety class or ranking: observation basis
+    is provenance, not significance.
 
 51. **Correlation performs no inference.** A→B and B→C never yields A→C; two
     samples contacting one address are not related; a domain does not inherit its

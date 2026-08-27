@@ -55,20 +55,22 @@ from ti_recon.providers.result import ProviderResultEnvelope
 
 __all__ = ["CorrelationEngine", "IngestionSummary"]
 
-#: The evidence class that means the provider watched it happen rather than
-#: holding a record of it.
+#: An evidence class that means the provider watched it happen.
 #:
 #: A live page load is `DIRECT_OBSERVATION`; a passive-DNS row, a curated dataset
 #: entry and a relationship expansion are records somebody keeps. Both are
 #: intelligence and they support different conclusions, so the graph keeps them
 #: apart rather than calling everything "observed".
 #:
-#: The rule is one-directional on purpose: only this class earns
-#: `PROVIDER_OBSERVED`, and everything else — including a sandbox's behaviour
-#: records, which Task 12 classifies as `CONTEXT` because a contacted domain is
-#: not an accusation — arrives as `PROVIDER_REPORTED`. Correlation can therefore
-#: understate how something was learned and never overstate it, which is the
-#: direction that matters: a 2019 database row must never read as an eyewitness.
+#: The class is only *one* of the two ways a provider can say it watched
+#: something. The other is `Relationship.directly_observed`, which a provider sets
+#: on the link itself — necessary because the two properties are orthogonal: a
+#: sandbox's contacted domain is `EvidenceClass.CONTEXT`, since it accuses nobody,
+#: and simultaneously something the sandbox watched happen.
+#:
+#: Either signal earns `PROVIDER_OBSERVED`; neither leaves `PROVIDER_REPORTED`.
+#: Both are things a provider must assert, so silence is never read as
+#: observation: a 2019 database row cannot become an eyewitness account.
 _OBSERVED_CLASSES: frozenset[EvidenceClass] = frozenset({EvidenceClass.DIRECT_OBSERVATION})
 
 
@@ -344,7 +346,11 @@ class CorrelationEngine:
             # who originally produced it, so origin falls back to the transport
             # rather than being invented.
             return RelationshipAssertion(
-                basis=RelationBasis.PROVIDER_REPORTED,
+                basis=(
+                    RelationBasis.PROVIDER_OBSERVED
+                    if relationship.directly_observed
+                    else RelationBasis.PROVIDER_REPORTED
+                ),
                 transport_provider=envelope.provider,
                 origin_provider=envelope.provider,
                 source_family=envelope.provider,
@@ -353,11 +359,10 @@ class CorrelationEngine:
                 last_seen=relationship.last_seen,
                 hop=hop,
             )
+        observed = relationship.directly_observed or evidence.evidence_class in _OBSERVED_CLASSES
         return RelationshipAssertion(
             basis=(
-                RelationBasis.PROVIDER_OBSERVED
-                if evidence.evidence_class in _OBSERVED_CLASSES
-                else RelationBasis.PROVIDER_REPORTED
+                RelationBasis.PROVIDER_OBSERVED if observed else RelationBasis.PROVIDER_REPORTED
             ),
             transport_provider=evidence.transport_provider,
             origin_provider=evidence.origin_provider,

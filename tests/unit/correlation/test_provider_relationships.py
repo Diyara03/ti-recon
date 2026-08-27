@@ -258,15 +258,12 @@ async def test_two_real_adapters_correlate_on_one_contacted_domain() -> None:
     """The Task 14 headline case, through the code the providers actually ship.
 
     One edge, two assertions, two independent source families, each keeping the
-    field it came from.
-
-    Both arrive as ``PROVIDER_REPORTED``, which is worth stating plainly: Task 12
-    classifies Hybrid Analysis behaviour records as ``EvidenceClass.CONTEXT``
-    because a contacted domain is context rather than an accusation, and this layer
-    reads the class rather than second-guessing it. The rule is deliberately
-    one-directional — only ``DIRECT_OBSERVATION`` earns ``PROVIDER_OBSERVED`` — so
-    correlation can under-claim how something was learned but never overstate it,
-    and a passive-DNS row can never be presented as an eyewitness account.
+    field it came from — and the two bases kept apart. A sandbox watched this
+    sample open the connection, so its assertion is ``PROVIDER_OBSERVED``; GTI
+    holds a record that the sample once contacted the same domain, which is
+    ``PROVIDER_REPORTED``. Both remain ``EvidenceClass.CONTEXT`` evidence with
+    ``CONTEXT_ONLY`` effect: how something was learned and what it accuses anyone
+    of are different questions.
     """
     from pydantic import SecretStr
 
@@ -350,7 +347,15 @@ async def test_two_real_adapters_correlate_on_one_contacted_domain() -> None:
         "contacted_domains",
         "network_observations",
     }
-    assert {item.basis for item in edge.assertions} == {RelationBasis.PROVIDER_REPORTED}
+    assert {item.basis for item in edge.assertions} == {
+        RelationBasis.PROVIDER_OBSERVED,
+        RelationBasis.PROVIDER_REPORTED,
+    }
+    observed = next(
+        item for item in edge.assertions if item.basis is RelationBasis.PROVIDER_OBSERVED
+    )
+    assert observed.transport_provider == "hybrid_analysis"
+    assert observed.raw_relationship_type == "network_observations"
     # And nothing in either result confused the vocabulary.
     assert not [
         issue

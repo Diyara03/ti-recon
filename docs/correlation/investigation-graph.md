@@ -272,12 +272,32 @@ much more cautious. It is now `contacts`.
 | `PROVIDER_REPORTED` | the provider holds a record of it |
 | `ENGINE_DERIVED` | TI Recon derived it from the observable itself |
 
-The rule mapping evidence to basis is **one-directional**: only
-`EvidenceClass.DIRECT_OBSERVATION` earns `PROVIDER_OBSERVED`. Everything else —
-including Hybrid Analysis behaviour records, which Task 12 classifies as `CONTEXT`
-because a contacted domain is not an accusation — arrives as reported. Correlation
-can therefore understate how something was learned and never overstate it, and a
-2019 database row can never be presented as an eyewitness account.
+A provider can say it watched something in two ways, and both are read:
+
+- `EvidenceClass.DIRECT_OBSERVATION` on the evidence behind the relationship — a
+  live page load, for instance;
+- `Relationship.directly_observed` on the link itself.
+
+The second exists because the two properties are **orthogonal**. A sandbox's
+contacted domain is `EvidenceClass.CONTEXT` with `CONTEXT_ONLY` effect, since it
+accuses nobody — a detonating sample also reaches CRLs, CDNs and time servers —
+and it is simultaneously something the sandbox *watched happen*. Reading only the
+class made every sandbox observation arrive as though it were a database lookup.
+
+Either signal earns `PROVIDER_OBSERVED`; neither leaves `PROVIDER_REPORTED`. Both
+are things a provider must assert, so silence is never read as observation and a
+2019 passive-DNS row can never be presented as an eyewitness account.
+
+The flag is set in the provider that knows — Hybrid Analysis marks its
+`network_observations` and `extracted_files` links, and only for a run whose state
+is complete, because an errored or queued report has no behaviour to have watched.
+The correlation engine reads the field generically and names no provider; a test
+asserts both halves.
+
+Marking a link observed changes **nothing** else: not the evidence class, not the
+effect, not the edge's direction, not its pivot safety class, and not the ranking —
+observation basis is provenance, and a relationship does not become more followable
+because somebody watched it.
 
 ### The one structural relationship
 

@@ -339,6 +339,13 @@ invisible: the relationship simply looks like something the provider said. It is
 also what lets one provider assert two genuinely different links between the same
 pair of objects without them deduplicating into one during correlation.
 
+`Relationship.directly_observed` is how a provider says it *watched* a link happen
+rather than holding a record that it once did. It is separate from
+`EvidenceClass` on purpose: a sandbox's contacted domain is `CONTEXT` evidence with
+`CONTEXT_ONLY` effect, because a detonating sample also reaches CRLs and CDNs, and
+it is simultaneously something the sandbox observed. The default is `False`, so a
+provider that says nothing is never credited with an observation.
+
 `activity_mode` (default `PASSIVE`) is a filter rather than a hint: a passive
 investigation must never be handed an adapter that can only act, and an active
 request must not be served by a passive-only adapter.
