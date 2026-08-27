@@ -27,6 +27,17 @@ class Relationship(TiReconModel):
     confidence: float | None = Field(default=None, ge=0.0, le=100.0)
     evidence_refs: tuple[Identifier, ...] = Field(min_length=1)
 
+    #: The provider's own name for this link, before it was mapped to the
+    #: canonical vocabulary — ``contacted_domains``, ``payloads``, ``resolutions``.
+    #:
+    #: Kept because the mapping is a judgement someone will eventually want to
+    #: argue with. Nine provider vocabularies collapse into thirteen canonical
+    #: types, and without the original name a wrong mapping is invisible: the
+    #: relationship simply looks like something the provider said. It is also what
+    #: lets one provider assert two genuinely different links between the same
+    #: pair of objects without them deduplicating into one.
+    raw_relationship_type: str | None = Field(default=None, max_length=128)
+
     @model_validator(mode="after")
     def _validate_relationship(self) -> Relationship:
         if self.source_object_id == self.target_object_id:

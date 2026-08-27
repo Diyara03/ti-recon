@@ -427,6 +427,7 @@ def _related_objects(
                 relationship_type=RelationshipType.CONTACTS,
                 target_object_id=node.id,
                 evidence_refs=(evidence_id,),
+                raw_relationship_type="network_observations",
             )
         )
 
@@ -461,6 +462,7 @@ def _related_objects(
                 relationship_type=RelationshipType.DROPS,
                 target_object_id=node.id,
                 evidence_refs=(evidence_id,),
+                raw_relationship_type="extracted_files",
             )
         )
     return SandboxNormalization(objects=tuple(objects), relationships=tuple(relationships))

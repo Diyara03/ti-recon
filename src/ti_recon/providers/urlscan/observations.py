@@ -160,6 +160,7 @@ def normalize_redirect_chain(
             first_seen=document.scanned_at,
             last_seen=document.scanned_at,
             evidence_refs=(evidence.id,),
+            raw_relationship_type="data.requests.redirectResponse",
         )
         for source, target in pairwise(steps)
     )
@@ -255,10 +256,20 @@ def normalize_contacted_infrastructure(
     page = _page_object(document)
     relationships: list[Relationship] = []
     if page is not None:
-        relationships.extend(_links(page, domains, RelationshipType.CONTACTS, evidence, document))
-        relationships.extend(_links(page, ips, RelationshipType.RESOLVES_TO, evidence, document))
         relationships.extend(
-            _links(page, asns, RelationshipType.BELONGS_TO_ASN, evidence, document)
+            _links(page, domains, RelationshipType.CONTACTS, evidence, document, "lists.domains")
+        )
+        # `lists.ips` are the addresses the browser's own requests reached, so the
+        # relationship is *contact*, not resolution. A page does not resolve, and
+        # writing it as `resolves-to` both misdescribed the observation and put it
+        # in the same bucket as passive DNS, whose pivot semantics are quite
+        # different — a name that once pointed somewhere versus an address this
+        # page actually talked to.
+        relationships.extend(
+            _links(page, ips, RelationshipType.CONTACTS, evidence, document, "lists.ips")
+        )
+        relationships.extend(
+            _links(page, asns, RelationshipType.BELONGS_TO_ASN, evidence, document, "lists.asns")
         )
 
     objects = list(domains) + list(ips) + list(asns)
@@ -297,7 +308,7 @@ def normalize_served_bodies(
     )
     page = _page_object(document)
     relationships = (
-        tuple(_links(page, digests, RelationshipType.DOWNLOADS, evidence, document))
+        tuple(_links(page, digests, RelationshipType.DOWNLOADS, evidence, document, "lists.hashes"))
         if page is not None
         else ()
     )
@@ -419,6 +430,7 @@ def _links(
     relationship_type: RelationshipType,
     evidence: Evidence,
     document: ScanDocument,
+    raw_type: str,
 ) -> list[Relationship]:
     return [
         Relationship(
@@ -428,6 +440,7 @@ def _links(
             first_seen=document.scanned_at,
             last_seen=document.scanned_at,
             evidence_refs=(evidence.id,),
+            raw_relationship_type=raw_type,
         )
         for target in targets
         if target.canonical_key != source.canonical_key
