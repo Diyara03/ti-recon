@@ -87,6 +87,7 @@ class CorrelatedInvestigationOrchestrator:
         self._enrichment = enrichment
         self._limits = limits
         self._metrics = NoOpCorrelationMetricsSink() if metrics is None else metrics
+        self._budget_blocked: dict[str, PivotSkipReason] = {}
 
     async def run(
         self,
@@ -98,6 +99,7 @@ class CorrelatedInvestigationOrchestrator:
     ) -> CorrelatedEnrichmentResult:
         """Investigate one observable and correlate everything it produced."""
         policy = PivotPolicy() if pivot_policy is None else pivot_policy
+        self._budget_blocked = {}
         graph = InvestigationGraph(
             investigation_id=investigation_id,
             authenticated_user_id=context.authenticated_user_id,
@@ -131,6 +133,7 @@ class CorrelatedInvestigationOrchestrator:
             # analyst asking "what else is in here?" should not be answered with
             # silence.
             candidates, dropped = self._rank(graph, policy, request)
+            candidates = self._apply_budget_skips(candidates)
 
         result = CorrelatedEnrichmentResult(
             root_enrichment=root_result,
@@ -208,9 +211,15 @@ class CorrelatedInvestigationOrchestrator:
         pivot_depth = policy.pivot_depth_for(request.depth)
 
         for candidate in candidates:
+            if not candidate.eligible_for_enrichment:
+                continue
             # The budget is checked per candidate rather than once: a pivot that
             # spent three remote runs can exhaust what is left for the next one.
-            if not candidate.eligible_for_enrichment or self._budget_skip(budget) is not None:
+            blocked = self._budget_skip(budget)
+            if blocked is not None:
+                # Remembered so the re-ranked candidate list can say the target was
+                # eligible and unaffordable, rather than leaving it looking chosen.
+                self._budget_blocked[candidate.target_node_key] = blocked
                 continue
 
             node = graph.node(candidate.target_node_key)
@@ -271,7 +280,12 @@ class CorrelatedInvestigationOrchestrator:
             constraints=constraints,
         )
         result, outcomes = await self._enrich(pivot_request, context, investigation_id)
-        remote_runs = sum(1 for item in result.attempts if item.called_provider)
+        # Task 13's own accounting, not a second count of it: a provider that was
+        # called still costs nothing here if it was local, and a cache hit,
+        # cooldown or unconfigured credential costs nothing either. Counting
+        # `called_provider` directly would charge the disclosure budget for a
+        # lookup that disclosed nothing.
+        remote_runs = result.budget.remote_runs_used
         return (
             PivotRun(
                 target_node_key=candidate.target_node_key,
@@ -287,6 +301,25 @@ class CorrelatedInvestigationOrchestrator:
     # ------------------------------------------------------------------ #
     # Budget
     # ------------------------------------------------------------------ #
+
+    def _apply_budget_skips(
+        self, candidates: tuple[PivotCandidate, ...]
+    ) -> tuple[PivotCandidate, ...]:
+        """Mark candidates that were eligible but never affordable."""
+        if not self._budget_blocked:
+            return candidates
+        return tuple(
+            item.model_copy(
+                update={
+                    "eligible_for_enrichment": False,
+                    "selection_reason": None,
+                    "skip_reason": self._budget_blocked[item.target_node_key],
+                }
+            )
+            if item.target_node_key in self._budget_blocked and item.skip_reason is None
+            else item
+            for item in candidates
+        )
 
     @staticmethod
     def _budget_skip(budget: PivotBudget) -> PivotSkipReason | None:

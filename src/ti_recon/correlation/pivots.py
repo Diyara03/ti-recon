@@ -129,18 +129,29 @@ class PivotCandidate(FrozenTiReconModel):
 def non_global_address(intel_object: IntelObject) -> bool:
     """Whether this address must never be sent to a third party automatically.
 
-    RFC1918, loopback, link-local, multicast, reserved and documentation ranges.
-    A sandbox routinely reports the analysis network's own addresses, and a
-    customer's internal range is exactly the thing not to hand to an external
-    service — the address is often more sensitive than the malware.
+    RFC1918, loopback, link-local, multicast, reserved, unspecified and
+    documentation ranges. A sandbox routinely reports the analysis network's own
+    addresses, and a customer's internal range is exactly the thing not to hand to
+    an external service — the address is often more sensitive than the malware
+    that touched it.
+
+    ``is_global`` alone is not enough: a multicast address is not private, so a
+    sandbox reporting 224.0.0.1 would sail straight past a single summary flag.
+    Each property is therefore asked for explicitly.
     """
     if intel_object.object_type not in {IntelObjectType.IPV4_ADDR, IntelObjectType.IPV6_ADDR}:
         return False
     try:
         address = ipaddress.ip_address(intel_object.canonical_value)
     except ValueError:  # pragma: no cover - normalization already validated it
+        # Unparseable is the safest possible thing to refuse to disclose.
         return True
-    return not address.is_global
+    return (
+        not address.is_global
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+    )
 
 
 def is_sensitive_url(intel_object: IntelObject) -> bool:
@@ -223,7 +234,17 @@ class PivotPlanner:
         """
         edges = graph.incident_edges(node.node_key)
         if not edges:
-            return None
+            # A provider returned this object and never said how it relates to
+            # anything. It is a real finding and stays visible as a candidate, with
+            # the weakest class and no eligibility — the alternative, inventing a
+            # `related-to` so the graph looks connected, would manufacture the very
+            # justification for querying third parties about it.
+            return _Reach(
+                from_key=graph.root_key or node.node_key,
+                edges=(),
+                safety_class=PivotSafetyClass.GENERIC_ASSOCIATION,
+                eligible=False,
+            )
         best: tuple[int, GraphEdge] | None = None
         eligible = False
         for edge in edges:
@@ -319,18 +340,20 @@ class PivotPlanner:
             return PivotSkipReason.NON_GLOBAL_IP
         if is_sensitive_url(node.intel_object):
             return PivotSkipReason.SENSITIVE_URL
+        if node.is_unlinked:
+            return PivotSkipReason.UNLINKED_OBJECT
         if node.enriched:
             return PivotSkipReason.ALREADY_ENRICHED
         if node.discovered_at_hop >= MAX_AUTOMATIC_PIVOT_HOP + 1:
             return PivotSkipReason.HOP_LIMIT
-        if node.is_unlinked:
-            return PivotSkipReason.UNLINKED_OBJECT
         if self._policy.mode is not PivotMode.ENRICH:
             return PivotSkipReason.RECOMMEND_ONLY
         if not allow_remote_lookup or not self._policy.allow_remote_pivot_lookup:
-            # Local providers may still answer; the orchestrator decides that by
-            # handing Task 13 a constraint rather than by naming any provider here.
-            return None if explicit or reach.eligible else PivotSkipReason.REMOTE_PIVOTS_DISABLED
+            # Automatic pivoting is a remote-disclosure feature, so with it off
+            # nothing is followed on its own. A target the caller named by hand
+            # still runs, under a local-only constraint applied by Task 13's own
+            # locality policy — no provider is named here.
+            return None if explicit else PivotSkipReason.REMOTE_PIVOTS_DISABLED
         if explicit:
             return None
         if not reach.eligible:
