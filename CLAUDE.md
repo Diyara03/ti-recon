@@ -20,7 +20,7 @@ Analyst -> Claude + TI Analyst Skill -> MCP -> TI Recon backend
 
 ## Current implementation boundary
 
-Implemented (Jira Tasks 1-13):
+Implemented (Jira Tasks 1-14):
 
 - Task 1 — product scope + investigation workflow foundation (docs, enums)
 - Task 2 — architecture foundation (docs, module boundaries)
@@ -71,6 +71,15 @@ Implemented (Jira Tasks 1-13):
   plan -> execute (Task 6) -> observe -> re-plan, sequentially, over the requested
   observable alone. Not the fusion layer: no verdict, risk score or confidence.
 
+- Task 14 — correlation graph, relationship lineage and controlled pivots
+  (`correlation/`): assembles what providers returned into one investigation
+  graph. Exact identity only (a conservative file-hash resolver, conflicts
+  refused and reported), semantic edges that aggregate `RelationshipAssertion`s
+  keeping transport/origin/family/lineage, canonical orientation so inverse
+  provider semantics meet, one `ENGINE_DERIVED` structural relationship
+  (URL → host, parsed), per-assertion times, and bounded pivot selection whose
+  execution goes back through Task 13. No verdict, no inference, no similarity.
+
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Evidence fusion is
 not implemented, so there is still no multi-provider verdict — Task 13 chooses
@@ -116,14 +125,22 @@ what to ask and reports what was covered, and nothing decides what it means.
   deletion, saved searches, incidents
 - urlscan paging beyond the first search page, Brand/Kit monitoring, hostname
   and similarity APIs
-- Evidence fusion, conflict resolution, decay and verdict scoring. Task 13 stops
-  at coverage; weighing sources belongs to the next layer, the only one allowed
-  to weigh a source or resolve a conflict
+- Evidence fusion, conflict resolution, decay and verdict scoring. Tasks 13-14
+  stop at coverage and correlation; weighing sources belongs to the next layer,
+  the only one allowed to weigh a source or resolve a conflict
+- Any graph database (Neo4j, JanusGraph, ArangoDB, RedisGraph) or a global,
+  cross-investigation, cross-user intelligence graph. The graph is in-memory and
+  scoped to one investigation
+- Transitive or rule-based inference in the graph, similarity/fuzzy correlation
+  (ssdeep, TLSH, imphash, CIDR, ASN clustering), freshness or false-positive
+  reasoning, threat-actor attribution and campaign clustering
+- Automatic pivot enrichment beyond one hop, or any pivot that resolves DNS,
+  fetches a URL, opens a socket or downloads a file
 - Any planner-side retry, waiting or transport. Task 6 owns retry, backoff,
   cooldown and cache; a planner-side retry would multiply a policy it cannot see
-- Recursive enrichment of related objects a provider returned. A plan enriches
-  the requested observable only; pivoting needs pivot-value judgement, graph
-  deduplication, fan-out limits and cycle prevention
+- Recursive enrichment of related objects inside a *Task 13* plan. A plan enriches
+  the requested observable only; pivoting is Task 14's, is explicit, and is
+  bounded by a shared budget and one hop
 - Parallel provider fan-out inside one planning round ("waves"). The orchestrator
   is sequential so each answer can inform the next decision; changing that needs
   real latency data, not an assumption
@@ -417,6 +434,91 @@ what to ask and reports what was covered, and nothing decides what it means.
     but must not choose which intelligence sources it queries internally, or
     provider selection stops being reproducible.
 
+47. **Correlation merges exact observable identity, never similarity.** A shared
+    ASN, /24, certificate issuer, page title, favicon, ssdeep, TLSH, imphash,
+    malware family, YARA rule or tag is an analytic signal and none of them is
+    identity. A file merges on a shared SHA-256; on a shared SHA-1 or MD5 only
+    when nothing stronger disagrees, recorded as a weaker basis; and a
+    contradicting stronger digest refuses the merge and files a
+    `FILE_HASH_CONFLICT` rather than fusing two samples and cross-attributing
+    their behaviour. A held digest is never overwritten.
+
+48. **A graph edge aggregates assertions, and every assertion keeps its
+    provenance.** Two providers claiming one relationship is one edge with two
+    `RelationshipAssertion`s; the edge key carries no provider, which is what
+    makes them meet. Assertion deduplication is by
+    `(basis, source_family, lineage_group_id, origin_provider, raw type)`, so one
+    provider rendering the same claim in evidence, related objects and a summary
+    is one assertion rather than three corroborations — while two genuinely
+    different claims about the same pair both survive. `raw_relationship_type` is
+    kept because the canonical mapping is a judgement someone will want to argue
+    with.
+
+49. **Same-family assertions never become independent sources.** ThreatFox and
+    URLhaus agreeing is `('abuse_ch',)`. `asserting_source_families` is
+    informational, is never turned into a number, and is deliberately excluded
+    from pivot ranking — ranking on it is the first step to "two providers agreed,
+    therefore malicious". A relayed finding keeps the origin that produced it.
+
+50. **Engine-derived edges are never provider evidence.** The URL → host
+    relationship is parsed from the authority the URL already carries, never
+    searched for and never resolved. It is `ENGINE_DERIVED`, names no provider and
+    no source family — validated, not merely documented — and shares one edge with
+    any provider asserting the same thing without contributing to the family
+    count. Evidence class maps to basis one-directionally: only
+    `DIRECT_OBSERVATION` earns `PROVIDER_OBSERVED`, so correlation can understate
+    how something was learned and never overstate it.
+
+51. **Correlation performs no inference.** A→B and B→C never yields A→C; two
+    samples contacting one address are not related; a domain does not inherit its
+    address's certificate. No edge is ever created from a label — family, tag, AV
+    verdict, YARA rule, country, ASN owner, warninglist name. Times live on
+    assertions, and an edge's bounds are display-only: a 2019 and a 2026
+    observation are two observations, not a seven-year association.
+
+52. **Pivot discovery is not pivot execution.** Learning that a sample contacted a
+    domain creates graph knowledge and authorises nothing. `PivotMode` defaults to
+    building and recommending, an object returned with no usable relationship is
+    marked unlinked and never auto-pivoted, and no `related-to` is invented to make
+    the graph connected — a fabricated edge would become the justification for
+    querying third parties about it.
+
+53. **Remote pivot enrichment is explicit and doubly gated.** It requires both the
+    root's `allow_remote_lookup` and `allow_remote_pivot_lookup`, which defaults to
+    `False`; Task 14 can never re-enable what the root disabled. Following a lead
+    the provider chose is a wider disclosure than looking up what the analyst
+    typed, and one flag would make that escalation invisible.
+
+54. **Private and sensitive targets are never disclosed automatically.**
+    Non-global addresses (RFC1918, loopback, link-local, multicast, reserved,
+    unspecified, documentation) and URLs carrying userinfo or a credential-shaped
+    query *name* are graphed, recommended and never sent — the relationship is
+    kept, because not disclosing is not deleting. Only the parameter name is read,
+    never its value, and stripping the query to query "the same URL" is refused:
+    that is a different observable.
+
+55. **Automatic pivot enrichment is one hop, bounded by a shared budget.**
+    `MAX_AUTOMATIC_PIVOT_HOP = 1`; hop-2 objects are graphed and never queried,
+    appearing as candidates with `HOP_LIMIT`. Targets and remote runs are capped
+    per depth (0/0, 2/3, 5/8) across the *whole session*, handed to each Task 13
+    run as a reduction rather than watched afterwards, charged from Task 13's own
+    remote-run figure so cache hits, cooldowns, unconfigured credentials and local
+    providers cost nothing. Pivots run one depth below the root, and a target is
+    marked enriched before ingestion so a cycle cannot queue it twice.
+
+56. **Task 13 remains the only provider-selection engine.** Task 14 selects no
+    provider, resolves no credential and calls no adapter; a pivot is a canonical
+    observable handed to the planner. Correlation modules perform zero network
+    access — no DNS, no HTTP, no socket, no download — and a test reads their AST
+    to prove it.
+
+57. **The graph is investigation knowledge, not a global store.** It is in-memory,
+    scoped to one user and one investigation, and never shared: two analysts
+    investigating one observable build the same canonical keys and two separate
+    graphs, because sharing would leak who is looking at what. There is no graph
+    database, and correlation produces no verdict, risk score or confidence — a
+    warninglist match explains a node and never deletes an edge.
+
 ## Security rules
 
 - **No secrets in the repo.** `.env` is git-ignored; `.env.example` holds
@@ -535,6 +637,12 @@ what to ask and reports what was covered, and nothing decides what it means.
   Hybrid Analysis key may use the API from at most two IP addresses per hour. No
   egress rotation, no key rotation, no multiple accounts; a scaled deployment
   needs stable centralized egress.
+- **A correlation graph carries no secret, because correlation cannot reach one.**
+  `correlation/` imports no credential module, no secret store and no HTTP client,
+  and never mentions `SecretStr`; a test asserts it. Node occurrences and
+  assertions name providers and source families — never credentials, connection
+  ids or tokens — and correlation metrics are counts and enum members with no
+  field that can hold an observable, a node key, an investigation id or a user.
 - **A planning trace carries no secret, because planning cannot reach one.**
   `planning/` imports no secret store, no `SecretStr` and no HTTP client, and a
   test asserts it. Planning metrics are enum members, bounded provider ids, small
@@ -628,6 +736,14 @@ src/ti_recon/
                      credential-scoped key for a refused credential),
                      concurrency + single-flight, policy, bounded executor,
                      metrics
+  correlation/       Task 14: investigation graph and controlled pivots. models
+                     (nodes, edges, assertions, issues, limits), identity (exact
+                     keys + conservative file-hash resolver), relationships
+                     (canonical vocabulary, orientation, pivot safety), graph
+                     (dicts + adjacency, bounded, deterministic), engine
+                     (ingest provider results), policy (modes, budgets, hop),
+                     pivots (candidates + lexicographic ranking), orchestrator
+                     (root -> correlate -> pivot via Task 13), results, metrics
   planning/          Task 13: adaptive enrichment planning. models (locality,
                      cost class, novelty, budgets, decisions, result), goals
                      (capability goals + activation), policy (per-depth budgets,
@@ -651,7 +767,9 @@ docs/                scope, architecture, data model, credentials, provider
                      providers/censys, providers/threatfox, providers/urlhaus,
                      providers/malwarebazaar, providers/misp-warninglists,
                      providers/hybrid-analysis,
-                     planning/adaptive-enrichment
+                     planning/adaptive-enrichment,
+                     correlation/investigation-graph,
+                     correlation/controlled-pivots
 ```
 
 ## Conventions

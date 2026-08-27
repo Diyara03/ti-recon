@@ -339,6 +339,11 @@ the question it existed to answer.
   Fusion            (future)       what it means
 ```
 
+`AdaptiveEnrichmentOrchestrator.with_outcome_sink()` offers each provider outcome
+to a caller as it completes — the seam Task 14 uses to reach the objects and
+relationships a result carries, which the report model deliberately does not hold.
+The sink is never read back, so collecting cannot influence what gets asked.
+
 The planner performs no I/O, resolves no credentials, reads no cache and never
 retries — Task 6 owns all four, and a planner-side retry would silently multiply
 the retry policy it cannot see. It never touches an adapter's client; a test
@@ -355,6 +360,13 @@ planning *waves* can be added later if latency data ever justifies it — with r
 numbers rather than an assumption.
 
 ### Passive, and one observable
+
+Since Task 14, the planner also has a caller that *does* enrich more than one
+observable — the correlation orchestrator, which hands it one bounded pivot target
+at a time. Nothing about this layer changes: each pivot is a separate planning run
+over a single observable, at a reduced depth, with its remote budget already
+lowered by the caller. Planning still never recruits its own work.
+
 
 `EnrichmentPlanningRequest` refuses a non-passive activity mode or a non-`LOOKUP`
 operation **at construction**, so a plan that submits, detonates or rescans

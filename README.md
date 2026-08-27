@@ -8,8 +8,9 @@ eventually produce an explainable, auditable assessment.
 
 ## Current development state
 
-This repository currently contains the foundation, its first nine providers and
-the adaptive enrichment planner that chooses between them (Jira Tasks 1-13):
+This repository currently contains the foundation, its first nine providers, the
+adaptive enrichment planner that chooses between them, and the correlation graph
+that assembles what they return (Jira Tasks 1-14):
 
 | Task | Scope | State |
 |------|-------|-------|
@@ -26,6 +27,7 @@ the adaptive enrichment planner that chooses between them (Jira Tasks 1-13):
 | 11 | MISP Warning Lists | Implemented (local, zero-network false-positive context) |
 | 12 | Sandbox framework + Hybrid Analysis | Implemented (passive historical reports only) |
 | 13 | Adaptive enrichment planner + orchestrator | Implemented (deterministic, passive, no fusion) |
+| 14 | Correlation graph + controlled pivots | Implemented (exact identity, bounded pivots, no verdict) |
 
 **Seven providers are integrated**, all passive, each answering a different
 question. Google Threat Intelligence enriches with each analyst's own VirusTotal
@@ -66,6 +68,14 @@ coverage has been collected or the depth's budget is spent. It reasons in
 capabilities and source families rather than provider names — so three abuse.ch
 datasets agreeing is one family agreeing with itself — and it produces no verdict:
 every stop reason is operational, and none of them means the answer is known.
+
+Task 14 assembles what those providers return into one investigation graph. It
+merges records that are **the same object** — never ones that merely resemble each
+other — aggregates the relationships providers assert into single semantic edges
+that keep every claimant's provenance, and ranks a bounded set of discovered
+objects as possible pivots. Following one is explicit, budgeted and one hop deep:
+discovering a domain in a sandbox report does not authorise asking six third
+parties about it.
 
 There is no SecurityTrails, AbuseIPDB, Shodan or IPinfo client yet, no *active*
 sandboxing, and there is no evidence fusion, no verdict scoring, no MCP server and
@@ -138,6 +148,9 @@ TI Recon backend                 <-- this repository
    |-- enrichment planner         implemented (capability goals, source-family
    |                               coverage, budgets, deterministic ranking)
    |-- enrichment orchestrator    implemented (plan -> execute -> observe loop)
+   |-- correlation engine         implemented (exact identity, assertion edges)
+   |-- investigation graph        implemented (in-memory, per investigation)
+   |-- pivot selection            implemented (bounded, explicit, one hop)
    |-- provider registry          implemented
    |-- provider adapters          contract implemented; GTI, urlscan,
    |                               GreyNoise, Censys, ThreatFox, URLhaus,
@@ -177,6 +190,12 @@ Design principles that shape every layer:
 - **Planning is deterministic and provider-neutral** — candidates are ordered by
   a documented lexicographic ranking, never a weighted score, and no LLM chooses
   which intelligence sources TI Recon queries.
+- **Correlation merges exact identity, never similarity** — a shared ASN, /24,
+  certificate issuer, malware family or fuzzy hash is an analytic signal, not the
+  same object.
+- **Discovery is not disclosure** — finding an object in a provider's response
+  does not authorise querying third parties about it. Pivoting is explicit,
+  globally budgeted and stops one hop from the submitted observable.
 - **Per-user execution isolation** — cache entries, quota state, cooldowns,
   concurrency slots and request coalescing are all keyed by the analyst's
   credential, never shared between users.
@@ -247,9 +266,12 @@ In production, provider credentials are held per user by the credential layer
   omission is reported in coverage — no result claims to have checked lists it
   never had.
 - **Planning is not fusion.** The planner decides what to ask and reports what
-  was covered. It produces no verdict, risk score or confidence, resolves no
-  conflict between providers, and never enriches the related objects a provider
-  returns — recursive pivoting is a task of its own.
+  was covered. It produces no verdict, risk score or confidence, and resolves no
+  conflict between providers.
+- **Correlation is not interpretation.** The graph records what was learned and
+  who claimed it. It performs no transitive inference — A→B and B→C never yields
+  A→C — no similarity clustering, no freshness reasoning and no attribution, and
+  the graph is per investigation rather than a global intelligence store.
 - **Every provider is passive only.** No submission, rescanning, live scanning,
   downloads, uploads, sandbox detonation, Intelligence Search, GNQL hunting,
   CenQL search or abuse.ch write query.
@@ -299,4 +321,6 @@ In production, provider credentials are held per user by the credential layer
 - [docs/sandbox.md](docs/sandbox.md) — Task 12 provider-neutral sandbox framework
 - [docs/providers/hybrid-analysis.md](docs/providers/hybrid-analysis.md) — Task 12 Hybrid Analysis
 - [docs/planning/adaptive-enrichment.md](docs/planning/adaptive-enrichment.md) — Task 13 adaptive enrichment planner
+- [docs/correlation/investigation-graph.md](docs/correlation/investigation-graph.md) — Task 14 correlation graph
+- [docs/correlation/controlled-pivots.md](docs/correlation/controlled-pivots.md) — Task 14 controlled pivots
 - [docs/artifacts.md](docs/artifacts.md) — Task 8 bounded provider artifact storage

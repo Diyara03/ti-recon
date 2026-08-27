@@ -331,6 +331,14 @@ Properties, all tested:
   extending this one. The registry answers "who *could* answer this?"; the planner
   answers "who should we ask next?".
 
+`Relationship.raw_relationship_type` carries the provider's own name for a link —
+`contacted_domains`, `payloads`, `lists.ips` — alongside the canonical
+`RelationshipType` it was mapped to. Nine provider vocabularies collapse into
+thirteen canonical types, and without the original name a wrong mapping is
+invisible: the relationship simply looks like something the provider said. It is
+also what lets one provider assert two genuinely different links between the same
+pair of objects without them deduplicating into one during correlation.
+
 `activity_mode` (default `PASSIVE`) is a filter rather than a hint: a passive
 investigation must never be handed an adapter that can only act, and an active
 request must not be served by a passive-only adapter.
