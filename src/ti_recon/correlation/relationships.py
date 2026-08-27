@@ -27,6 +27,7 @@ assertions meet.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Final
 
 from pydantic import Field
@@ -48,7 +49,7 @@ _HOSTS_TYPES: Final[frozenset[IntelObjectType]] = frozenset(
 _ADDRESSABLE: Final[frozenset[IntelObjectType]] = _HOSTS_TYPES | {IntelObjectType.URL}
 
 
-class PivotEligibility(FrozenTiReconModel):
+class PivotEligibility(StrEnum):
     """Whether following this relationship may spend somebody's quota.
 
     Separate from the safety class because the two answer different questions.
@@ -57,11 +58,11 @@ class PivotEligibility(FrozenTiReconModel):
     """
 
     #: May be enriched automatically when pivoting is explicitly enabled.
-    ENRICH_ELIGIBLE: Final[str] = "enrich_eligible"
+    ENRICH_ELIGIBLE = "enrich_eligible"
     #: Surfaced to an analyst, never enriched on its own.
-    RECOMMEND_ONLY: Final[str] = "recommend_only"
+    RECOMMEND_ONLY = "recommend_only"
     #: Never followed automatically, whatever the mode.
-    NEVER: Final[str] = "never"
+    NEVER = "never"
 
 
 class RelationshipDefinition(FrozenTiReconModel):
@@ -71,8 +72,7 @@ class RelationshipDefinition(FrozenTiReconModel):
     allowed_source_types: frozenset[IntelObjectType]
     allowed_target_types: frozenset[IntelObjectType]
     pivot_safety_class: PivotSafetyClass
-    #: One of :class:`PivotEligibility`'s values.
-    eligibility: str = Field(min_length=1, max_length=32)
+    eligibility: PivotEligibility
     #: How it reads in the other direction, for display and traversal.
     inverse_display_name: str = Field(min_length=1, max_length=64)
     description: str = Field(min_length=1, max_length=300)
@@ -90,11 +90,11 @@ class RelationshipDefinition(FrozenTiReconModel):
 
     @property
     def enrich_eligible(self) -> bool:
-        return self.eligibility == PivotEligibility.ENRICH_ELIGIBLE
+        return self.eligibility is PivotEligibility.ENRICH_ELIGIBLE
 
     @property
     def never_pivot(self) -> bool:
-        return self.eligibility == PivotEligibility.NEVER
+        return self.eligibility is PivotEligibility.NEVER
 
 
 #: Every relationship the shipped providers emit, and nothing else.
