@@ -58,11 +58,17 @@ __all__ = ["CorrelationEngine", "IngestionSummary"]
 #: The evidence class that means the provider watched it happen rather than
 #: holding a record of it.
 #:
-#: A sandbox execution and a live page load are `DIRECT_OBSERVATION`; a
-#: passive-DNS row, a curated dataset entry and a relationship expansion are
-#: records somebody keeps. Both are intelligence and they support different
-#: conclusions, so the graph keeps them apart rather than calling everything
-#: "observed" — which would let a 2019 database row read as an eyewitness account.
+#: A live page load is `DIRECT_OBSERVATION`; a passive-DNS row, a curated dataset
+#: entry and a relationship expansion are records somebody keeps. Both are
+#: intelligence and they support different conclusions, so the graph keeps them
+#: apart rather than calling everything "observed".
+#:
+#: The rule is one-directional on purpose: only this class earns
+#: `PROVIDER_OBSERVED`, and everything else — including a sandbox's behaviour
+#: records, which Task 12 classifies as `CONTEXT` because a contacted domain is
+#: not an accusation — arrives as `PROVIDER_REPORTED`. Correlation can therefore
+#: understate how something was learned and never overstate it, which is the
+#: direction that matters: a 2019 database row must never read as an eyewitness.
 _OBSERVED_CLASSES: frozenset[EvidenceClass] = frozenset({EvidenceClass.DIRECT_OBSERVATION})
 
 
@@ -121,8 +127,21 @@ class CorrelationEngine:
         self._derive_structural_edges(target, node_key, hop=hop)
         return node_key
 
-    def ingest(self, envelope: ProviderResultEnvelope, *, hop: int = 0) -> IngestionSummary:
-        """Fold one provider result into the graph."""
+    def ingest(
+        self,
+        envelope: ProviderResultEnvelope,
+        *,
+        hop: int = 0,
+        anchor_key: str | None = None,
+    ) -> IngestionSummary:
+        """Fold one provider result into the graph.
+
+        ``anchor_key`` is the node this lookup was *about*. Several providers
+        relate their findings to the observable without returning it among their
+        objects — the subject is the request, not a discovery — so without the
+        anchor every one of those relationships looks like it points at something
+        absent, and the whole result would arrive as a pile of unlinked nodes.
+        """
         before_nodes = self.graph.node_count
         before_edges = self.graph.edge_count
         before_assertions = self.graph.assertion_count
@@ -135,6 +154,12 @@ class CorrelationEngine:
         # rebuilt per result and never leaks between them.
         keys: dict[str, str] = {}
         linked: set[str] = set()
+        anchor = anchor_key if anchor_key is not None else self.graph.root_key
+        if anchor is not None and self.graph.node(anchor) is not None:
+            # Every id the provider's own evidence calls the subject resolves to
+            # the node this lookup was about.
+            for item in envelope.evidence:
+                keys.setdefault(item.subject_object_id, anchor)
 
         for related in envelope.objects:
             key, merged, issue = self._place(related, envelope.provider, hop=hop)

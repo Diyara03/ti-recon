@@ -109,7 +109,7 @@ class CorrelatedInvestigationOrchestrator:
         root_key = engine.add_root(request.intel_object)
 
         root_result, outcomes = await self._enrich(request, context, investigation_id)
-        self._ingest(engine, outcomes, hop=0)
+        self._ingest(engine, outcomes, hop=0, anchor_key=root_key)
         graph.mark_enriched(root_key)
 
         budget = policy.budget_for(request.depth)
@@ -173,10 +173,12 @@ class CorrelatedInvestigationOrchestrator:
         outcomes: tuple[ProviderExecutionOutcome, ...],
         *,
         hop: int,
+        anchor_key: str,
     ) -> None:
+        """Fold one enrichment's results into the graph, anchored to its target."""
         for outcome in outcomes:
             if outcome.result is not None:
-                engine.ingest(outcome.result, hop=hop)
+                engine.ingest(outcome.result, hop=hop, anchor_key=anchor_key)
         engine.derive_structural_edges_for_graph()
 
     # ------------------------------------------------------------------ #
@@ -241,7 +243,12 @@ class CorrelatedInvestigationOrchestrator:
             # second time. Objects a pivot discovered enter at the hop after the
             # automatic limit, which is what stops the graph recruiting more work.
             graph.mark_enriched(candidate.target_node_key)
-            self._ingest(engine, outcomes, hop=MAX_AUTOMATIC_PIVOT_HOP + 1)
+            self._ingest(
+                engine,
+                outcomes,
+                hop=MAX_AUTOMATIC_PIVOT_HOP + 1,
+                anchor_key=candidate.target_node_key,
+            )
             budget = budget.charge(remote_runs=run.remote_runs_used)
             runs.append(run)
 
