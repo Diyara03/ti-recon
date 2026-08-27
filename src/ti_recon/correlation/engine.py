@@ -113,20 +113,6 @@ class CorrelationEngine:
         self._derive_structural_edges(target, node_key, hop=0)
         return node_key
 
-    def add_target(self, target: IntelObject, *, hop: int) -> str:
-        """Place an enriched pivot target at its hop."""
-        node_key = self._resolve_key(target)
-        self.graph.upsert_node(
-            GraphNode(
-                node_key=node_key,
-                intel_object=target,
-                discovered_at_hop=hop,
-                aliases=self._files.aliases_for(node_key),
-            )
-        )
-        self._derive_structural_edges(target, node_key, hop=hop)
-        return node_key
-
     def ingest(
         self,
         envelope: ProviderResultEnvelope,

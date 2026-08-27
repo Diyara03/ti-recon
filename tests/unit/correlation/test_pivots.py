@@ -595,3 +595,26 @@ async def test_two_analysts_investigating_one_observable_share_nothing() -> None
     # analyst A's graph.
     assert right.total_remote_pivot_runs >= 1
     assert second.all_subjects == [DIGEST_A, "evil.example"]
+
+
+async def test_the_result_says_what_was_enriched_and_why_the_rest_was_not() -> None:
+    """The two questions an analyst asks of a finished run."""
+    stack = Stack(
+        [
+            ScriptedAdapter(
+                spec(),
+                {
+                    DIGEST_A: (
+                        (CONTACTS, "evil.example", "net"),
+                        (CONTACTS, "10.0.0.9", "net"),
+                    )
+                },
+            )
+        ]
+    )
+    result = await run(stack)
+    assert result.enriched_node_keys == (
+        result.root_node_key,
+        "domain-name:evil.example",
+    )
+    assert result.skipped_by_reason()[PivotSkipReason.NON_GLOBAL_IP] == 1
