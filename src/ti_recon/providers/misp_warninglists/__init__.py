@@ -79,6 +79,7 @@ from ti_recon.providers.misp_warninglists.descriptor import (
     MISP_WARNINGLISTS_SOURCE_FAMILY,
     MISP_WARNINGLISTS_SUPPORTED_OBJECT_TYPES,
     build_misp_warninglists_descriptor,
+    build_misp_warninglists_planning_profile,
     lineage_group_for_dataset,
 )
 from ti_recon.providers.misp_warninglists.loader import (
@@ -199,6 +200,7 @@ __all__ = [
     "build_index",
     "build_misp_warninglists_descriptor",
     "build_misp_warninglists_execution_policy",
+    "build_misp_warninglists_planning_profile",
     "candidate_attribute_types",
     "compile_list",
     "core_profile",

@@ -41,6 +41,7 @@ from ti_recon.providers.gti.descriptor import (
     GTI_SOURCE_FAMILY,
     GTI_SUPPORTED_OBJECT_TYPES,
     build_gti_descriptor,
+    build_gti_planning_profile,
 )
 from ti_recon.providers.gti.errors import (
     GTI_ERROR_CATEGORIES,
@@ -112,6 +113,7 @@ __all__ = [
     "VtPyGTIClientFactory",
     "build_gti_descriptor",
     "build_gti_execution_policy",
+    "build_gti_planning_profile",
     "category_for_gti_code",
     "collection_for_object_type",
     "depth_for_investigation",

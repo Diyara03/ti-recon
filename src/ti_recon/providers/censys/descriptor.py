@@ -39,7 +39,12 @@ from __future__ import annotations
 
 from typing import Final
 
-from ti_recon.enums import IntelObjectType, ProviderCapability
+from ti_recon.enums import IntelObjectType, InvestigationDepth, ProviderCapability
+from ti_recon.planning.models import (
+    CallCostClass,
+    ProviderLocality,
+    ProviderPlanningProfile,
+)
 from ti_recon.providers.descriptor import ProviderDescriptor
 
 __all__ = [
@@ -52,6 +57,7 @@ __all__ = [
     "CENSYS_SOURCE_FAMILY",
     "CENSYS_SUPPORTED_OBJECT_TYPES",
     "build_censys_descriptor",
+    "build_censys_planning_profile",
 ]
 
 CENSYS_PROVIDER_ID: Final[str] = "censys"
@@ -118,4 +124,31 @@ def build_censys_descriptor() -> ProviderDescriptor:
         supports_active=False,
         supports_batch=False,
         requires_credentials=True,
+    )
+
+
+#: How the planner may use this provider (Task 13).
+#:
+#: ``MEDIUM`` because every asset read costs a credit from a finite wallet —
+#: scarcity, not price. ``STANDARD`` minimum because exposure context is rarely
+#: what a triage decision turns on, and a QUICK run should not spend a credit on
+#: it.
+#:
+#: Note there is no ``REPUTATION`` here to withhold: the descriptor does not
+#: declare it, because an open port is a risk to its owner rather than an
+#: accusation against them.
+def build_censys_planning_profile() -> ProviderPlanningProfile:
+    """The Task 13 planning profile for this provider."""
+    return ProviderPlanningProfile(
+        provider_id=CENSYS_PROVIDER_ID,
+        source_family=CENSYS_SOURCE_FAMILY,
+        locality=ProviderLocality.REMOTE,
+        cost_class=CallCostClass.MEDIUM,
+        planning_capabilities=CENSYS_CAPABILITIES,
+        minimum_depth=InvestigationDepth.STANDARD,
+        priority=30,
+        # One deterministic read per asset identity; the document that comes back
+        # carries exposure, ownership and certificate context together, whatever
+        # the request named.
+        capability_invariant_response=True,
     )

@@ -81,6 +81,7 @@ from ti_recon.providers.hybrid_analysis.descriptor import (
     HYBRID_ANALYSIS_SOURCE_FAMILY,
     HYBRID_ANALYSIS_SUPPORTED_OBJECT_TYPES,
     build_hybrid_analysis_descriptor,
+    build_hybrid_analysis_planning_profile,
     lineage_group_for_sample,
 )
 from ti_recon.providers.hybrid_analysis.errors import (
@@ -161,6 +162,7 @@ __all__ = [
     "ObjectRegistry",
     "build_hybrid_analysis_descriptor",
     "build_hybrid_analysis_execution_policy",
+    "build_hybrid_analysis_planning_profile",
     "category_for_status",
     "credential_validation_for",
     "lineage_group_for_sample",

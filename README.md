@@ -8,8 +8,8 @@ eventually produce an explainable, auditable assessment.
 
 ## Current development state
 
-This repository currently contains the foundation plus its first nine providers
-(Jira Tasks 1-12):
+This repository currently contains the foundation, its first nine providers and
+the adaptive enrichment planner that chooses between them (Jira Tasks 1-13):
 
 | Task | Scope | State |
 |------|-------|-------|
@@ -25,6 +25,7 @@ This repository currently contains the foundation plus its first nine providers
 | 10 | abuse.ch: ThreatFox + URLhaus + MalwareBazaar | Implemented (passive enrichment) |
 | 11 | MISP Warning Lists | Implemented (local, zero-network false-positive context) |
 | 12 | Sandbox framework + Hybrid Analysis | Implemented (passive historical reports only) |
+| 13 | Adaptive enrichment planner + orchestrator | Implemented (deterministic, passive, no fusion) |
 
 **Seven providers are integrated**, all passive, each answering a different
 question. Google Threat Intelligence enriches with each analyst's own VirusTotal
@@ -58,10 +59,17 @@ because uploading a customer's file to a community platform whose terms allow
 retention and redistribution is a decision a human makes with a warning in front
 of them.
 
+Task 13 adds the layer that decides **what to ask next**. Given an observable, a
+depth and optionally the capabilities a caller wants, the planner selects one
+provider at a time, folds each answer back in, and stops when the requested
+coverage has been collected or the depth's budget is spent. It reasons in
+capabilities and source families rather than provider names — so three abuse.ch
+datasets agreeing is one family agreeing with itself — and it produces no verdict:
+every stop reason is operational, and none of them means the answer is known.
+
 There is no SecurityTrails, AbuseIPDB, Shodan or IPinfo client yet, no *active*
-sandboxing, and there is no query planner, no provider selection, no evidence
-fusion, no verdict scoring, no MCP server and no Claude Skill. Those are later
-Jira tasks.
+sandboxing, and there is no evidence fusion, no verdict scoring, no MCP server and
+no Claude Skill. Those are later Jira tasks.
 
 Task 6 added the execution layer every adapter runs behind — caching, retry and
 backoff, rate-limit and quota tracking, cooldowns, bounded concurrency and
@@ -127,7 +135,9 @@ Claude + TI Analyst Skill        (future, not in this repo)
 MCP connector                    (future, not in this repo)
    |
 TI Recon backend                 <-- this repository
-   |-- capability planner         (future)
+   |-- enrichment planner         implemented (capability goals, source-family
+   |                               coverage, budgets, deterministic ranking)
+   |-- enrichment orchestrator    implemented (plan -> execute -> observe loop)
    |-- provider registry          implemented
    |-- provider adapters          contract implemented; GTI, urlscan,
    |                               GreyNoise, Censys, ThreatFox, URLhaus,
@@ -161,8 +171,12 @@ Design principles that shape every layer:
 - **No direct IOC fetching** — TI Recon never browses a submitted URL. The HTTP
   transport can only talk to a configured provider API host.
 - **Execution decides how, not what** — the executor runs a *selected* provider
-  safely under caching, retry, quota and concurrency controls. Choosing which
-  provider to call is a later task, and nothing in this layer computes a verdict.
+  safely under caching, retry, quota and concurrency controls, and nothing in
+  that layer computes a verdict. Which provider to call is the planner's
+  decision, made one call at a time so each answer can inform the next.
+- **Planning is deterministic and provider-neutral** — candidates are ordered by
+  a documented lexicographic ranking, never a weighted score, and no LLM chooses
+  which intelligence sources TI Recon queries.
 - **Per-user execution isolation** — cache entries, quota state, cooldowns,
   concurrency slots and request coalescing are all keyed by the analyst's
   credential, never shared between users.
@@ -232,8 +246,10 @@ In production, provider credentials are held per user by the credential layer
   profile deliberately excludes the million-entry popularity rankings, and every
   omission is reported in coverage — no result claims to have checked lists it
   never had.
-- **No provider selection.** The registry returns every compatible provider;
-  nothing ranks or chooses between them.
+- **Planning is not fusion.** The planner decides what to ask and reports what
+  was covered. It produces no verdict, risk score or confidence, resolves no
+  conflict between providers, and never enriches the related objects a provider
+  returns — recursive pivoting is a task of its own.
 - **Every provider is passive only.** No submission, rescanning, live scanning,
   downloads, uploads, sandbox detonation, Intelligence Search, GNQL hunting,
   CenQL search or abuse.ch write query.
@@ -282,4 +298,5 @@ In production, provider credentials are held per user by the credential layer
 - [docs/providers/misp-warninglists.md](docs/providers/misp-warninglists.md) — Task 11 MISP Warning Lists
 - [docs/sandbox.md](docs/sandbox.md) — Task 12 provider-neutral sandbox framework
 - [docs/providers/hybrid-analysis.md](docs/providers/hybrid-analysis.md) — Task 12 Hybrid Analysis
+- [docs/planning/adaptive-enrichment.md](docs/planning/adaptive-enrichment.md) — Task 13 adaptive enrichment planner
 - [docs/artifacts.md](docs/artifacts.md) — Task 8 bounded provider artifact storage

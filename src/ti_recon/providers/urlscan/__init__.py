@@ -52,6 +52,7 @@ from ti_recon.providers.urlscan.descriptor import (
     URLSCAN_SOURCE_FAMILY,
     URLSCAN_SUPPORTED_OBJECT_TYPES,
     build_urlscan_descriptor,
+    build_urlscan_planning_profile,
 )
 from ti_recon.providers.urlscan.errors import (
     CREDENTIAL_STATUS_BY_CATEGORY,
@@ -206,6 +207,7 @@ __all__ = [
     "build_transport_config",
     "build_urlscan_descriptor",
     "build_urlscan_execution_policy",
+    "build_urlscan_planning_profile",
     "category_for_status",
     "credential_status_for",
     "credential_validation_for",
