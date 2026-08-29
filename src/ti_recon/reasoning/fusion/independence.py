@@ -5,15 +5,24 @@ wrong by default. Five providers repeating one upstream feed is one observation
 seen five times, and a system that counted it as five confirmations would be
 confidently wrong in precisely the cases where an analyst most needs it not to be.
 
-Grouping uses provenance Tasks 3 and 10 already recorded, in this order:
+Grouping is by **originating source family** -- ``source_family``, which Task 10
+sets to whoever *produced* the information rather than whoever transported it.
+That single key does the whole job:
 
-1. **Lineage.** ``lineage_group_id`` is the narrowest statement of "these came
-   from one place". One provider rendering the same finding in its evidence, its
-   related objects and a summary is one source, and Task 3 already said so.
-2. **Originating source family.** ``source_family`` of whoever *produced* the
-   information, not whoever transported it. This is what puts a VirusTotal ratio
-   relayed through URLhaus in the same group as a direct GTI result, and what
-   keeps three abuse.ch datasets from becoming three independent votes.
+* it puts a VirusTotal ratio relayed through URLhaus in the same group as a
+  direct GTI result, because Task 10 gives the relayed record the originator's
+  family;
+* it keeps ThreatFox, URLhaus and MalwareBazaar as one origin, because they are
+  three datasets run by one organisation;
+* it subsumes lineage, because ``lineage_group_id`` is always narrower than the
+  family that contains it. Task 3 in fact *defaults* lineage to
+  ``"{family}:{origin}"``, so keying on lineage first would have split two
+  members of one family into two independent origins -- the exact inflation this
+  module exists to prevent, arrived at by trying to be more precise.
+
+Lineage is still carried on the group for traceability, and still separates
+repeated renderings of one claim inside a family; it just does not decide
+independence.
 
 Note the deliberate asymmetry: two providers with different ids are *not*
 assumed independent, but two different families are treated as potentially
@@ -42,12 +51,10 @@ __all__ = ["breadth_of", "group_key_for", "independence_groups"]
 def group_key_for(claim: NormalizedClaim) -> str:
     """The key that decides whether two claims are one source.
 
-    Lineage wins where a provider stated one, because it is the narrower and
-    more deliberate statement. Otherwise the originating family, which is what
-    survives a relay.
+    The originating family, and nothing narrower. Two claims from one family are
+    one origin however many vendor ids or lineage groups sit inside it, which is
+    what rule C of the independence model requires.
     """
-    if claim.lineage_group_id:
-        return f"lineage:{claim.lineage_group_id}"
     return f"family:{claim.source_family}"
 
 
@@ -67,6 +74,9 @@ def independence_groups(claims: Iterable[NormalizedClaim]) -> tuple[Independence
             source_family=sorted({item.source_family for item in members})[0],
             claim_ids=tuple(sorted(item.claim_id for item in members)),
             origin_providers=tuple(sorted({item.origin_provider for item in members})),
+            lineage_group_ids=tuple(
+                sorted({item.lineage_group_id for item in members if item.lineage_group_id})
+            ),
         )
         for key, members in sorted(buckets.items())
     )

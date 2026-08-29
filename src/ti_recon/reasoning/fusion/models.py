@@ -215,6 +215,11 @@ class IndependenceGroup(FrozenTiReconModel):
     claim_ids: tuple[str, ...] = ()
     #: Origins inside this group, sorted. Provenance, not a count to compare.
     origin_providers: tuple[str, ...] = ()
+    #: Lineage groups inside this family. Narrower than the family and carried
+    #: for traceability; it does not decide independence, because Task 3 defaults
+    #: it to "{family}:{origin}" and keying on it would split one family into
+    #: several apparent origins.
+    lineage_group_ids: tuple[str, ...] = ()
 
 
 class CorroborationGroup(FrozenTiReconModel):

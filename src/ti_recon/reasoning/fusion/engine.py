@@ -433,8 +433,25 @@ class EvidenceFusionEngine:
 
         # -- SUSPICIOUS / INCONCLUSIVE under a genuine conflict -------------- #
         if conflicts:
+            # Re-derived from the conflicted claims rather than taken from
+            # ``malicious`` above, which excludes anything marked OPPOSED.
+            #
+            # A conflict does not delete the malicious side. If real support
+            # survives on it, that is an affirmative reason for concern and the
+            # verdict says so, with the disagreement recorded and confidence
+            # capped. Reading only the unopposed set would have made this branch
+            # unreachable and quietly turned every genuine disagreement into a
+            # shrug -- which is cancellation by omission.
+            conflicted = {
+                claim_id for conflict in conflicts for claim_id in conflict.malicious_claim_ids
+            }
             residual = [
-                item for item in malicious if decision_role_for(item) is not ClaimDecisionRole.WEAK
+                item
+                for item in claims
+                if (item.claim_id in conflicted or item in malicious)
+                and dispositions[item.claim_id] is not ClaimDisposition.EXPLAINED_BY_ALTERNATIVE
+                and item.is_malicious_direction
+                and decision_role_for(item) is not ClaimDecisionRole.WEAK
             ]
             if residual:
                 return (
