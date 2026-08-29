@@ -1,13 +1,26 @@
-"""The test suite's network boundary.
+"""Python socket and name-resolution isolation for the test suite.
+
+What this is, precisely
+-----------------------
+
+Repository-wide isolation of the **Python socket and name-resolution APIs** this
+project uses. It is not an OS-level sandbox: it installs no namespace, no
+firewall rule and no seccomp filter, and a native binary or subprocess that
+performed its own networking outside Python's socket module would not be stopped
+by it. Nothing in this repository does that, which is why guarding the Python
+surface is the right size for the problem — but the distinction belongs in
+writing, because "the network is unreachable" and "this process's Python socket
+calls are refused" are different claims and only the second one is true.
 
 Lives in ``fixtures`` rather than in a ``conftest`` so a test can import the
 exception type and assert the boundary holds — a guard nothing checks is a guard
 that quietly stops working.
 
-Two enforcement points, because a request can leave the machine through either
---------------------------------------------------------------------------
+Two enforcement points, because a Python request can leave through either
+------------------------------------------------------------------------
 
-**Name resolution.** ``socket.getaddrinfo`` and friends. This is the one the
+**Name resolution.** ``socket.getaddrinfo`` and friends, forward *and* reverse.
+This is the one the
 suite was missing, and its absence was not theoretical: an unmocked async
 request spent its entire timeout budget inside a 20-second DNS lookup for
 ``threatfox-api.abuse.ch`` and died with ``ConnectTimeout`` before ``connect``
@@ -15,8 +28,17 @@ was ever reached. The test asserting the boundary therefore failed with a
 timeout rather than a refusal — and, worse, every unit run was telling a resolver
 which threat-intelligence APIs a developer was working on.
 
+Reverse resolution counts. ``gethostbyaddr`` and ``getnameinfo`` take an address
+rather than a name, which makes them easy to overlook, but they query the same
+name service over the same network and each spent ten seconds doing so before
+this guard covered them.
+
 **Connection.** ``socket.socket.connect`` / ``connect_ex``. Blocking resolution
 alone is not enough: a literal address needs no DNS.
+
+``gethostname`` is deliberately *not* guarded. Reading the local machine's own
+hostname is a local call that touches no name service, and blocking it would cost
+the suite something for no boundary at all.
 
 Blocking resolution is what makes the refusal *immediate*. Blocking connection is
 what makes it *complete*. Neither substitutes for the other.
@@ -124,6 +146,18 @@ def install_network_guard(monkeypatch: Any) -> None:
             raise _denied("resolve", host)
         return _REAL_GETHOSTBYNAME_EX(host, *args)
 
+    def guarded_gethostbyaddr(host: Any, *args: Any) -> Any:
+        if not is_local_host(host):
+            raise _denied("reverse-resolve", host)
+        return _REAL_GETHOSTBYADDR(host, *args)
+
+    def guarded_getnameinfo(address: Any, *args: Any) -> Any:
+        # Takes a sockaddr rather than a bare host, so the tuple-aware check is
+        # the right one here.
+        if not is_local_address(address):
+            raise _denied("reverse-resolve", address)
+        return _REAL_GETNAMEINFO(address, *args)
+
     def guarded_connect(self: socket.socket, address: Any) -> Any:
         if not is_local_address(address):
             self.close()
@@ -139,6 +173,8 @@ def install_network_guard(monkeypatch: Any) -> None:
     monkeypatch.setattr(socket, "getaddrinfo", guarded_getaddrinfo)
     monkeypatch.setattr(socket, "gethostbyname", guarded_gethostbyname)
     monkeypatch.setattr(socket, "gethostbyname_ex", guarded_gethostbyname_ex)
+    monkeypatch.setattr(socket, "gethostbyaddr", guarded_gethostbyaddr)
+    monkeypatch.setattr(socket, "getnameinfo", guarded_getnameinfo)
     monkeypatch.setattr(socket.socket, "connect", guarded_connect)
     monkeypatch.setattr(socket.socket, "connect_ex", guarded_connect_ex)
 
@@ -148,6 +184,8 @@ def install_network_guard(monkeypatch: Any) -> None:
 _REAL_GETADDRINFO: Final[Any] = socket.getaddrinfo
 _REAL_GETHOSTBYNAME: Final[Any] = socket.gethostbyname
 _REAL_GETHOSTBYNAME_EX: Final[Any] = socket.gethostbyname_ex
+_REAL_GETHOSTBYADDR: Final[Any] = socket.gethostbyaddr
+_REAL_GETNAMEINFO: Final[Any] = socket.getnameinfo
 
 
 @contextmanager

@@ -1,5 +1,9 @@
 """Shared pytest configuration, and the suite-wide network boundary.
 
+The boundary is Python-level: it refuses this process's socket and
+name-resolution calls, and is not an OS sandbox. See ``tests/fixtures/network.py``
+for what that does and does not cover.
+
 Adds ``tests/`` to ``sys.path`` so fixture packages are importable as
 ``fixtures.*`` without installing the test tree.
 
@@ -17,7 +21,7 @@ got a ``401`` back.
 Several tests rely on the guard directly. They assert that a malformed or
 disallowed request is refused *without* mocking the endpoint, on the grounds that
 anything escaping validation would fail loudly rather than pass silently. That
-reasoning needs the network to be genuinely unreachable, not merely unused.
+reasoning needs those calls to be genuinely refused, not merely unmade.
 
 Loopback stays open, because asyncio, pytest plugins and coverage legitimately
 talk to themselves and one test binds a real listener on purpose.

@@ -1,5 +1,9 @@
 """The suite's network boundary, exercised rather than assumed.
 
+Scope, stated once: this is isolation of the Python socket and name-resolution
+APIs in the test process, not an OS-level sandbox. Everything below tests that
+surface, which is the surface this repository actually uses.
+
 A guard nothing checks is a guard that quietly stops working, and this one did:
 it patched ``socket.socket.connect`` and left name resolution untouched, so an
 unmocked async request spent its whole timeout budget inside a 20-second DNS
@@ -17,6 +21,7 @@ import asyncio
 import socket
 import time
 from collections.abc import Iterator
+from pathlib import Path
 
 import httpx
 import pytest
@@ -173,11 +178,44 @@ def test_name_resolution_of_an_external_host_is_refused_at_once() -> None:
         ),
     ],
 )
-def test_every_resolution_entry_point_is_guarded(resolve: object) -> None:
+def test_every_forward_resolution_entry_point_is_guarded(resolve: object) -> None:
     """One unguarded spelling is the whole boundary."""
     error, elapsed = blocked(resolve)
     assert denied(error)
     assert elapsed < IMMEDIATE_SECONDS
+
+
+@pytest.mark.parametrize(
+    "resolve",
+    [
+        pytest.param(lambda: socket.gethostbyaddr(EXTERNAL_IP), id="gethostbyaddr"),
+        pytest.param(lambda: socket.getnameinfo((EXTERNAL_IP, 443), 0), id="getnameinfo"),
+    ],
+)
+def test_reverse_resolution_is_guarded_too(resolve: object) -> None:
+    """Reverse lookups take an address rather than a name, which makes them easy
+    to overlook — and they query the same name service over the same network.
+
+    Both were unguarded until this test existed, and each spent ten seconds
+    waiting on a real resolver before failing. A ten-second wait that ends in an
+    error is indistinguishable from a block if nobody measures it, which is why
+    the immediacy assertion carries as much weight here as the refusal.
+    """
+    error, elapsed = blocked(resolve)
+    assert isinstance(error, NetworkAccessDenied)
+    assert elapsed < IMMEDIATE_SECONDS
+
+
+def test_reverse_resolution_of_loopback_still_works() -> None:
+    """The local half has to keep working, or the guard costs more than it buys."""
+    assert socket.gethostbyaddr("127.0.0.1")[0]
+    assert socket.getnameinfo(("127.0.0.1", 22), 0)[0]
+
+
+def test_reading_our_own_hostname_is_not_a_network_operation() -> None:
+    """``gethostname`` touches no name service. Blocking it would take something
+    from the suite and give the boundary nothing."""
+    assert socket.gethostname()
 
 
 async def test_the_event_loops_own_resolver_is_guarded_too() -> None:
@@ -397,21 +435,52 @@ def test_both_switches_together_permit_the_network(
     result.assert_outcomes(passed=1, skipped=0, failed=0)
 
 
-def _write_live_harness(pytester: pytest.Pytester) -> None:
-    """A miniature ``tests/live/`` that mirrors the real gating.
+def _copy_guard(pytester: pytest.Pytester) -> Path:
+    """Copy this repository's real conftest and guard into a throwaway project.
 
-    Copies this repository's own conftests so the nested run exercises the real
-    option, the real collection hook and the real guard fixture, rather than a
-    restatement of them that could drift.
+    The real files, not a restatement of them: a harness that reimplemented the
+    gating would keep passing after the gating changed, which is the one thing a
+    boundary test must not do.
     """
-    from pathlib import Path
-
     root = Path(__file__).resolve().parent.parent
     pytester.makeconftest((root / "conftest.py").read_text(encoding="utf-8"))
     pytester.mkpydir("fixtures")
     (pytester.path / "fixtures" / "network.py").write_text(
         (root / "fixtures" / "network.py").read_text(encoding="utf-8"), encoding="utf-8"
     )
+    return root
+
+
+def _write_unit_harness(pytester: pytest.Pytester) -> None:
+    """An ordinary test, outside ``live/``, that tries to reach the network.
+
+    It passes only when the attempt was refused, so any flag combination that
+    quietly opened the network turns into a failing nested run.
+    """
+    _copy_guard(pytester)
+    pytester.makepyfile(
+        test_ordinary_unit="""
+        import socket
+        import time
+
+        from fixtures.network import NetworkAccessDenied
+
+
+        def test_an_ordinary_test_cannot_reach_the_network():
+            started = time.monotonic()
+            try:
+                socket.getaddrinfo("threatfox-api.abuse.ch", 443)
+            except NetworkAccessDenied:
+                assert time.monotonic() - started < 1.0, "refused, but not immediately"
+                return
+            raise AssertionError("an ordinary test reached the network")
+        """
+    )
+
+
+def _write_live_harness(pytester: pytest.Pytester) -> None:
+    """A miniature ``tests/live/`` that mirrors the real gating."""
+    root = _copy_guard(pytester)
     live = pytester.mkpydir("live")
     (live / "conftest.py").write_text(
         (root / "live" / "conftest.py").read_text(encoding="utf-8"), encoding="utf-8"
@@ -442,3 +511,106 @@ def test_the_boundary_is_lifted_for_a_permitted_live_test() -> None:
 ''',
         encoding="utf-8",
     )
+
+
+# --------------------------------------------------------------------------- #
+# The bypass vectors, each proved shut
+# --------------------------------------------------------------------------- #
+#
+# Three switches exist that could plausibly be mistaken for "turn the network
+# on": the live flag, pytest-socket's own escape hatch, and overriding addopts.
+# None of them authorizes an ordinary test, and each is checked here rather than
+# reasoned about, because the reasoning is exactly what was wrong last time.
+#
+# Every one runs the nested project in a subprocess. An in-process run would
+# still be sitting inside the guard it is trying to escape, and would pass for
+# the wrong reason.
+
+
+@pytest.mark.parametrize(
+    ("label", "extra_args", "env"),
+    [
+        pytest.param(
+            "live flag alone",
+            [ALLOW_LIVE_NETWORK_OPTION],
+            {},
+            id="allow-live-network",
+        ),
+        pytest.param(
+            "a stale provider gate plus the live flag",
+            [ALLOW_LIVE_NETWORK_OPTION],
+            {"RUN_ABUSECH_LIVE_TESTS": "1", "ABUSECH_AUTH_KEY": "not-a-real-key"},
+            id="stale-env-plus-flag",
+        ),
+        pytest.param(
+            "pytest-socket's own escape hatch",
+            ["--force-enable-socket"],
+            {},
+            id="force-enable-socket",
+        ),
+        pytest.param(
+            "addopts overridden, so pytest-socket is not configured at all",
+            ["-o", "addopts="],
+            {},
+            id="addopts-override",
+        ),
+        pytest.param(
+            "every switch at once",
+            ["-o", "addopts=", "--force-enable-socket", ALLOW_LIVE_NETWORK_OPTION],
+            {"RUN_ABUSECH_LIVE_TESTS": "1", "ABUSECH_AUTH_KEY": "not-a-real-key"},
+            id="everything-at-once",
+        ),
+    ],
+)
+def test_no_switch_lets_an_ordinary_test_reach_the_network(
+    label: str,
+    extra_args: list[str],
+    env: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    pytester: pytest.Pytester,
+) -> None:
+    """``--allow-live-network`` authorizes ``tests/live/``, not the suite.
+
+    The provider ``RUN_*`` variable says which provider may be contacted, the
+    flag says this run deliberately wants live traffic, and the test's location
+    says whether *that* test is one of them. All three have to agree, so a test
+    sitting in the ordinary tree stays offline however the run was invoked.
+
+    ``--force-enable-socket`` and ``-o addopts=`` are pytest-socket's business
+    and reach only pytest-socket. The project guard is a conftest fixture and is
+    unaffected by either, which is what makes it the authoritative boundary
+    rather than a second opinion.
+    """
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    _write_unit_harness(pytester)
+
+    result = pytester.runpytest_subprocess("-q", *extra_args)
+    result.assert_outcomes(passed=1, failed=0), label
+
+
+def test_the_guard_does_not_depend_on_pytest_socket_being_loaded(
+    monkeypatch: pytest.MonkeyPatch, pytester: pytest.Pytester
+) -> None:
+    """Defense in depth means the primary layer stands on its own.
+
+    Run with plugin autoload disabled *and* addopts cleared, so pytest-socket is
+    neither configured nor even imported. The project guard still refuses, which
+    is the point: the safety invariant does not exist only because a plugin
+    happened to load.
+
+    The nested test is deliberately synchronous — with autoload off there is no
+    pytest-asyncio either, and the unknown-ini warnings that follow are noise
+    from a deliberately minimal run rather than a supported configuration.
+    """
+    monkeypatch.setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
+    _write_unit_harness(pytester)
+
+    result = pytester.runpytest_subprocess(
+        "-q", "-o", "addopts=", "-W", "ignore::pytest.PytestConfigWarning"
+    )
+    result.assert_outcomes(passed=1, failed=0)
+    # Proof the run really was without the plugin: with autoload off,
+    # pytest-socket's own option is unknown to the parser.
+    unknown = pytester.runpytest_subprocess("-q", "-o", "addopts=", "--disable-socket")
+    assert unknown.ret != 0
