@@ -19,7 +19,7 @@ in a place that is never handed a time.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -34,6 +34,7 @@ from ti_recon.reasoning.models import (
 )
 
 __all__ = [
+    "PARTIAL_STATUSES",
     "ProviderQualification",
     "ProviderQualifier",
     "QualificationContext",
@@ -128,15 +129,3 @@ class ProviderQualifier(Protocol):
 PARTIAL_STATUSES: frozenset[ProviderRunStatus] = frozenset(
     {ProviderRunStatus.PARTIAL, ProviderRunStatus.PLAN_LIMITED}
 )
-
-
-def qualifier_for(
-    registry: Mapping[str, ProviderQualifier], provider_id: str
-) -> Callable[[ProviderResultEnvelope, QualificationContext], ProviderQualification] | None:
-    """Look up a provider's extractor, or ``None`` when it has none.
-
-    A provider without an extractor is a coverage fact, not an error: its
-    evidence is still counted, and the result says which providers went
-    unqualified rather than implying everything was examined.
-    """
-    return registry.get(provider_id)

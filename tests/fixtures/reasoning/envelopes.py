@@ -26,6 +26,8 @@ from fixtures.abusech.fake_clients import (
     FakeThreatFoxClient,
     FakeUrlhausClient,
 )
+from fixtures.censys import payloads as censys_payloads
+from fixtures.greynoise import payloads as greynoise_payloads
 from fixtures.gti import payloads as gti_payloads
 from fixtures.hybrid_analysis import payloads as sandbox_payloads
 from fixtures.hybrid_analysis.fake_client import ClientFactory as SandboxClientFactory
@@ -45,6 +47,8 @@ from ti_recon.execution.clock import ManualClock
 from ti_recon.models.intel_object import IntelObject
 from ti_recon.normalization import normalize_observable
 from ti_recon.providers import ProviderRequest
+from ti_recon.providers.censys import CensysAdapter
+from ti_recon.providers.greynoise import GreyNoiseAdapter
 from ti_recon.providers.gti import GTIAdapter
 from ti_recon.providers.hybrid_analysis import HybridAnalysisAdapter
 from ti_recon.providers.malwarebazaar import MalwareBazaarAdapter
@@ -154,6 +158,17 @@ def threatfox_absent_envelope() -> ProviderResultEnvelope:
     return _run(adapter, request_for(subject), credential("threatfox"))
 
 
+def urlhaus_payload_envelope(**payload_overrides: Any) -> ProviderResultEnvelope:
+    """URLhaus's real payload record: which tracked URLs served this file."""
+    payload = abusech_payloads.urlhaus_payload_result(**payload_overrides)
+    adapter = UrlhausAdapter(
+        client_factory=AbuseChClientFactory(FakeUrlhausClient(payload_payload=payload)),
+        clock=ManualClock(),
+    )
+    subject = file_object(sha256=str(payload["sha256_hash"]))
+    return _run(adapter, request_for(subject), credential("urlhaus"))
+
+
 def malwarebazaar_envelope(**payload_overrides: Any) -> ProviderResultEnvelope:
     """MalwareBazaar's real vetted-sample record."""
     payload = abusech_payloads.malwarebazaar_found(**payload_overrides)
@@ -230,3 +245,19 @@ def urlscan_scan_envelope(scanned_at: str | None = None) -> ProviderResultEnvelo
         request_for(subject, capability=ProviderCapability.WEB_BEHAVIOR),
         payload,
     )
+
+
+def greynoise_envelope(payload: dict[str, Any] | None = None) -> ProviderResultEnvelope:
+    """One GreyNoise context document, through the real Task 9 normalizer."""
+    document = greynoise_payloads.full_context_payload() if payload is None else payload
+    adapter = GreyNoiseAdapter()
+    subject = observable(greynoise_payloads.SCANNER_IP)
+    return _from_normalized(adapter, request_for(subject), document)
+
+
+def censys_host_envelope(**overrides: Any) -> ProviderResultEnvelope:
+    """One Censys host document, through the real Task 9 normalizer."""
+    payload = censys_payloads.host_payload(**overrides)
+    adapter = CensysAdapter()
+    subject = observable(censys_payloads.HOST_IP)
+    return _from_normalized(adapter, request_for(subject), payload)

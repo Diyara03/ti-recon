@@ -16,6 +16,8 @@ from datetime import UTC, datetime, timedelta
 
 from fixtures.reasoning import (
     AS_OF,
+    censys_host_envelope,
+    greynoise_envelope,
     gti_file_envelope,
     malwarebazaar_envelope,
     sandbox_envelope,
@@ -344,3 +346,98 @@ def test_a_far_future_gap_between_as_of_values_only_moves_the_age() -> None:
         early.temporal_qualifications, later.temporal_qualifications, strict=True
     ):
         assert after.age_seconds == before.age_seconds + 10 * 86_400.0
+
+
+# --------------------------------------------------------------------------- #
+# GreyNoise: sightings, housekeeping, and a list that is not an allow list
+# --------------------------------------------------------------------------- #
+
+
+def test_greynoise_sensor_sightings_are_observations() -> None:
+    """These are the real thing: when the sensor fleet first and last saw this
+    address doing something."""
+    result = qualify(greynoise_envelope())
+    assert {TemporalFactKind.FIRST_OBSERVED, TemporalFactKind.LAST_OBSERVED} <= kinds(result)
+    # Sightings, not scans and not submissions.
+    assert not ({TemporalFactKind.ANALYZED_AT, TemporalFactKind.SCANNED_AT} & kinds(result))
+
+
+def test_greynoise_business_service_context_is_never_an_allow_list() -> None:
+    """BSI identifies common business-service infrastructure. A Microsoft range
+    is common business infrastructure *and* a place attacks come from, and BSI
+    has no opinion about which — so it can produce nothing that means safe."""
+    from fixtures.greynoise import payloads
+
+    document = payloads.full_context_payload(
+        business_service_intelligence=payloads.business_service_payload()[
+            "business_service_intelligence"
+        ]
+    )
+    result = qualify(greynoise_envelope(document))
+
+    assert result.signals_of(ContextSignalType.BUSINESS_SERVICE)
+    assert result.cues_of(InterpretationCueType.BUSINESS_SERVICE_MAY_EXPLAIN_ACTIVITY)
+    assert _no_benign(result)
+
+    # The record's own last_updated is housekeeping, never a sighting.
+    updated = facts_of(result, TemporalFactKind.SOURCE_RECORD_UPDATED_AT)
+    assert all(
+        item.raw_field == "business_service_intelligence.last_updated"  # type: ignore[attr-defined]
+        for item in updated
+    )
+
+
+def test_business_service_context_never_cancels_another_source() -> None:
+    """Both survive. Nothing here weighs one against the other."""
+    from fixtures.greynoise import payloads
+
+    document = payloads.full_context_payload(
+        business_service_intelligence=payloads.business_service_payload()[
+            "business_service_intelligence"
+        ]
+    )
+    malicious = threatfox_ip_envelope()
+    record = next(item for item in malicious.evidence if item.claim_type == "threatfox_ioc")
+
+    result = qualify(greynoise_envelope(document), malicious)
+
+    assert result.signals_of(ContextSignalType.BUSINESS_SERVICE)
+    assert record.effect is EvidenceEffect.SUPPORTS_MALICIOUS
+    assert result.cues_of(InterpretationCueType.SOURCE_MANAGED_LIFECYCLE)
+    assert _no_benign(result)
+
+
+# --------------------------------------------------------------------------- #
+# Censys: an exposure scan is a moment, and a certificate is not a host
+# --------------------------------------------------------------------------- #
+
+
+def test_a_censys_asset_observation_is_a_point_in_time_reading() -> None:
+    """Censys saw these ports answering at that instant, and says nothing about
+    the minute before or after."""
+    result = qualify(censys_host_envelope())
+    observed = facts_of(result, TemporalFactKind.LAST_OBSERVED)
+    assert observed
+    assert all(item.lifecycle is SourceLifecycleState.POINT_IN_TIME for item in observed)  # type: ignore[attr-defined]
+    assert all(item.raw_field == "last_updated_at" for item in observed)  # type: ignore[attr-defined]
+
+
+def test_one_censys_document_yields_one_observation_not_one_per_record() -> None:
+    """Every Censys record repeats the same instant. A dozen copies of one
+    reading would look like a dozen readings."""
+    result = qualify(censys_host_envelope())
+    assert len(facts_of(result, TemporalFactKind.LAST_OBSERVED)) == 1
+
+
+def test_censys_emits_no_certificate_validity_because_task_9_normalizes_none() -> None:
+    """Task 9 keeps a certificate's fingerprint, subject and issuer and
+    deliberately not its validity window. Reading one out of a raw response would
+    be new provider behaviour rather than a qualification of existing behaviour —
+    and the omission is the safe side of the distinction anyway, since a
+    certificate's window never establishes continuous service by a host.
+    """
+    envelope = censys_host_envelope()
+    assert any(item.claim_type == "censys_tls_certificates" for item in envelope.evidence)
+
+    result = qualify(envelope)
+    assert not ({TemporalFactKind.VALID_FROM, TemporalFactKind.VALID_UNTIL} & kinds(result))
