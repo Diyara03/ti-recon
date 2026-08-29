@@ -1,9 +1,27 @@
-"""Assessment models (Task 3).
+"""Assessment models (Task 3) -- **legacy; superseded by Task 17.**
 
-These models hold TI Recon's *interpretation*, kept strictly apart from the
-provider facts in ``Evidence``. Nothing in this module computes anything: the
-fusion and scoring engine is a later task. What exists here is the shape a
-verdict must take in order to be explainable.
+These models were the Task 3 sketch of what a conclusion would have to look like,
+written before there was an engine to produce one. They are retained for
+backward compatibility and are exercised only by their own model tests.
+
+**The authoritative assessment is**
+:class:`ti_recon.reasoning.fusion.models.FusionAssessment`, returned inside a
+:class:`ti_recon.reasoning.fusion.results.FusionResult`. New code -- Task 18
+decision readiness, the MCP layer and any future interface included -- consumes
+that and not these.
+
+The two models disagree about something substantive, which is why one replaced
+the other rather than wrapping it. :class:`Assessment` requires a numeric
+``risk_score`` and a 0-100 ``confidence``, and :class:`AssessmentContribution`
+multiplies four factors into an ``effective_contribution``. Task 17 concluded
+that no such number is measurable here: there is no calibration set behind a
+weight, and a figure like 73 reads as a probability nobody computed. Fusion
+therefore emits a named verdict, a named confidence band, and the rule id that
+chose each -- and its policy modules are tested to contain no arithmetic at all.
+
+Nothing in this module computes anything, and nothing under
+``ti_recon/reasoning/claims`` or ``ti_recon/reasoning/fusion`` imports it; a
+boundary test pins that.
 """
 
 from __future__ import annotations

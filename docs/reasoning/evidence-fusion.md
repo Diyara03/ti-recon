@@ -38,26 +38,44 @@ corroborates nothing, including another aggregate.
 
 ## 3. Independence
 
-Grouping is by **originating source family** — `source_family`, which Task 10 sets
-to whoever *produced* the information rather than whoever transported it.
+Dependence is a **relation**, and grouping is its transitive closure. Three pieces
+of provenance each make two claims dependent, and any one of them is enough:
+
+- the same `source_family` — three abuse.ch datasets are one organisation;
+- the same `origin_provider` — whoever produced it, however many transports
+  relayed it;
+- the same `lineage_group_id` — one provider's repeated renderings of one finding.
+
+Claims are unioned into connected components over those edges. If A shares a
+family with B and B shares an origin with C, then A, B and C are one origin — even
+though A and C have no key in common.
 
 | Situation | Result |
 |---|---|
 | Same lineage group | one origin |
-| Relayed through another transport | one origin (family follows the originator) |
+| Relayed through another transport | one origin |
 | Same source family, different vendor ids | **one origin** |
-| Different source families | potentially independent |
+| Different families naming the same `origin_provider` | **one origin** |
+| Different families, different origins | potentially independent |
 
 Note the asymmetry: two different vendor ids are *not* assumed independent, but
-two different families are treated as potentially so. Independence must be earned
-by provenance; difference of vendor is not evidence of it.
+two different families with nothing else in common are treated as potentially so.
+Independence must be earned by provenance; difference of vendor is not evidence of
+it.
 
-> **A bug worth recording.** The first implementation keyed on lineage first, on
-> the reasoning that lineage is narrower and more deliberate. It is — but Task 3
-> *defaults* `lineage_group_id` to `"{family}:{origin}"`, so two members of one
-> family arrived with different lineage keys and were counted as two independent
-> origins. Trying to be more precise than the data supported produced exactly the
-> inflation the module exists to prevent.
+> **Two bugs worth recording, with one cause.** The first implementation keyed on
+> lineage, on the reasoning that lineage is narrower and more deliberate. It is —
+> but Task 3 *defaults* `lineage_group_id` to `"{family}:{origin}"`, so two members
+> of one family arrived with different lineage keys and were counted as two
+> independent origins. Keying on family instead fixed that and introduced the
+> mirror-image failure: a relay whose transport belongs to a different family
+> names the same origin, and a family-only partition read one source reporting
+> once as two independent confirmations — escalating the verdict to `MALICIOUS`.
+>
+> Neither rule was too weak. Both were too narrow: dependence is a set of edges,
+> and any scheme that picks one of them in a precedence order silently discards
+> the rest. Independence is now a connected component, and the verdict and the
+> confidence band both count components rather than families.
 
 Nothing is discarded. Every claim stays in the trace with its own provenance; only
 its ability to *corroborate* something already counted collapses, and the
@@ -180,18 +198,35 @@ source, sandbox divergence or a decision resting on stale context each lower the
 band by name. Nothing is subtracted, and stacking caps never reaches a fourth band
 — that arithmetic would be the weighted score by another route.
 
-The stale-context cap preserves Task 16's scoping fix: it requires both a finding
-marked stale *and* that finding linking to evidence the verdict's basis actually
-used. An unrelated stale warninglist leaves an independent malware-sample
-assessment alone.
+**Caps are scoped to the decision.** This is Task 16's scoping fix, generalised: a
+cap requires both a finding carrying the condition *and* that finding linking to a
+piece of evidence the verdict's basis actually used. An unrelated stale
+warninglist leaves an independent malware-sample assessment alone, and so does a
+divergent sandbox detonation of some other object reached on a pivot. A run-level
+`any()` over findings is the shape of the original bug and is deliberately not
+available in `confidence.py`.
+
+`INCONCLUSIVE` reaches `UNSPECIFIED` by two different rules, kept distinct because
+the situations are opposites: `unspecified.no_directional_support.v1` when nothing
+was said, and `unspecified.unresolved_conflict.v1` when sources said incompatible
+things. Reporting the first for the second would tell an analyst there was no
+directional support when there was plenty of it.
 
 ## 10. The assessment
 
-`FusionAssessment` deliberately is **not** Task 3's `Assessment`. That model
-requires a `risk_score` this layer must not produce, and `AssessmentContribution`
-is built on `base_strength` times multiplicative dampening factors — the arithmetic
-fusion model Tasks 15 and 16 spent two tasks refusing. Task 3's shape is left
-untouched; Task 17 reuses its `Verdict` enum, which was always the right part.
+`FusionAssessment` is **the authoritative assessment model from Task 17 onward**,
+returned inside a `FusionResult`. Task 18 decision readiness, the MCP layer and any
+future interface consume that pair and not Task 3's `Assessment`.
+
+It deliberately is **not** Task 3's `Assessment`. That model requires a
+`risk_score` this layer must not produce, and `AssessmentContribution` is built on
+`base_strength` times multiplicative dampening factors — the arithmetic fusion
+model Tasks 15 and 16 spent two tasks refusing. Task 3's shape is left untouched
+and retained for backward compatibility, exercised only by its own model tests and
+marked legacy in its own docstring; Task 17 reuses its `Verdict` enum, which was
+always the right part. A boundary test parses every module under
+`reasoning/claims/` and `reasoning/fusion/` and asserts neither imports it, because
+that import would be the weighted score returning through a type.
 
 Every assessment carries four policy versions — fusion, claim semantics,
 qualification and false-positive reasoning — plus the rule that produced the

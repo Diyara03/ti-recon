@@ -799,13 +799,20 @@ about it.
     `EvidenceEffect` names the direction, and fusion policy decides what either
     is worth.
 
-89. **Providers are never counted, and same-family is not independent.**
-    Independence is grouped by *originating* source family, which subsumes
-    lineage — Task 3 defaults `lineage_group_id` to `"{family}:{origin}"`, so
-    keying on lineage first would split one family into several apparent origins.
-    Three abuse.ch datasets answering is one origin; a relayed finding joins its
-    author's family. Nothing is discarded: only the ability to corroborate
-    collapses.
+89. **Providers are never counted, and dependence is a connected component.**
+    Three kinds of provenance each make two claims dependent — the same
+    `source_family`, the same `origin_provider`, the same `lineage_group_id` —
+    and claims are unioned over all three, so dependence composes: sharing a
+    family with one claim and an origin with another makes all three one origin.
+    Partitioning on any single key loses the other two edges, and both ways of
+    getting that wrong have already happened here. Keying on lineage split one
+    family into several apparent origins, because Task 3 defaults
+    `lineage_group_id` to `"{family}:{origin}"`; keying on family alone then read
+    a relay whose transport belongs to a *different* family, but which names the
+    same origin, as two independent confirmations and escalated the verdict.
+    Three abuse.ch datasets answering is one origin. The verdict's corroboration
+    test and the confidence band both count components, never families. Nothing
+    is discarded: only the ability to corroborate collapses.
 
 90. **Corroboration requires compatible propositions, stated in a versioned
     table.** `SCANNER_ACTIVITY` is compatible with nothing but itself, and
@@ -857,12 +864,22 @@ about it.
     this?". MALICIOUS at MEDIUM is ordinary. Caps lower a band by name —
     unresolved conflict, unclassified basis, partial source, sandbox divergence,
     stale supporting context — and nothing is subtracted. Only the canonical STIX
-    values 15/50/85 are ever produced.
+    values 15/50/85 are ever produced. `FusionAssessment` is the authoritative
+    assessment from Task 17 onward; Task 3's `Assessment` is legacy, retained for
+    backward compatibility, and a boundary test asserts `claims/` and `fusion/`
+    never import it — that model requires a `risk_score` this layer refuses to
+    invent.
 
-99. **The stale-context cap stays scoped.** It requires a finding marked stale
-    *and* that finding linking to evidence the verdict's basis actually used, so
-    an unrelated stale warninglist never caps an independent assessment. This
-    preserves Task 16's fix rather than reintroducing the bug one layer up.
+99. **A confidence cap is scoped to the decision.** Every cap requires a finding
+    carrying the condition *and* that finding linking to evidence the verdict's
+    basis actually used — so an unrelated stale warninglist never caps an
+    independent assessment, and neither does a divergent sandbox detonation of
+    some other object reached on a pivot. This generalises Task 16's fix rather
+    than reintroducing the bug one condition at a time; a run-level `any()` over
+    findings is the shape of the original bug and is unavailable in
+    `confidence.py`. `INCONCLUSIVE` keeps two distinct rules for `UNSPECIFIED`,
+    because nothing being said and sources contradicting each other are opposite
+    situations.
 
 100. **Every verdict names its rule and its contributions.** Each claim gets a
      contribution — including the explained ones and the dependent duplicates —
