@@ -79,13 +79,10 @@ def decide_confidence(
     by_id = {item.claim_id: item for item in claims}
     basis = [by_id[item] for item in basis_claim_ids if item in by_id]
 
-    caps = _caps(
-        basis=basis,
-        claims=claims,
-        dispositions=dispositions,
-        conflicts=conflicts,
-        reasoning=reasoning,
-    )
+    # Deliberately handed the basis and nothing else that could be read run-wide:
+    # the full claim set and the disposition map are not parameters of this
+    # question, and were the route by which two run-level caps got written.
+    caps = _caps(basis=basis, conflicts=conflicts, reasoning=reasoning)
 
     band, rule = _band(
         verdict=verdict,
@@ -147,15 +144,23 @@ def _band(
 def _caps(
     *,
     basis: Sequence[NormalizedClaim],
-    claims: Sequence[NormalizedClaim],
-    dispositions: dict[str, ClaimDisposition],
     conflicts: Sequence[FusionConflict],
     reasoning: FalsePositiveReasoningResult,
 ) -> set[str]:
-    """Named conditions that hold the band below HIGH."""
+    """Named conditions that hold the band below HIGH.
+
+    Every one of them is scoped to the basis. A condition holding *somewhere* in
+    the investigation is a fact about the investigation, and Task 18 owns what
+    that is worth; this function may only ask whether it bears on the claims this
+    verdict actually rested on.
+    """
     found: set[str] = set()
 
-    if conflicts:
+    # Only a conflict about a proposition the verdict rested on. Conflicting
+    # reputation reports about some other object reached on a pivot are a real
+    # disagreement about that object and say nothing about this one.
+    basis_propositions = {item.proposition.ref for item in basis}
+    if any(conflict.proposition.ref in basis_propositions for conflict in conflicts):
         found.add(CONFIDENCE_CAPS["unresolved_conflict"])
 
     if any(item.semantic is ClaimSemantic.UNCLASSIFIED_DIRECTIONAL for item in basis):
@@ -184,13 +189,11 @@ def _caps(
     ):
         found.add(CONFIDENCE_CAPS["stale_supporting_context"])
 
-    supporting = [
-        item
-        for item in claims
-        if dispositions[item.claim_id]
-        in {ClaimDisposition.UNEXPLAINED, ClaimDisposition.QUALIFIED_ONLY}
-    ]
-    if basis and all(decision_role_for(item) is ClaimDecisionRole.WEAK for item in supporting):
+    # The basis, not every surviving claim in the run. Reading the whole run let
+    # an unrelated non-weak claim about another object *suppress* this cap and
+    # hand the root a higher band than its own support earned -- the same
+    # run-level mistake as the others, pointing the other way.
+    if basis and all(decision_role_for(item) is ClaimDecisionRole.WEAK for item in basis):
         found.add(CONFIDENCE_CAPS["single_weak_support"])
 
     return found
