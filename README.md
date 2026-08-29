@@ -10,8 +10,9 @@ eventually produce an explainable, auditable assessment.
 
 This repository currently contains the foundation, its first nine providers, the
 adaptive enrichment planner that chooses between them, the correlation graph that
-assembles what they return, and the layer that says what each finding means in
-time and context (Jira Tasks 1-15):
+assembles what they return, the layer that says what each finding means in time
+and context, and the layer that asks whether that context explains anything
+(Jira Tasks 1-16):
 
 | Task | Scope | State |
 |------|-------|-------|
@@ -30,6 +31,7 @@ time and context (Jira Tasks 1-15):
 | 13 | Adaptive enrichment planner + orchestrator | Implemented (deterministic, passive, no fusion) |
 | 14 | Correlation graph + controlled pivots | Implemented (exact identity, bounded pivots, no verdict) |
 | 15 | Temporal evidence qualification + context reasoning | Implemented (typed instants, explicit `as_of`, no decay, no verdict) |
+| 16 | False-positive + alternative-explanation reasoning | Implemented (scoped explanations, no FP boolean, no verdict) |
 
 **Seven providers are integrated**, all passive, each answering a different
 question. Google Threat Intelligence enriches with each analyst's own VirusTotal
@@ -101,9 +103,27 @@ VirusTotal figure is recorded as dependent on the direct one rather than counted
 beside it; and no provider fact is ever rewritten — context is added *beside* a
 finding, never applied *to* it.
 
+Task 16 asks the next question: **can that context legitimately explain a
+specific piece of evidence?** Usually it cannot, and saying so precisely is most
+of the value. A false positive is a property of a *detection*, not of an IOC, so
+there is no `is_false_positive` on anything — every finding names the evidence or
+relationship it concerns, and the result can always say which malicious evidence
+something accounted for and which nothing did.
+
+The distinctions it keeps are the ones that go wrong elsewhere. Shared hosting
+affects attribution, not whether the traffic happened. A URL reported offline
+affects current activity, not whether it ever served malware. A relayed finding
+affects independence, not truth. A sandbox that observed no execution affects
+analysis quality, not the sample. None of those is a candidate false positive,
+and only two kinds of context — a known test artifact and an empty-file digest —
+can explain an object at all, and then only at exact scope. Host-level context
+never clears an exact URL; a public resolver explains a *contact* and never the
+file that made it; low AV detection counts, code signatures and popularity
+explain nothing on their own, each with a regression test saying so.
+
 There is no SecurityTrails, AbuseIPDB, Shodan or IPinfo client yet, no *active*
-sandboxing, and there is no false-positive reasoning, no evidence fusion, no
-verdict scoring, no MCP server and no Claude Skill. Those are later Jira tasks.
+sandboxing, and there is no evidence fusion, no verdict scoring, no MCP server
+and no Claude Skill. Those are later Jira tasks.
 
 Task 6 added the execution layer every adapter runs behind — caching, retry and
 backoff, rate-limit and quota tracking, cooldowns, bounded concurrency and
@@ -223,6 +243,8 @@ Design principles that shape every layer:
 - **Context explains, never exonerates** — a warninglist match, a shared cloud
   range and business-service context are all context; none of them means safe,
   none of them clears an exact URL, and none of them propagates along an edge.
+- **A false positive belongs to a detection, not an IOC** — an explanation names
+  the evidence it accounts for, and evidence nothing accounts for stays visible.
 - **Discovery is not disclosure** — finding an object in a provider's response
   does not authorise querying third parties about it. Pivoting is explicit,
   globally budgeted and stops one hop from the submitted observable.

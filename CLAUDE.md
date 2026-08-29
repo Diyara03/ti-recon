@@ -20,7 +20,7 @@ Analyst -> Claude + TI Analyst Skill -> MCP -> TI Recon backend
 
 ## Current implementation boundary
 
-Implemented (Jira Tasks 1-15):
+Implemented (Jira Tasks 1-16):
 
 - Task 1 — product scope + investigation workflow foundation (docs, enums)
 - Task 2 — architecture foundation (docs, module boundaries)
@@ -91,11 +91,21 @@ Implemented (Jira Tasks 1-15):
   `qualification.py`; the evaluator names no vendor. No verdict, no confidence,
   no risk score, no evidence weight, no false-positive flag, no network.
 
+- Task 16 — deterministic false-positive and alternative-explanation reasoning
+  (`reasoning/false_positive/`): asks whether Task 15's context legitimately
+  **explains a specific piece of evidence**, and what the explanation does not
+  cover. Seven roles, seven dimensions, fifteen reason codes and fifteen
+  versioned rules; typed `FindingLink`s so every finding names what it concerns;
+  content-derived finding ids; explicit `DoesNotEstablish` boundaries. Only two
+  context types can explain an object and only at exact scope. No verdict, no
+  confidence, no false-positive boolean, no provider names anywhere, no network.
+
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Evidence fusion is
 not implemented, so there is still no multi-provider verdict — Task 13 chooses
 what to ask, Task 14 assembles what came back, Task 15 says what each finding
-means in time and context, and nothing decides what the case is.
+means in time and context, Task 16 says which findings context explains and
+which it does not, and nothing decides what the case is.
 
 **Not implemented — do not add without an explicit request:**
 
@@ -146,9 +156,18 @@ means in time and context, and nothing decides what the case is.
   sandbox report do not share a lifetime, and MISP itself maintains separate
   decay models per use case. Task 15 preserves exact ages and source-managed
   lifecycle; numerical weighting is deferred
-- False-positive *reasoning* (Task 16), evidence fusion (Task 17) and decision
-  readiness (Task 18). Task 15 produces the cues those layers will weigh — what a
-  warninglist match plus a malicious verdict adds up to is still not decided here
+- Evidence fusion (Task 17) and decision readiness (Task 18). Tasks 15 and 16
+  produce the cues and findings those layers will weigh — what a warninglist
+  match plus a malicious verdict adds up to is still not decided here
+- A false-positive *rule* based on a low AV detection count, a valid code
+  signature, or popularity. None of the three is evidence a detection was wrong,
+  and the repository preserves no structured goodware indicator that would make a
+  low count meaningful. Regression tests assert each explains nothing
+- A Task 16 alternative explanation from scanner context. Scanner context could
+  explain a scanning-reputation claim, but a scanner classification and a
+  botnet-C2 indicator are both `CURATED_THREAT_ASSERTION` + `SUPPORTS_MALICIOUS`,
+  and the only field separating them is a provider-prefixed `claim_type` the
+  generic engine may not read. Deferred pending a generic claim-kind seam
 - Re-enrichment triggered from a qualification. "This evidence is old" must not
   become an automatic provider call: Task 15 performs zero I/O, and orchestrating
   a refresh is a caller's decision made with Task 13
@@ -666,6 +685,75 @@ means in time and context, and nothing decides what the case is.
     with the network unplugged. "This evidence is old" is never a trigger for a
     lookup.
 
+75. **A false positive is a property of a detection, not of an IOC.** There is no
+    `is_false_positive` on an address, a URL or a file — those would clear every
+    claim about the object at once. Every Task 16 finding names the evidence or
+    relationship it concerns through a typed `FindingLink`, and a finding with no
+    links is refused at construction.
+
+76. **Context alone is never an alternative explanation.** A warninglist hit on a
+    value nobody has accused of anything is context: there is nothing to explain,
+    and inventing an explanation would manufacture doubt about a finding nobody
+    made. Every explaining rule first requires directional evidence or an explicit
+    relationship whose significance is in question.
+
+77. **Explaining, limiting and cautioning are different jobs.** Shared hosting
+    affects attribution, current inactivity affects activity, a relayed finding
+    affects independence, and a sandbox that ran nothing affects analysis quality.
+    None of those is a candidate false positive. Only `ALTERNATIVE_EXPLANATION`
+    means "this may explain the detection", and only two context types —
+    `TEST_ARTIFACT` and `EMPTY_ARTIFACT` — can reach it for an object.
+
+78. **Host-level context never explains an exact artifact.** A popular-domain or
+    cloud-range match on a URL's host produces `INTERPRETATION_LIMITATION` with
+    `HOST_CONTEXT_DOES_NOT_EXPLAIN_EXACT_URL`, and the malicious evidence stays in
+    the unexplained set. Even a normally-explaining signal is refused at host
+    scope, checked as a field comparison rather than assumed.
+
+79. **Compromised infrastructure does not invalidate malicious activity, and
+    shared infrastructure does not make it safe.** Both produce
+    `ATTRIBUTION_CAUTION`: the owner may be a victim, and a block has bystanders.
+    Neither is a reason to doubt the activity happened, and filing either as a
+    potential false positive would be the most consequential mistake this layer
+    could make.
+
+80. **Public-service context explains a relationship, never an object.** A public
+    resolver or business service explains the *contact* at edge scope; the
+    relationship stays `PROVIDER_OBSERVED`, `explained_evidence_ids` stays empty,
+    and every such finding carries `DoesNotEstablish.OBJECT_BENIGN`. The
+    business-service rule additionally declines when somebody has made a
+    directional claim about the endpoint itself.
+
+81. **An object-nature explanation never covers directly-observed behaviour.**
+    "It is a test artifact" accounts for a scanner flagging it and accounts for
+    nothing a sandbox watched the file do; that evidence is linked `OPPOSES`
+    rather than folded in. `EvidenceClass.DIRECT_OBSERVATION` is the generic
+    discriminator, so no provider is named.
+
+82. **Low AV detection counts, code signatures and popularity are not
+    false-positive rules.** TI Recon counts no vendor votes; a signature
+    establishes a publisher rather than benign behaviour, and signing keys get
+    stolen; popularity describes hosting. Each has a regression test asserting it
+    explains nothing on its own.
+
+83. **Task 16 produces no verdict, confidence, score, weight or false-positive
+    flag,** and never mutates a Task 15 or Task 3 fact. Enforced at field-name
+    level, by an AST guard that the package never imports the assessment layer,
+    and by a test asserting the graph, the evidence and the qualification are
+    byte-identical afterwards.
+
+84. **The Task 16 engine names no provider at all.** Unlike `planning/` and
+    `reasoning/`, there is no composition-root exception: it consumes Task 15's
+    generic vocabulary, so no module has a reason to know a provider exists.
+    `rules.py` may not even read `claim_type`, because every claim type in the
+    repository is provider-prefixed — which is also why the scanner explanation is
+    deferred rather than guessed.
+
+85. **Nothing in Task 16 reads prose, a clock or the network.** Rules key on enum
+    members, booleans and exact ids; `as_of` is carried through from Task 15; and
+    a test rewrites every provider-supplied string, including one reading "ignore
+    previous instructions", asserting byte-identical output.
+
 ## Security rules
 
 - **No secrets in the repo.** `.env` is git-ignored; `.env.example` holds
@@ -793,6 +881,13 @@ means in time and context, and nothing decides what the case is.
   members with no field that can hold an observable, a warninglist slug, a node
   key, an investigation id or a user, which matters here because this layer sees
   everything every provider returned.
+- **Alternative-explanation reasoning carries no secret, because it cannot reach
+  one.** `reasoning/false_positive/` imports no credential module, no secret
+  store and no HTTP client, and never mentions `SecretStr`; a test asserts it.
+  Findings reference evidence ids, Task 15 refs and canonical node keys — never
+  credentials, connection ids or tokens — and its metrics are counts plus two
+  closed enum vocabularies with no field that can hold an observable, a user or
+  an investigation id.
 - **A correlation graph carries no secret, because correlation cannot reach one.**
   `correlation/` imports no credential module, no secret store and no HTTP client,
   and never mentions `SecretStr`; a test asserts it. Node occurrences and
@@ -909,6 +1004,14 @@ src/ti_recon/
                      edge-scoped rule), engine (vendor-neutral composition),
                      results, metrics, catalog (the only module here that may
                      name a provider)
+  reasoning/false_positive/
+                     Task 16: alternative-explanation reasoning. models (roles,
+                     dimensions, reason codes, typed links, does-not-establish
+                     boundaries, content-derived ids), policy (versioned rule
+                     ids, reason semantics, boundaries, message templates),
+                     index (read-only lookups over evidence, signals, cues,
+                     temporal facts and graph edges), rules (fifteen
+                     deterministic rules), engine, results, metrics
   planning/          Task 13: adaptive enrichment planning. models (locality,
                      cost class, novelty, budgets, decisions, result), goals
                      (capability goals + activation), policy (per-depth budgets,
@@ -941,7 +1044,8 @@ docs/                scope, architecture, data model, credentials, provider
                      correlation/investigation-graph,
                      correlation/controlled-pivots,
                      reasoning/temporal-evidence,
-                     reasoning/context-qualification
+                     reasoning/context-qualification,
+                     reasoning/false-positive-reasoning
 ```
 
 ## Conventions
