@@ -39,7 +39,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from ti_recon.enums import EvidenceClass, EvidenceEffect, MatchScope
+from ti_recon.enums import EvidenceEffect, MatchScope
 from ti_recon.reasoning.claims.models import (
     ClaimAssertionStrength,
     ClaimSemantic,
@@ -122,12 +122,23 @@ def decision_role_for(claim: NormalizedClaim) -> ClaimDecisionRole:
         return ClaimDecisionRole.CORROBORATIVE
     if claim.semantic in DECISIVE_SEMANTICS:
         return ClaimDecisionRole.DECISIVE
-    if (
-        claim.semantic is ClaimSemantic.SANDBOX_CLASSIFICATION
-        and claim.evidence_class is EvidenceClass.DIRECT_OBSERVATION
-    ):
-        # A sandbox that watched the sample act, rather than a report of one.
-        return ClaimDecisionRole.DECISIVE
+    # A sandbox classification is never decisive on its own, whatever its
+    # evidence class. The rule that used to promote a ``DIRECT_OBSERVATION``
+    # sandbox claim read as "a sandbox watched the sample act, rather than a
+    # report of one" -- but nothing in a ``NormalizedClaim`` can tell those
+    # apart, and the only shipped claim it promoted was a *boolean contributing
+    # factor* on one provider's own assessment: no report, no environment, no
+    # runtime, no execution quality. Meanwhile the integration that carries a
+    # full report and Task 12's ``observed_execution`` classifies its assessment
+    # as a curated assertion and was only corroborative, so the promotion
+    # inverted the evidence hierarchy -- the claim with less behind it outranked
+    # the claim with more.
+    #
+    # Task 12 was explicit that a sandbox negative needs execution quality to be
+    # readable; a sandbox *positive* deserves the same care before it carries a
+    # verdict alone. Until a claim-level execution-quality signal exists -- a
+    # deliberate policy decision, not something to infer from an evidence class
+    # -- every sandbox classification corroborates and none decides.
     return ClaimDecisionRole.CORROBORATIVE
 
 

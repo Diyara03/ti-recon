@@ -526,7 +526,15 @@ def test_a_benign_assertion_does_not_override_unexplained_malicious_support() ->
 
 def test_an_explained_classification_still_loses_to_unexplained_behaviour() -> None:
     """Test-artifact context explains a scanner flagging the file, and explains
-    nothing a separate decisive source claims."""
+    nothing a separate source observed.
+
+    The invariant is scoping, not severity: an ``EXPLAINS`` link reaches the
+    evidence it names and stops, so the behaviour claim survives and still drives
+    the verdict away from benign. It lands on SUSPICIOUS rather than MALICIOUS
+    because a sandbox classification corroborates and never decides alone --
+    nothing in a claim can distinguish a sandbox that watched a sample act from a
+    boolean saying one did.
+    """
     sample = file_object(md5="44d88612fea8a8f36de82e1278abb02f")
     classification = evidence(sample, claim_type="alpha_reputation", provider="alpha")
     behaviour = evidence(
@@ -551,7 +559,8 @@ def test_an_explained_classification_still_loses_to_unexplained_behaviour() -> N
         },
     )
 
-    assert result.assessment.verdict is Verdict.MALICIOUS
+    assert result.assessment.verdict is Verdict.SUSPICIOUS
+    assert result.assessment.verdict is not Verdict.LIKELY_BENIGN
     assert classification.id in result.explained_evidence_ids
     assert behaviour.id in result.unexplained_directional_evidence_ids
 
