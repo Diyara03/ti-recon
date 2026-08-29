@@ -33,6 +33,7 @@ from fixtures.reasoning import (
 )
 from ti_recon.correlation import (
     CorrelationEngine,
+    GraphNode,
     InvestigationGraph,
     RelationBasis,
     RelationshipAssertion,
@@ -158,6 +159,10 @@ def test_no_generic_module_names_a_provider(path: Path) -> None:
     be edited every time a provider was added, and provider semantics would start
     drifting away from the code that produced them.
     """
+    # Exact literals only, which is precisely the check that matters: a
+    # comparison like ``provider == "urlhaus"`` produces the literal, while a
+    # docstring *discussing* that anti-pattern is one long constant that is not
+    # equal to it. A guard that read prose would fire on its own explanation.
     literals = string_constants(path)
     assert not [item for item in PROVIDER_IDS if item in literals], path.name
     assert not [
@@ -537,9 +542,7 @@ def _graph_with_two_assertions(*, reverse: bool = False) -> InvestigationGraph:
     engine = CorrelationEngine(graph=graph)
     engine.add_root(sample)
     graph.upsert_node(
-        __import__("ti_recon.correlation.models", fromlist=["GraphNode"]).GraphNode(
-            node_key=domain.canonical_key, intel_object=domain, discovered_at_hop=1
-        )
+        GraphNode(node_key=domain.canonical_key, intel_object=domain, discovered_at_hop=1)
     )
     assertions = [
         RelationshipAssertion(
