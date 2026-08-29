@@ -443,3 +443,15 @@ load-bearing: the default sink discards and no decision reads a metric back.
 - No new live provider test suite: scheduling logic is tested against fake
   providers and mocked clients, because spending real API quota to test a
   decision that never leaves the process buys nothing.
+
+## Where the results go next
+
+An `AdaptiveEnrichmentResult` says what was asked and what came back. Task 14
+assembles the objects and relationships into a graph, and Task 15 qualifies the
+provider result envelopes — plus that graph — in time and context.
+
+Nothing flows the other way. Task 15 performs no I/O and never triggers a plan:
+"this evidence is old" is a fact it records, not a reason to call a provider.
+Orchestrating a refresh stays a caller's decision made with Task 13, so a
+qualification can never multiply provider traffic. See
+[docs/reasoning/temporal-evidence.md](../reasoning/temporal-evidence.md).

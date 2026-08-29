@@ -459,3 +459,30 @@ issue is filed per ceiling rather than one per dropped item.
 - No transitive or rule-based inference.
 - No global cross-user graph, and no graph database.
 - No freshness reasoning.
+
+## What Task 15 reads from this graph
+
+Task 15 qualifies the graph without changing it. Two things it takes, and one it
+deliberately does not.
+
+**Per-assertion times.** `RelationshipAssertion.first_seen`, `last_seen` and
+`observed_at` become `RELATIONSHIP_FIRST_OBSERVED` / `RELATIONSHIP_LAST_OBSERVED`
+facts, one set per assertion, each keeping its own asserter and `RelationBasis`.
+An edge carrying a 2025 sighting and a 2026 sighting therefore qualifies as **two
+observations**, never a one-year continuous association.
+
+**Not the aggregate bounds.** `GraphEdge.earliest_observed` and
+`latest_observed` are documented here as display-only bounding boxes, and Task 15
+does not qualify them: turning a bounding box into a fact is exactly the
+inference this layer refuses to make.
+
+`RelationBasis` travels onto every relationship fact as provenance.
+`PROVIDER_OBSERVED` says a provider watched the link happen — it is never mapped
+toward a verdict about either endpoint.
+
+The one place Task 15 reads *edges* is a single narrow rule: an incident
+`contacts` edge whose target carries public-resolver context gets a
+`PUBLIC_SERVICE_MAY_EXPLAIN_CONTACT` cue. One edge, no traversal, and the graph
+is left untouched — a test asserts the edge count and the edge itself are
+unchanged afterwards. See
+[docs/reasoning/context-qualification.md](../reasoning/context-qualification.md).

@@ -534,3 +534,33 @@ always survive truncation.
   network integration test.
 * An optimised non-Python backend. The measurements in §8 say none is needed;
   if that changes, the numbers are the argument, not the intuition.
+
+## Semantic categories (Task 15)
+
+This provider deliberately invented no category field: the pinned CC0 schema has
+no authoritative semantic classification, and putting one here would have meant
+fabricating provenance.
+
+Task 15 supplies the categories as **engine policy** instead, in
+`reasoning/policy.py`, keyed on the **exact slug** and versioned
+(`WARNINGLIST_MAP_VERSION`). Seventy slugs map to `PUBLIC_RESOLVER`,
+`KNOWN_SCANNER`, `PRIVATE_OR_SPECIAL_USE`, `SHARED_CLOUD_OR_CDN`,
+`POPULAR_OR_COMMON_SERVICE`, `TEST_ARTIFACT` and `EMPTY_ARTIFACT`.
+
+Never on a name, a description or a substring: `if "scanner" in name` would
+reclassify a list the day upstream reworded it, and would call
+`automated-malware-analysis` scanning infrastructure because of a word. A test
+asserts every mapped slug exists in the shipped snapshot, so a refresh that
+renames or drops one fails loudly instead of silently downgrading a categorized
+signal. An unmapped list still produces `WARNINGLIST_MATCH` with its slug.
+
+`snapshot_generated_at` becomes a `SNAPSHOT_GENERATED_AT` fact on a
+**dataset-scoped** subject, so it can never be mistaken for a fact about the
+observable, and this provider's own staleness verdict is carried through as
+`DATASET_STALE` / `DATASET_CURRENT` rather than re-derived. A match on a URL's
+host stays `SAME_HOST` and `host_component_only`, and raises
+`HOST_CONTEXT_DOES_NOT_CLEAR_EXACT_URL`.
+
+None of it certifies benignness. The upstream project describes these lists as
+values associated with potential false positives, errors and mistakes — a prompt
+to look again, not an acquittal.

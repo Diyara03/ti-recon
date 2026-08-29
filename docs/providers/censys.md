@@ -432,3 +432,21 @@ Live tests are off by default: `RUN_CENSYS_LIVE_TESTS=1` plus `CENSYS_PAT`, and
 optionally `CENSYS_ORGANIZATION_ID`. They read the free credit endpoints first and
 spend exactly one credit on one well-known host; there is no search test at any
 depth.
+
+## Temporal semantics (Task 15)
+
+`providers/censys/qualification.py` maps the asset-level observation instant to
+`LAST_OBSERVED` with `SourceLifecycleState.POINT_IN_TIME`, from the host and
+web-property records only. Every other Censys record repeats the same instant,
+and emitting a dozen copies of one observation would look like a dozen
+observations.
+
+It emits **no** certificate validity. Task 9 keeps a certificate's fingerprint,
+subject and issuer and deliberately does not normalize `not_before`/`not_after`,
+so there is nothing to emit — reading a validity window out of a raw response
+would be new provider behaviour rather than a qualification of existing
+behaviour.
+
+That omission sits on the safe side of the distinction anyway: a certificate
+valid 2024-2026 does not mean the host served it throughout. A validity window is
+a property of the certificate; hosts rotate what they present.

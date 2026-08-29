@@ -20,7 +20,7 @@ Analyst -> Claude + TI Analyst Skill -> MCP -> TI Recon backend
 
 ## Current implementation boundary
 
-Implemented (Jira Tasks 1-14):
+Implemented (Jira Tasks 1-15):
 
 - Task 1 — product scope + investigation workflow foundation (docs, enums)
 - Task 2 — architecture foundation (docs, module boundaries)
@@ -80,10 +80,22 @@ Implemented (Jira Tasks 1-14):
   (URL → host, parsed), per-assertion times, and bounded pivot selection whose
   execution goes back through Task 13. No verdict, no inference, no similarity.
 
+- Task 15 — temporal evidence qualification and context reasoning
+  (`reasoning/`): says **what a finding means in time and context**, never what
+  the case is. Typed instants (`TemporalFactKind`) so a scan time can never
+  become an observation, an explicit timezone-aware `as_of` with no wall clock
+  anywhere, exact ages and no decay model, source-stated lifecycle,
+  `ContextSignal`s from a versioned exact-slug warninglist mapping plus provider
+  facts, `InterpretationCue`s from data-driven rules over structured inputs, and
+  two temporal issues. Provider field semantics stay in each provider's own
+  `qualification.py`; the evaluator names no vendor. No verdict, no confidence,
+  no risk score, no evidence weight, no false-positive flag, no network.
+
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Evidence fusion is
 not implemented, so there is still no multi-provider verdict — Task 13 chooses
-what to ask and reports what was covered, and nothing decides what it means.
+what to ask, Task 14 assembles what came back, Task 15 says what each finding
+means in time and context, and nothing decides what the case is.
 
 **Not implemented — do not add without an explicit request:**
 
@@ -125,9 +137,26 @@ what to ask and reports what was covered, and nothing decides what it means.
   deletion, saved searches, incidents
 - urlscan paging beyond the first search page, Brand/Kit monitoring, hostname
   and similarity APIs
-- Evidence fusion, conflict resolution, decay and verdict scoring. Tasks 13-14
-  stop at coverage and correlation; weighing sources belongs to the next layer,
-  the only one allowed to weigh a source or resolve a conflict
+- Evidence fusion, conflict resolution, decay and verdict scoring. Tasks 13-15
+  stop at coverage, correlation and qualification; weighing sources belongs to
+  the next layer, the only one allowed to weigh a source or resolve a conflict
+- Any universal decay model — `score *= exp(-age)`, `decay_score`,
+  `evidence_weight`, `confidence -= N`, "older than 30 days is stale". A phishing
+  URL, a malware hash, a cloud address, a scanner range, a certificate and a
+  sandbox report do not share a lifetime, and MISP itself maintains separate
+  decay models per use case. Task 15 preserves exact ages and source-managed
+  lifecycle; numerical weighting is deferred
+- False-positive *reasoning* (Task 16), evidence fusion (Task 17) and decision
+  readiness (Task 18). Task 15 produces the cues those layers will weigh — what a
+  warninglist match plus a malicious verdict adds up to is still not decided here
+- Re-enrichment triggered from a qualification. "This evidence is old" must not
+  become an automatic provider call: Task 15 performs zero I/O, and orchestrating
+  a refresh is a caller's decision made with Task 13
+- Semantic categories for warninglists taken from any *other* MISP project or
+  runtime database. The pinned CC0 schema has no authoritative category field;
+  TI Recon's mapping is engine policy, versioned, keyed on exact slugs
+- Regex, substring or name-based classification of warninglists, provider
+  descriptions, tags or any provider prose anywhere in `reasoning/`
 - Any graph database (Neo4j, JanusGraph, ArangoDB, RedisGraph) or a global,
   cross-investigation, cross-user intelligence graph. The graph is in-memory and
   scoped to one investigation
@@ -525,6 +554,118 @@ what to ask and reports what was covered, and nothing decides what it means.
     database, and correlation produces no verdict, risk score or confidence — a
     warninglist match explains a node and never deletes an edge.
 
+58. **Query time is never observation time, and analysis time is not activity
+    time.** A lookup on a date does not make an indicator active on that date, and
+    no instant is ever manufactured from a request, cache, enrichment or Task 13
+    execution time. `last_analysis_date` is when VirusTotal *scanned*;
+    `task.time` is when a browser *visited*; `analysis_start_time` is when a
+    sandbox *detonated*. Each carries its own `TemporalFactKind` plus the
+    provider's own field name, because collapsing them into one `last_seen` turns
+    "we rescanned it yesterday" into "it attacked somebody yesterday".
+
+59. **Temporal reasoning always uses an explicit timezone-aware `as_of`.** It is a
+    required argument, a naive value is refused rather than assumed, nothing under
+    `reasoning/` reads a wall clock, and an extractor is handed no clock at all.
+    Identical inputs at one `as_of` serialize byte-identically, so a stored
+    qualification stays re-derivable and a diff between two runs means something.
+
+60. **There is no universal decay model, and no invented freshness label.** Age is
+    exact and unlabelled — no `fresh`, no `stale`, no `old`, no half-life. A
+    phishing URL, a malware SHA-256, a cloud address, a scanner range, a
+    certificate and a sandbox report age nothing alike, and one number would be
+    wrong for most of them while looking principled. Where a *source* defines a
+    lifecycle its word is carried; where it does not, a later layer gets the
+    number.
+
+61. **A source's own lifecycle outranks any generic rule, and a returned record
+    is not a heartbeat.** ThreatFox's six-month API horizon is
+    `WITHIN_SOURCE_API_HORIZON`, never `ACTIVE_NOW` — which does not exist. A
+    ThreatFox miss is compatible with never-listed, expired and reported an hour
+    ago, so an absence produces no times, no lifecycle and no "expired".
+
+62. **URLhaus `offline` does not erase historical malicious evidence.** A URL that
+    distributed malware in March and stopped in April distributed malware. The
+    evidence keeps `SUPPORTS_MALICIOUS` untouched; what is added beside it is
+    `INACTIVE_BY_SOURCE`, `LAST_ONLINE_AT` and a
+    `HISTORICAL_MALICIOUS_CURRENTLY_INACTIVE` cue. `date_added` is a dataset time
+    and `last_online` is an observation, and merging them would make a long-dead
+    URL look recently active on every re-import.
+
+63. **A file hash does not expire.** MalwareBazaar's first/last seen carry no
+    lifecycle, because none is stated. Cryptographic file identity does not change
+    tenant the way a cloud address does: a sample last seen in 2023 is not expired,
+    not inactive and not benign.
+
+64. **Warninglist and Business Services context never means safe.** Every
+    warninglist signal is context; GreyNoise BSI is common business-service
+    infrastructure and explicitly not an allow list. There is no
+    `ContextSignalType`, `SourceLifecycleState` or `InterpretationCueType`
+    containing *safe*, *trusted*, *benign* or *allow*, and a test asserts it. A
+    cloud range hosts attacks, a CDN serves malware, and an EICAR hash is a test
+    artifact rather than an ordinary benign file.
+
+65. **Host-level context never clears an exact URL.** A warninglist match on a
+    URL's host is `SAME_HOST`, `host_component_only`, and raises
+    `HOST_CONTEXT_DOES_NOT_CLEAR_EXACT_URL`. Losing that distinction is how every
+    living-off-trusted-sites payload gets waved through.
+
+66. **Sandbox negatives are qualified by execution quality, and never become
+    benign.** Task 12's `observed_execution` is authoritative and Task 15 invents
+    no threshold of its own: a completed non-directional run that observed nothing
+    is `SANDBOX_LOW_EXECUTION`, one that did execute is
+    `SANDBOX_MEANINGFUL_EXECUTION`, and an errored or queued run produces neither.
+    Divergence across environments is preserved as `SANDBOX_DIVERGENCE`, never
+    voted on, averaged or converted to a confidence.
+
+67. **`PROVIDER_OBSERVED` describes provenance, not maliciousness.** It says a
+    provider watched a link happen. It is exposed to later reasoning as
+    epistemic quality and is never mapped toward a verdict about either endpoint.
+
+68. **A relayed finding is not independent corroboration.** Detected generically
+    from `transport_provider != origin_provider` — two model fields, so the rule
+    holds for a provider that does not exist yet. Task 15 records the dependence
+    and whether the same family also answered directly; it computes no source
+    weighting, because that is the fusion layer's.
+
+69. **Task 15 never mutates a provider fact.** `EvidenceEffect`, `EvidenceClass`,
+    `source_family`, `lineage_group_id`, `origin_provider`, `transport_provider`,
+    `MatchScope`, `Relationship`, `RelationBasis` and every graph edge are
+    read-only. Provider evidence is never upgraded or downgraded: context is
+    added *beside* a finding, never applied *to* it.
+
+70. **Task 15 produces no verdict, confidence, score, weight or false-positive
+    flag.** No `Assessment`, no `Verdict`, no `risk_score`, no `malicious_score`,
+    no `decay_score`, no `evidence_weight`, no `is_false_positive`. Enforced at
+    field-name level across every model and by an AST guard that the package never
+    imports the assessment layer; structured detail rejects conclusion-shaped keys
+    at construction.
+
+71. **Context never propagates transitively.** A→B and B→C never gives C's context
+    to A. There is exactly one edge-scoped rule — a contact with a public resolver
+    — and it reads one edge and stops. A chain of ordinary-looking links is how an
+    unremarkable-looking conclusion gets built out of nothing.
+
+72. **Nothing infers meaning from prose.** No rule reads a description, a provider
+    name, a tag, a warninglist title or any free text; every rule keys on an enum
+    member, a boolean, a lifecycle state or an exact slug. Provider-authored text
+    is attacker-influenced in several places, so a string saying "ignore previous
+    instructions" is inert because no string is consulted. No regex classification,
+    no `eval`, no dynamic import, no LLM.
+
+73. **Provider time-field semantics stay provider-owned, and the evaluator names
+    no vendor.** Each integration exposes one pure `qualification.qualify`;
+    `reasoning/catalog.py` is the only module under `reasoning/` that may name a
+    provider, and a test reads the AST *and the string literals* of every other one
+    to prove it. A provider with no extractor is named in coverage rather than
+    silently skipped, and the warninglist slug mapping is versioned and validated
+    against the shipped snapshot so a refresh cannot change a meaning in silence.
+
+74. **Task 15 performs no provider call and no network access.** No HTTP, DNS,
+    socket, credential, cache, Task 13 enrichment or Task 14 pivot — it reasons
+    over data already in hand, so a stored result can be requalified years later
+    with the network unplugged. "This evidence is old" is never a trigger for a
+    lookup.
+
 ## Security rules
 
 - **No secrets in the repo.** `.env` is git-ignored; `.env.example` holds
@@ -643,6 +784,15 @@ what to ask and reports what was covered, and nothing decides what it means.
   Hybrid Analysis key may use the API from at most two IP addresses per hour. No
   egress rotation, no key rotation, no multiple accounts; a scaled deployment
   needs stable centralized egress.
+- **A qualification carries no secret, because qualification cannot reach one.**
+  `reasoning/` imports no credential module, no secret store and no HTTP client,
+  and never mentions `SecretStr`; a test asserts it. Signals and cues name
+  providers, source families and lineage groups — never credentials, connection
+  ids or tokens — and structured detail accepts only short scalars, so a provider
+  payload cannot ride into a cue. Qualification metrics are counts and enum
+  members with no field that can hold an observable, a warninglist slug, a node
+  key, an investigation id or a user, which matters here because this layer sees
+  everything every provider returned.
 - **A correlation graph carries no secret, because correlation cannot reach one.**
   `correlation/` imports no credential module, no secret store and no HTTP client,
   and never mentions `SecretStr`; a test asserts it. Node occurrences and
@@ -750,6 +900,15 @@ src/ti_recon/
                      (ingest provider results), policy (modes, budgets, hop),
                      pivots (candidates + lexicographic ranking), orchestrator
                      (root -> correlate -> pivot via Task 13), results, metrics
+  reasoning/         Task 15: temporal + context qualification. models (typed
+                     instants, lifecycle, signals, cues, issues), temporal
+                     (deterministic ageing against an explicit as_of), extraction
+                     (the provider contract; no clock), policy (versioned exact
+                     warninglist slug map, clock-skew tolerance), context
+                     (relayed-source dependence), cues (data-driven rules; one
+                     edge-scoped rule), engine (vendor-neutral composition),
+                     results, metrics, catalog (the only module here that may
+                     name a provider)
   planning/          Task 13: adaptive enrichment planning. models (locality,
                      cost class, novelty, budgets, decisions, result), goals
                      (capability goals + activation), policy (per-depth budgets,
@@ -758,6 +917,11 @@ src/ti_recon/
                      lexicographic key), planner (no I/O, deterministic),
                      orchestrator (plan -> execute -> observe), metrics,
                      catalog (the only module here that may name a provider)
+  providers/*/qualification.py
+                     Task 15: each provider's pure translation of its own
+                     already-normalized result into the generic temporal and
+                     context vocabulary. Provider field-name knowledge lives
+                     here and nowhere else
   security.py        credential-key guards and text redaction
   versions.py        ENGINE_VERSION / POLICY_VERSION audit stamps
 tests/unit/          unit + contract tests
@@ -775,7 +939,9 @@ docs/                scope, architecture, data model, credentials, provider
                      providers/hybrid-analysis,
                      planning/adaptive-enrichment,
                      correlation/investigation-graph,
-                     correlation/controlled-pivots
+                     correlation/controlled-pivots,
+                     reasoning/temporal-evidence,
+                     reasoning/context-qualification
 ```
 
 ## Conventions

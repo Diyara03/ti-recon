@@ -494,3 +494,22 @@ normalization, coverage, classification, BSI and secret assertion reads the
 *same* cached outcome rather than issuing its own lookup, and the enforcement is
 in the test code — a single module-level outcome computed once — rather than in a
 comment or in test ordering.
+
+## Temporal and BSI semantics (Task 15)
+
+`providers/greynoise/qualification.py` distinguishes two kinds of time:
+
+* `first_seen` / `last_seen` are genuine sensor observations →
+  `FIRST_OBSERVED` / `LAST_OBSERVED`. An address that has never touched the
+  sensor fleet has no times, and none is invented.
+* the Business Services record's `last_updated` is GreyNoise touching its **own
+  record** → `SOURCE_RECORD_UPDATED_AT`, so it cannot be read as a sighting.
+
+Business Services Intelligence produces a `BUSINESS_SERVICE` signal and a
+`BUSINESS_SERVICE_MAY_EXPLAIN_ACTIVITY` cue. It is **not a safe list and not an
+allow list** — a Microsoft or Google range is common business infrastructure
+*and* a place attacks come from — and there is no signal type in the Task 15
+vocabulary that could mean safe, trusted or benign. Where another provider has a
+directional finding about the same address, both survive; nothing cancels
+anything. GreyNoise's own trust level travels as its structured value and is
+never converted into a TI Recon confidence.

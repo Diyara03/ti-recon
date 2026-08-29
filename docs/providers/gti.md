@@ -590,3 +590,25 @@ sample downloads               sandbox detonation
 Intelligence Search is a **pivot and discovery** capability, not something core
 IOC enrichment needs. It belongs with the query planner and pivot engine, and
 deferring it keeps both the complexity and the quota risk of this milestone down.
+
+## Temporal semantics (Task 15)
+
+`providers/gti/qualification.py` translates this provider's timestamps into the
+generic Task 15 vocabulary. One mapping matters more than the rest:
+
+| GTI field | Kind |
+|-----------|------|
+| `first_submission_date` | `FIRST_SUBMITTED` |
+| `last_submission_date` | `LAST_SUBMITTED` |
+| `last_analysis_date` | **`ANALYZED_AT`** |
+
+`last_analysis_date` is when VirusTotal last *scanned* the object. It is not a
+last-seen. A file uploaded in 2019 and rescanned this morning carries this
+morning's date and has been nowhere near anybody since 2019.
+
+The normalizer stores it in `Evidence.last_seen`, because that is the field the
+Task 3 model has for a claim's most recent instant, and Task 15 does not change
+that. Instead the extractor holds a per-claim-type table saying which *provider*
+field each model field actually carries, so the value is typed correctly wherever
+it sits — and a dedicated regression test asserts `ANALYZED_AT` is produced and
+`LAST_OBSERVED` is not. No new endpoint, no extra request, no quota spent.

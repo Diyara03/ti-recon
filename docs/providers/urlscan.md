@@ -515,3 +515,19 @@ deletion, saved searches, incidents, Brand/Kit monitoring, hostname/similarity
 APIs, paging beyond the first search page, and any use of urlscan Pro-only
 endpoints. Evidence fusion, provider selection and verdict scoring remain future
 tasks: urlscan supplies evidence, and nothing weighs it yet.
+
+## Temporal semantics (Task 15)
+
+`providers/urlscan/qualification.py` maps `task.time` to `SCANNED_AT` with
+`SourceLifecycleState.POINT_IN_TIME`: a browser visited this URL at that instant
+and saw these things. The two claims a scan time cannot support are the two most
+often reached for — "it is still malicious" and "it is clean now". A kit that
+cloaks by geography, a page cleaned an hour later and a redirect chain that has
+since changed all produce the same record.
+
+The scan time is emitted **once per scan**, from the scan-observation record.
+Task 8 stamps every record with the same instant, so repeating it would make one
+visit look like nine observations.
+
+`page.tlsValidFrom` becomes `VALID_FROM`: it describes the certificate, not the
+visit and not the page.
