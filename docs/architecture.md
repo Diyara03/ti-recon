@@ -56,7 +56,17 @@
            |   +-- InterpretationCue     named cautions, with their derivation
            +-- TemporalIssue         time that cannot be read literally
            |
-     False-Positive Reasoning      FUTURE — Task 16
+     False-Positive /              IMPLEMENTED — Task 16. scoped alternative
+     Alternative-Explanation                     explanations and limitations
+     Reasoning
+           |
+           |   +-- ALTERNATIVE_EXPLANATION    context may explain a detection
+           |   +-- INTERPRETATION_LIMITATION  true, but read too broadly
+           |   +-- ANALYSIS_QUALITY_LIMITATION how much a negative can carry
+           |   +-- ATTRIBUTION_CAUTION        what happened vs who owns it
+           |   +-- TEMPORAL_RELEVANCE         history vs current state
+           |   +-- SOURCE_DEPENDENCE          not independent corroboration
+           +-- UNRESOLVED_TENSION         opposing facts, left unresolved
            |
      Evidence Fusion               FUTURE — Task 17. weighting, independence,
            |                                decay
@@ -64,6 +74,11 @@
            |
      Assessment                    MODELS IMPLEMENTED, scoring engine FUTURE
 ```
+
+Task 16 is **not** fusion either. It says which evidence context legitimately
+explains and which it does not, and hands both sets on: it never selects the
+final side of a disagreement, and every alternative explanation it produces
+carries an explicit statement that it does not establish the object is benign.
 
 Task 15 is **not** fusion. It hands the layers below it structured facts saying
 what happened, when the source actually says it happened, what kind of timestamp
