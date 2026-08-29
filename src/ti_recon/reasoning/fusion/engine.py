@@ -149,8 +149,21 @@ class EvidenceFusionEngine:
         )
         corroboration = self._corroboration(claims, dispositions)
 
+        # The assessment is about `target_key`, so only claims about that subject
+        # may decide it. A decisive claim about an object reached on a pivot is
+        # real knowledge about *that* object; letting it into this verdict would
+        # be the graph-derived promotion Task 14 deliberately deferred, arriving
+        # through claim indexing instead of through an edge. Everything stays in
+        # the trace, the propositions and coverage -- it just does not vote here.
+        target_claims = tuple(item for item in claims if item.subject_key == target_key)
+        target_corroboration = tuple(
+            group for group in corroboration if group.proposition.subject_key == target_key
+        )
+        target_conflicts = tuple(
+            conflict for conflict in conflicts if conflict.proposition.subject_key == target_key
+        )
         verdict, verdict_rule, basis_claim_ids = self._decide_verdict(
-            claims, dispositions, corroboration, conflicts
+            target_claims, dispositions, target_corroboration, target_conflicts
         )
         confidence, confidence_rule, caps = decide_confidence(
             verdict=verdict,
@@ -158,7 +171,7 @@ class EvidenceFusionEngine:
             claims=claims,
             dispositions=dispositions,
             corroboration=corroboration,
-            conflicts=conflicts,
+            conflicts=target_conflicts,
             basis_claim_ids=basis_claim_ids,
             reasoning=reasoning,
         )
@@ -563,6 +576,16 @@ class EvidenceFusionEngine:
         for position, first in enumerate(usable):
             for second in usable[position + 1 :]:
                 if first.subject_key != second.subject_key:
+                    continue
+                if first.scope is not second.scope:
+                    # Same subject, different scope: not the same thing being
+                    # claimed. A host-level reputation beside an exact-URL
+                    # finding is about the neighbourhood, and letting the two
+                    # corroborate would complete a verdict about the exact
+                    # artifact out of a statement nobody made about it -- the
+                    # mirror of the rule that host context never clears an exact
+                    # URL. Within one proposition scope already matches, because
+                    # it is part of the proposition key.
                     continue
                 if index[first.claim_id] == index[second.claim_id]:
                     continue
