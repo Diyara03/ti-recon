@@ -81,6 +81,19 @@ Nothing is discarded. Every claim stays in the trace with its own provenance; on
 its ability to *corroborate* something already counted collapses, and the
 contribution records that as `DEPENDENT_CORROBORATION`.
 
+**Task 16's source-dependence finding is not a fourth edge.** Task 16 files a
+`SOURCE_DEPENDENCE` finding with a `DEPENDENT_WITH` link whenever a finding is
+relayed, and fusion deliberately does not read it — because there is nothing in it
+to read. The link is *unary*: it points at the relayed record and never names a
+second one, and the dependence it describes is carried in `origin_provider` and
+`source_family`, copied verbatim from that same record. Both are already
+union-find edges, so the two layers reach the same grouping independently and
+consuming the finding would add no edge. Should Task 16 ever gain a genuinely
+binary dependence relation — one naming two records whose provenance does not
+already connect them — that is a real edge and belongs here; the regressions in
+`test_basis_relevance_and_dependence_links.py` pin the current shape so the
+change cannot pass unnoticed.
+
 ## 4. Task 16 is read exactly
 
 Only an `ALTERNATIVE_EXPLANATION` finding, through an `EXPLAINS` link, to a piece
@@ -194,17 +207,51 @@ verdict's ordinal.
 an assessment reporting 63 would claim a precision nobody measured.
 
 **Caps, not penalties.** An unresolved conflict, an unclassified basis, a partial
-source, sandbox divergence or a decision resting on stale context each lower the
-band by name. Nothing is subtracted, and stacking caps never reaches a fourth band
-— that arithmetic would be the weighted score by another route.
+source, sandbox divergence, a decision resting on stale context, and support that
+is entirely weak each lower the band by name. Nothing is subtracted, and stacking
+caps never reaches a fourth band — that arithmetic would be the weighted score by
+another route.
 
-**Caps are scoped to the decision.** This is Task 16's scoping fix, generalised: a
-cap requires both a finding carrying the condition *and* that finding linking to a
-piece of evidence the verdict's basis actually used. An unrelated stale
-warninglist leaves an independent malware-sample assessment alone, and so does a
-divergent sandbox detonation of some other object reached on a pivot. A run-level
-`any()` over findings is the shape of the original bug and is deliberately not
-available in `confidence.py`.
+| Cap | Scoped by |
+|---|---|
+| `unresolved_conflict` | the conflict is about a proposition the basis rests on |
+| `unclassified_basis` | a basis claim is `UNCLASSIFIED_DIRECTIONAL` |
+| `partial_source` | a basis claim's own envelope was partial |
+| `sandbox_divergence` | the finding links to basis evidence |
+| `stale_supporting_context` | the finding links to basis evidence |
+| `single_weak_support` | every basis claim is weak |
+
+**Every cap is scoped to the decision.** This is Task 16's scoping fix,
+generalised to the whole table: a cap must bear on the claims the verdict actually
+rested on. An unrelated stale warninglist leaves an independent malware-sample
+assessment alone, and so do a divergent sandbox detonation of another object, a
+disputed reputation on a pivot, and an optional provider that returned partial,
+no-data or nothing at all.
+
+`_caps()` is handed the basis, the conflicts and the reasoning result, and
+deliberately *not* the full claim set or the disposition map — those were the
+route by which two run-level caps got written. A run-wide read is a bug in both
+directions, which is easy to miss: the conflict cap lowered a band because of a
+disagreement about a different object, and the weak-support cap was *suppressed*
+by a non-weak claim about a different object, handing the root a higher band than
+its own support earned.
+
+### Confidence is not coverage
+
+Confidence says the assessment is correct. `FusionCoverage` says what was examined
+— and still counts run-level `conflicts` and `partial_sources`, because those are
+true facts about the investigation that belong in the record. What they no longer
+do is move a band.
+
+Whether the coverage is *sufficient to act on* is a third question, and it is Task
+18's. All three of these are valid at once:
+
+> `MALICIOUS` · `HIGH` confidence · incomplete provider coverage
+
+An exact known-malware hash can establish maliciousness on its own while half the
+optional providers were unavailable. Task 18 may well say readiness is limited for
+some operational purpose; that does not make the identification less correct, and
+answering it here by quietly lowering a band would put it beyond appeal.
 
 `INCONCLUSIVE` reaches `UNSPECIFIED` by two different rules, kept distinct because
 the situations are opposites: `unspecified.no_directional_support.v1` when nothing

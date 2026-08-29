@@ -812,7 +812,11 @@ about it.
     same origin, as two independent confirmations and escalated the verdict.
     Three abuse.ch datasets answering is one origin. The verdict's corroboration
     test and the confidence band both count components, never families. Nothing
-    is discarded: only the ability to corroborate collapses.
+    is discarded: only the ability to corroborate collapses. Task 16's
+    `DEPENDENT_WITH` link is deliberately not a fourth edge: it is unary, naming
+    the relayed record alone, and the dependence it states is the
+    `origin_provider` and `source_family` of that same record — already edges
+    here, so the two layers agree without fusion reading the finding.
 
 90. **Corroboration requires compatible propositions, stated in a versioned
     table.** `SCANNER_ACTIVITY` is compatible with nothing but itself, and
@@ -870,16 +874,23 @@ about it.
     never import it — that model requires a `risk_score` this layer refuses to
     invent.
 
-99. **A confidence cap is scoped to the decision.** Every cap requires a finding
-    carrying the condition *and* that finding linking to evidence the verdict's
-    basis actually used — so an unrelated stale warninglist never caps an
-    independent assessment, and neither does a divergent sandbox detonation of
-    some other object reached on a pivot. This generalises Task 16's fix rather
-    than reintroducing the bug one condition at a time; a run-level `any()` over
-    findings is the shape of the original bug and is unavailable in
-    `confidence.py`. `INCONCLUSIVE` keeps two distinct rules for `UNSPECIFIED`,
-    because nothing being said and sources contradicting each other are opposite
-    situations.
+99. **Every confidence cap is scoped to the decision, and confidence is not
+    coverage.** A cap must bear on the claims the verdict rested on: the finding
+    links to basis evidence, the conflict is about a proposition in the basis,
+    the partial envelope is the one that produced a basis claim, every basis
+    claim is weak. So an unrelated stale warninglist, a divergent sandbox
+    detonation of another object, a disputed reputation on a pivot and an
+    optional provider returning `NO_DATA` all leave an independent assessment
+    untouched — they are recorded in coverage, where they belong. A run-wide read
+    is a bug in *both* directions, and both have happened: the conflict cap
+    lowered a band over a disagreement about a different object, and the
+    weak-support cap was suppressed by a non-weak claim about a different object,
+    handing the root a higher band than its own support earned. `_caps()` is
+    therefore handed the basis, the conflicts and the reasoning result and not
+    the full claim set. Whether coverage is *sufficient to act on* is Task 18's
+    question; MALICIOUS at HIGH with incomplete coverage is a valid statement.
+    `INCONCLUSIVE` keeps two distinct rules for `UNSPECIFIED`, because nothing
+    being said and sources contradicting each other are opposite situations.
 
 100. **Every verdict names its rule and its contributions.** Each claim gets a
      contribution — including the explained ones and the dependent duplicates —
