@@ -104,8 +104,8 @@ engine = TemporalContextEngine()
 result = engine.evaluate(
     as_of=datetime(2026, 8, 29, 12, 0, tzinfo=UTC),
     results=envelopes,
-    graph=graph,          # optional Task 14 graph
-    root=target,          # optional: the observable the run was about
+    graph=graph,  # optional Task 14 graph
+    root=target,  # optional: the observable the run was about
 )
 ```
 

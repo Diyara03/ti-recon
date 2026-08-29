@@ -289,11 +289,11 @@ than implying everything returned was examined.
 
 ```python
 TemporalContextResult(
-    evaluated_at,                 # the as_of supplied, never a clock reading
+    evaluated_at,  # the as_of supplied, never a clock reading
     engine_version,
     context_policy_version,
     warninglist_map_version,
-    temporal_qualifications,      # facts + exact ages
+    temporal_qualifications,  # facts + exact ages
     context_signals,
     interpretation_cues,
     temporal_issues,
