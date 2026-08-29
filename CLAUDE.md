@@ -834,10 +834,38 @@ about it.
 92. **Explained is not false.** An explained claim is retained in full; the trace
     says the verdict did not rest on it, never that the source was wrong.
 
-93. **Specificity decides, not popularity.** One curated repository holding this
-    exact sample reaches MALICIOUS alone; one generic reputation claim reaches
-    SUSPICIOUS. Demanding a second provider before believing a specific fact
-    would be treating specificity as if it were a vote.
+93. **Specificity decides, not popularity, and only two semantics decide
+    alone.** `MALWARE_SAMPLE_IDENTITY` and `MALWARE_DISTRIBUTION` — specific
+    claims about the exact object that a repository publishes after vetting.
+    One curated repository holding this exact sample reaches MALICIOUS alone;
+    one generic reputation claim reaches SUSPICIOUS. Demanding a second provider
+    before believing a specific fact would be treating specificity as if it were
+    a vote. A sandbox classification is deliberately *not* decisive whatever its
+    evidence class: nothing in a claim distinguishes a sandbox that watched a
+    sample act from a boolean saying one did, and the only claim the old
+    `DIRECT_OBSERVATION` promotion reached was a contributing-factor flag with no
+    report, environment or execution quality — outranking a full report that
+    had all three. Task 12 required execution quality to read a sandbox negative;
+    a positive carries a verdict alone only once an equivalent claim-level signal
+    exists.
+
+93a. **Corroboration requires the same subject *and* the same scope.** Scope is
+    part of the proposition key, so the same-proposition path matches it; the
+    cross-proposition path must check it explicitly, or a host-level reputation
+    completes a MALICIOUS verdict about an exact URL out of a statement nobody
+    made about the URL. This is the mirror of "host context never clears an exact
+    URL" — host-level evidence may neither condemn nor absolve an exact artifact.
+
+93b. **The verdict is about the target, and only the target.** Only claims whose
+    subject is the assessment's `target_key` may decide it. A decisive claim
+    about an object reached on a pivot is knowledge about *that* object; letting
+    it vote here is the graph-derived promotion Task 14 deferred, arriving
+    through claim indexing rather than through an edge, and would attribute a
+    pivot's verdict to whatever the analyst typed. Pivot claims stay in the
+    claims, propositions, contributions and coverage — they simply do not vote.
+    Note that a claim whose subject object appears in no envelope and no graph
+    node anchors to the root by design, because several adapters emit evidence
+    about the *requested* observable without re-listing it.
 
 94. **SUSPICIOUS means affirmative concern; INCONCLUSIVE means the engine cannot
     justify either direction.** Missing data, `NO_DATA`, a provider failure and a
@@ -868,7 +896,16 @@ about it.
     this?". MALICIOUS at MEDIUM is ordinary. Caps lower a band by name —
     unresolved conflict, unclassified basis, sandbox divergence, stale supporting
     context, wholly weak support — and nothing is subtracted. Only the canonical STIX
-    values 15/50/85 are ever produced. `FusionAssessment` is the authoritative
+    values 15/50/85 are ever produced. Determinism is run-scoped: `claim_id` and
+    `assessment_id` incorporate `Evidence.id`, so re-running fusion over stored
+    evidence reproduces them exactly while a fresh collection of the same
+    intelligence does not — the cross-run identity is the proposition
+    (`subject + semantic + scope`). `FUSION_POLICY_VERSION` 1.0.0 is the first
+    finalized policy; once a version has shipped or assessments are persisted
+    under it, any behavioural change to claim mapping, compatibility,
+    independence, verdict rules or confidence rules requires a bump, because the
+    version is what distinguishes the resulting assessment identity.
+    `FusionAssessment` is the authoritative
     assessment from Task 17 onward; Task 3's `Assessment` is legacy, retained for
     backward compatibility, and a boundary test asserts `claims/` and `fusion/`
     never import it — that model requires a `risk_score` this layer refuses to
