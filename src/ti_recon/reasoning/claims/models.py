@@ -232,7 +232,7 @@ class NormalizedClaim(FrozenTiReconModel):
         return self.transport_provider != self.origin_provider
 
 
-#: Length of a claim's content-derived identity.
+#: Length of a claim's derived record identity.
 CLAIM_ID_LENGTH: Final[int] = 32
 
 
@@ -245,11 +245,18 @@ def claim_id_for(
     scope: MatchScope,
     target_key: str = "",
 ) -> str:
-    """A claim's stable identity, derived from what it says.
+    """A claim's record identity, derived from what it says about which evidence.
 
     The policy version participates because a translation change alters what the
     claim *means*; reusing an old id for a new meaning would make two stored
     assessments look comparable when they are not.
+
+    **Record identity, not a cross-run semantic one.** ``evidence_id`` is a UUID
+    minted when the evidence was collected, so this id is deterministic for one
+    serialized evidence set and differs across fresh collections of the same
+    intelligence. The cross-run identity is
+    :class:`ClaimPropositionKey` -- subject, semantic and scope -- which is what
+    to compare when asking whether two runs concern the same claim.
     """
     material = "|".join(
         (policy_version, evidence_id, semantic.value, subject_key, scope.value, target_key)

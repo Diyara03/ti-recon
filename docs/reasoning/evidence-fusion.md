@@ -145,6 +145,17 @@ vendor reputation* — "a well-resourced provider judged this malicious" is
 > policy decision, not something to infer from an evidence class — every sandbox
 > classification corroborates and none decides.
 
+**ThreatFox source confidence is not TI Recon confidence.** ThreatFox accepts
+confirmed and vetted IOC submissions, and this v1 policy treats an exact,
+unexpired `payload_delivery` record about the observable as sufficient malicious
+evidence on its own — the same footing as any other curated repository making a
+specific claim about the exact object. The per-IOC `confidence_level` (0-100,
+defaulting to 50) is the *contributor's* number: it is preserved verbatim as
+provider data, reaches no claim, and maps to no band. There is no calibration
+behind a threshold like "≥ 75 is decisive", so inventing one would manufacture
+precision from a self-report. Changing only the confidence level changes nothing
+about the assessment, and a regression asserts that at 0, 50, 75 and 100.
+
 
 
 `decision_role_for` reads semantic, scope, assertion strength and evidence class —
@@ -192,6 +203,26 @@ statement nobody had made about the URL. That is the mirror image of the rule
 that host context never *clears* an exact URL, and it has to hold in both
 directions: host-level evidence cannot condemn an exact artifact any more than it
 can absolve one.
+
+### Benign is not undetected
+
+A provider saying "I assessed this as benign" and a provider saying "nothing
+flagged it" are different statements, and only the first is an assertion — the
+second is also true of every threat nobody has caught yet.
+
+| GTI field | Effect | Claim |
+|---|---|---|
+| `VERDICT_BENIGN` | `SUPPORTS_BENIGN` | `BENIGN_REPUTATION`, asserted |
+| `VERDICT_UNDETECTED` | `CONTEXT_ONLY` | none |
+| `VERDICT_UNKNOWN` | `CONTEXT_ONLY` | none |
+| `SEVERITY_NONE`, `threat_score` 0 | context | none |
+| `last_analysis_stats` (0 malicious, 40 harmless) | context | none |
+
+Only the first row can be a benign basis. **v1 policy**: an explicit
+`VERDICT_BENIGN` about the exact object, with no malicious claim left standing,
+reaches LIKELY_BENIGN under `likely_benign.unopposed_benign_claim.v1`. That rests
+on the provider having made an affirmative determination — never on how few
+engines flagged it. No count, ratio or severity band ever creates benign support.
 
 ## 7. What can never reach LIKELY_BENIGN
 
@@ -397,12 +428,36 @@ analyst happened to type. Contacting a malicious address is not being malicious.
 Pivot claims stay in `normalized_claims`, `proposition_groups`, `contributions`
 and coverage. They simply do not vote.
 
-One sharp edge worth knowing: a claim whose subject object appears in no envelope
-and in no graph node anchors to the run's root. That is deliberate and
-load-bearing — several adapters emit evidence about the *requested* observable
-without re-listing it in `objects` — but it means object identity has to be real
-for a pivot's claims to be treated as a pivot's. In a Task 14 flow the graph
-supplies those nodes.
+### Resolving a claim's subject: unknown is not root
+
+A claim names its subject by `Evidence.subject_object_id`, a per-run UUID that has
+to be resolved onto the canonical key every other layer uses. Three outcomes:
+
+| Input | Result |
+|---|---|
+| the root object's own id | the root's canonical key |
+| any other object this run saw (envelope `objects`, graph nodes) | that object's key |
+| anything else | `unresolved-subject:<id>` |
+
+`ClaimTranslationContext.build` indexes the root object by id, so a legitimate
+root claim resolves through the first row *explicitly* — which matters because
+several adapters (ThreatFox, URLhaus, Hybrid Analysis) list only the objects they
+**discovered** in `envelope.objects` and leave the requested observable implicit.
+Their claims about the observable resolve because the orchestrator passes that
+same `IntelObject` as the root.
+
+> **This used to fall through to the root.** The reading was that an adapter
+> anchoring evidence to the requested observable would arrive that way. It does
+> not — that case is the first row. So the fallback only ever fired on an id
+> nothing could account for, and handed that record the root's identity: a
+> malformed or misrouted claim could condemn or clear the observable the analyst
+> had typed. **Unknown is not root.**
+
+An unresolved claim is retained in `normalized_claims` and `contributions`,
+reported as an `UNRESOLVED_CLAIM_SUBJECT` issue, and excluded from the verdict,
+the confidence and corroboration — its subject key can never equal a `target_key`.
+Dropping it silently would hide a plumbing fault; crediting it to the root would
+hide a correctness one.
 
 ## 11. What Task 17 does not do
 

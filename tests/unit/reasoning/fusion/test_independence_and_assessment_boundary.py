@@ -37,9 +37,14 @@ from ti_recon.reasoning.fusion.policy import CONFIDENCE_CAPS, CONFIDENCE_RULES, 
 TARGET = "198.51.100.44"
 
 
-def _run(evidence_records, semantic: str | None = None):
-    """Fuse a set of evidence records about one address."""
-    root = observable(TARGET)
+def _run(evidence_records, semantic: str | None = None, root=None):
+    """Fuse a set of evidence records about one address.
+
+    The root must be the same ``IntelObject`` the records were built from: a
+    claim naming an object this run cannot place is unresolved and excluded from
+    the assessment, rather than being credited to the root.
+    """
+    root = observable(TARGET) if root is None else root
     scene = scenario(root)
     for record in evidence_records:
         scene = scene.with_envelope(
@@ -68,7 +73,7 @@ def test_cross_family_relay_is_one_independent_origin() -> None:
     direct = evidence(root, provider="prov_x", source_family="family_a")
     relayed = evidence(root, provider="relay_y", origin_provider="prov_x", source_family="family_b")
 
-    result = _run([direct, relayed], semantic="c2_association")
+    result = _run([direct, relayed], semantic="c2_association", root=root)
     groups = independence_groups(result.normalized_claims)
 
     assert len(groups) == 1
@@ -83,7 +88,7 @@ def test_cross_family_relay_does_not_reach_independent_corroboration() -> None:
     direct = evidence(root, provider="prov_x", source_family="family_a")
     relayed = evidence(root, provider="relay_y", origin_provider="prov_x", source_family="family_b")
 
-    result = _run([direct, relayed], semantic="c2_association")
+    result = _run([direct, relayed], semantic="c2_association", root=root)
 
     assert result.assessment.verdict is not Verdict.MALICIOUS
     assert result.assessment.verdict_rule_id != VERDICT_RULES["malicious_corroborated"]
@@ -100,7 +105,9 @@ def test_same_family_different_providers_is_one_origin() -> None:
     first = evidence(root, provider="p1", source_family="fam", lineage_group_id="fam:p1")
     second = evidence(root, provider="p2", source_family="fam", lineage_group_id="fam:p2")
 
-    groups = independence_groups(_run([first, second], semantic="c2_association").normalized_claims)
+    groups = independence_groups(
+        _run([first, second], semantic="c2_association", root=root).normalized_claims
+    )
 
     assert len(groups) == 1
     assert groups[0].origin_providers == ("p1", "p2")
@@ -119,7 +126,7 @@ def test_dependence_is_transitive() -> None:
     middle = evidence(root, provider="origin_z", source_family="fam_a")
     last = evidence(root, provider="p_c", origin_provider="origin_z", source_family="fam_b")
 
-    result = _run([first, middle, last], semantic="c2_association")
+    result = _run([first, middle, last], semantic="c2_association", root=root)
     groups = independence_groups(result.normalized_claims)
 
     assert len(groups) == 1
@@ -136,7 +143,7 @@ def test_genuinely_independent_families_still_corroborate() -> None:
     alpha = evidence(root, provider="alpha", source_family="fam_alpha")
     beta = evidence(root, provider="beta", source_family="fam_beta")
 
-    result = _run([alpha, beta], semantic="c2_association")
+    result = _run([alpha, beta], semantic="c2_association", root=root)
     groups = independence_groups(result.normalized_claims)
 
     assert len(groups) == 2
@@ -155,8 +162,8 @@ def test_grouping_is_independent_of_input_order() -> None:
     middle = evidence(root, provider="origin_z", source_family="fam_a")
     last = evidence(root, provider="p_c", origin_provider="origin_z", source_family="fam_b")
 
-    forward = _run([first, middle, last], semantic="c2_association")
-    backward = _run([last, middle, first], semantic="c2_association")
+    forward = _run([first, middle, last], semantic="c2_association", root=root)
+    backward = _run([last, middle, first], semantic="c2_association", root=root)
 
     assert [group.group_key for group in independence_groups(forward.normalized_claims)] == [
         group.group_key for group in independence_groups(backward.normalized_claims)
@@ -234,7 +241,7 @@ def test_conflict_driven_inconclusive_names_the_conflict() -> None:
 
     # Weak semantics on both sides, so no malicious residual survives the conflict
     # and the run genuinely reaches INCONCLUSIVE rather than SUSPICIOUS.
-    result = _run([accusing, clearing], semantic="aggregated_reputation")
+    result = _run([accusing, clearing], semantic="aggregated_reputation", root=root)
 
     assert result.assessment.verdict is Verdict.INCONCLUSIVE
     assert result.assessment.verdict_rule_id == VERDICT_RULES["inconclusive_conflict"]
@@ -253,7 +260,9 @@ def test_same_verdict_can_carry_different_confidence() -> None:
     """
     root = observable(TARGET)
     alone = _run(
-        [evidence(root, provider="alpha", source_family="fam_alpha")], "malware_sample_identity"
+        [evidence(root, provider="alpha", source_family="fam_alpha")],
+        "malware_sample_identity",
+        root=root,
     )
     together = _run(
         [
@@ -261,6 +270,7 @@ def test_same_verdict_can_carry_different_confidence() -> None:
             evidence(root, provider="beta", source_family="fam_beta"),
         ],
         "malware_sample_identity",
+        root=root,
     )
 
     assert alone.assessment.verdict is together.assessment.verdict is Verdict.MALICIOUS

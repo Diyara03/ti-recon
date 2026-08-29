@@ -113,36 +113,42 @@ def _run(adapter: Any, request: ProviderRequest, material: CredentialMaterial) -
     return asyncio.run(adapter.lookup(request, material))
 
 
-def urlhaus_url_envelope(**payload_overrides: Any) -> ProviderResultEnvelope:
+def urlhaus_url_envelope(
+    *, subject: IntelObject | None = None, **payload_overrides: Any
+) -> ProviderResultEnvelope:
     """URLhaus's real exact-URL record, normalized by the real adapter."""
     payload = abusech_payloads.urlhaus_url_result(**payload_overrides)
     adapter = UrlhausAdapter(
         client_factory=AbuseChClientFactory(FakeUrlhausClient(url_payload=payload)),
         clock=ManualClock(),
     )
-    subject = observable(str(payload["url"]))
+    subject = observable(str(payload["url"])) if subject is None else subject
     return _run(adapter, request_for(subject), credential("urlhaus"))
 
 
-def threatfox_ip_envelope(**payload_overrides: Any) -> ProviderResultEnvelope:
+def threatfox_ip_envelope(
+    *, subject: IntelObject | None = None, **payload_overrides: Any
+) -> ProviderResultEnvelope:
     """ThreatFox's real current-IOC record for an address."""
     payload = abusech_payloads.threatfox_ioc_result(**payload_overrides)
     adapter = ThreatFoxAdapter(
         client_factory=AbuseChClientFactory(FakeThreatFoxClient(ioc_payload=payload)),
         clock=ManualClock(),
     )
-    subject = observable(abusech_payloads.SCANNER_IP)
+    subject = observable(abusech_payloads.SCANNER_IP) if subject is None else subject
     return _run(adapter, request_for(subject), credential("threatfox"))
 
 
-def threatfox_compromised_envelope(**payload_overrides: Any) -> ProviderResultEnvelope:
+def threatfox_compromised_envelope(
+    *, subject: IntelObject | None = None, **payload_overrides: Any
+) -> ProviderResultEnvelope:
     """ThreatFox's real record for a domain it marks compromised."""
     payload = abusech_payloads.threatfox_domain_result(**payload_overrides)
     adapter = ThreatFoxAdapter(
         client_factory=AbuseChClientFactory(FakeThreatFoxClient(ioc_payload=payload)),
         clock=ManualClock(),
     )
-    subject = observable(abusech_payloads.MALICIOUS_DOMAIN)
+    subject = observable(abusech_payloads.MALICIOUS_DOMAIN) if subject is None else subject
     return _run(adapter, request_for(subject), credential("threatfox"))
 
 
@@ -158,18 +164,22 @@ def threatfox_absent_envelope() -> ProviderResultEnvelope:
     return _run(adapter, request_for(subject), credential("threatfox"))
 
 
-def urlhaus_payload_envelope(**payload_overrides: Any) -> ProviderResultEnvelope:
+def urlhaus_payload_envelope(
+    *, subject: IntelObject | None = None, **payload_overrides: Any
+) -> ProviderResultEnvelope:
     """URLhaus's real payload record: which tracked URLs served this file."""
     payload = abusech_payloads.urlhaus_payload_result(**payload_overrides)
     adapter = UrlhausAdapter(
         client_factory=AbuseChClientFactory(FakeUrlhausClient(payload_payload=payload)),
         clock=ManualClock(),
     )
-    subject = file_object(sha256=str(payload["sha256_hash"]))
+    subject = file_object(sha256=str(payload["sha256_hash"])) if subject is None else subject
     return _run(adapter, request_for(subject), credential("urlhaus"))
 
 
-def malwarebazaar_envelope(**payload_overrides: Any) -> ProviderResultEnvelope:
+def malwarebazaar_envelope(
+    *, subject: IntelObject | None = None, **payload_overrides: Any
+) -> ProviderResultEnvelope:
     """MalwareBazaar's real vetted-sample record."""
     payload = abusech_payloads.malwarebazaar_found(**payload_overrides)
     adapter = MalwareBazaarAdapter(
@@ -177,7 +187,7 @@ def malwarebazaar_envelope(**payload_overrides: Any) -> ProviderResultEnvelope:
         clock=ManualClock(),
     )
     record = payload["data"][0]
-    subject = file_object(sha256=str(record["sha256_hash"]))
+    subject = file_object(sha256=str(record["sha256_hash"])) if subject is None else subject
     return _run(
         adapter,
         request_for(subject, capability=ProviderCapability.MALWARE_INTELLIGENCE),
@@ -189,6 +199,7 @@ def sandbox_envelope(
     search: list[dict[str, Any]] | None = None,
     summaries: dict[str, dict[str, Any]] | None = None,
     *,
+    subject: IntelObject | None = None,
     depth: InvestigationDepth = InvestigationDepth.STANDARD,
 ) -> ProviderResultEnvelope:
     """Hybrid Analysis's real passive report index plus bounded summaries."""
@@ -196,10 +207,11 @@ def sandbox_envelope(
     client = FakeHybridAnalysisClient(search_payload=index, summaries=summaries)
     adapter = HybridAnalysisAdapter(client_factory=SandboxClientFactory(client))
     digest = str(index[0]["sha256"]) if index else "a" * 64
+    resolved = file_object(sha256=digest) if subject is None else subject
     return _run(
         adapter,
         request_for(
-            file_object(sha256=digest),
+            resolved,
             capability=ProviderCapability.FILE_BEHAVIOR,
             depth=depth,
         ),
@@ -225,21 +237,25 @@ def _from_normalized(
     )
 
 
-def gti_file_envelope(**attribute_overrides: Any) -> ProviderResultEnvelope:
+def gti_file_envelope(
+    *, subject: IntelObject | None = None, **attribute_overrides: Any
+) -> ProviderResultEnvelope:
     """One GTI file object, through the real Task 7 normalizer."""
     payload = gti_payloads.file_object(**attribute_overrides)
     adapter = GTIAdapter()
-    subject = file_object(sha256=str(payload["id"]))
+    subject = file_object(sha256=str(payload["id"])) if subject is None else subject
     return _from_normalized(adapter, request_for(subject), payload)
 
 
-def urlscan_scan_envelope(scanned_at: str | None = None) -> ProviderResultEnvelope:
+def urlscan_scan_envelope(
+    scanned_at: str | None = None, *, subject: IntelObject | None = None
+) -> ProviderResultEnvelope:
     """One stored urlscan result, through the real Task 8 normalizer."""
     payload = urlscan_payloads.result_payload()
     if scanned_at is not None:
         payload["task"]["time"] = scanned_at
     adapter = UrlscanAdapter()
-    subject = observable(str(payload["task"]["url"]))
+    subject = observable(str(payload["task"]["url"])) if subject is None else subject
     return _from_normalized(
         adapter,
         request_for(subject, capability=ProviderCapability.WEB_BEHAVIOR),
@@ -247,17 +263,21 @@ def urlscan_scan_envelope(scanned_at: str | None = None) -> ProviderResultEnvelo
     )
 
 
-def greynoise_envelope(payload: dict[str, Any] | None = None) -> ProviderResultEnvelope:
+def greynoise_envelope(
+    payload: dict[str, Any] | None = None, *, subject: IntelObject | None = None
+) -> ProviderResultEnvelope:
     """One GreyNoise context document, through the real Task 9 normalizer."""
     document = greynoise_payloads.full_context_payload() if payload is None else payload
     adapter = GreyNoiseAdapter()
-    subject = observable(greynoise_payloads.SCANNER_IP)
+    subject = observable(greynoise_payloads.SCANNER_IP) if subject is None else subject
     return _from_normalized(adapter, request_for(subject), document)
 
 
-def censys_host_envelope(**overrides: Any) -> ProviderResultEnvelope:
+def censys_host_envelope(
+    *, subject: IntelObject | None = None, **overrides: Any
+) -> ProviderResultEnvelope:
     """One Censys host document, through the real Task 9 normalizer."""
     payload = censys_payloads.host_payload(**overrides)
     adapter = CensysAdapter()
-    subject = observable(censys_payloads.HOST_IP)
+    subject = observable(censys_payloads.HOST_IP) if subject is None else subject
     return _from_normalized(adapter, request_for(subject), payload)

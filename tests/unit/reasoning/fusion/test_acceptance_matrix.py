@@ -19,10 +19,13 @@ Three questions organise it:
 
 from __future__ import annotations
 
+import functools
 from itertools import combinations
 
 import pytest
 
+from fixtures.abusech import payloads as abusech_payloads
+from fixtures.censys import payloads as censys_payloads
 from fixtures.fusion import (
     envelope,
     evidence,
@@ -33,6 +36,8 @@ from fixtures.fusion import (
     observable,
     scenario,
 )
+from fixtures.greynoise import payloads as greynoise_payloads
+from fixtures.gti import payloads as gti_payloads
 from fixtures.hybrid_analysis import payloads as sandbox_payloads
 from fixtures.reasoning import (
     censys_host_envelope,
@@ -46,6 +51,7 @@ from fixtures.reasoning import (
     urlhaus_url_envelope,
     urlscan_scan_envelope,
 )
+from fixtures.urlscan import payloads as urlscan_payloads
 from ti_recon.enums import EvidenceClass, EvidenceEffect, MatchScope, Verdict
 from ti_recon.providers.result import ProviderRunStatus
 from ti_recon.reasoning.claims import CLAIM_SEMANTICS_POLICY_VERSION, ClaimTranslationContext
@@ -62,10 +68,51 @@ from ti_recon.reasoning.fusion.policy import (
 )
 
 
-def _assess(builder):
-    """Fuse one real provider envelope about its own subject."""
-    result_envelope = builder()
-    return fuse(scenario(result_envelope.objects[0]).with_envelope(result_envelope))
+def _answered(builder, subject_factory, **kwargs):
+    """One real provider answer, plus the observable it was asked about.
+
+    The subject is passed explicitly, which is what an orchestrator does: the
+    root handed to fusion is the same ``IntelObject`` the adapter answered about.
+    Several adapters list only the objects they *discovered* in
+    ``envelope.objects``, so the requested observable resolves through the root
+    rather than through that list — and a claim naming something neither knows is
+    unresolved rather than being credited to the root.
+    """
+    subject = subject_factory()
+    return subject, builder(subject=subject, **kwargs)
+
+
+def _assess(builder, subject_factory, **kwargs):
+    subject, result_envelope = _answered(builder, subject_factory, **kwargs)
+    return fuse(scenario(subject).with_envelope(result_envelope))
+
+
+def _gti_subject():
+    return file_object(sha256=str(gti_payloads.file_object()["id"]))
+
+
+def _urlscan_subject():
+    return observable(str(urlscan_payloads.result_payload()["task"]["url"]))
+
+
+def _urlhaus_url_subject():
+    return observable(str(abusech_payloads.urlhaus_url_result()["url"]))
+
+
+def _urlhaus_payload_subject():
+    return file_object(sha256=str(abusech_payloads.urlhaus_payload_result()["sha256_hash"]))
+
+
+def _malwarebazaar_subject():
+    return file_object(sha256=str(abusech_payloads.malwarebazaar_found()["data"][0]["sha256_hash"]))
+
+
+def _sandbox_subject():
+    return file_object(sha256=str(sandbox_payloads.search_hash_malicious()[0]["sha256"]))
+
+
+def _divergent_sandbox_subject():
+    return file_object(sha256=str(sandbox_payloads.search_hash_divergent()[0]["sha256"]))
 
 
 def _claims(result_envelope) -> tuple[NormalizedClaim, ...]:
@@ -143,34 +190,62 @@ def test_a_direct_observation_sandbox_claim_reaches_suspicious_not_malicious() -
 
 GOLDEN = (
     # A curated repository holding this exact vetted sample. Decides alone.
-    ("malwarebazaar", malwarebazaar_envelope, Verdict.MALICIOUS),
+    ("malwarebazaar", malwarebazaar_envelope, _malwarebazaar_subject, Verdict.MALICIOUS),
     # This exact URL is tracked as distributing malware. Decides alone.
-    ("urlhaus_url", urlhaus_url_envelope, Verdict.MALICIOUS),
+    ("urlhaus_url", urlhaus_url_envelope, _urlhaus_url_subject, Verdict.MALICIOUS),
     # An exact-scope payload-delivery IOC. Decides alone.
-    ("threatfox_domain", threatfox_compromised_envelope, Verdict.MALICIOUS),
+    (
+        "threatfox_domain",
+        threatfox_compromised_envelope,
+        lambda: observable(abusech_payloads.MALICIOUS_DOMAIN),
+        Verdict.MALICIOUS,
+    ),
     # A C2 association at same_ip scope: about the address, not the observable.
-    ("threatfox_ip", threatfox_ip_envelope, Verdict.SUSPICIOUS),
+    (
+        "threatfox_ip",
+        threatfox_ip_envelope,
+        lambda: observable(abusech_payloads.SCANNER_IP),
+        Verdict.SUSPICIOUS,
+    ),
     # One vendor's judgement about the object, however well resourced.
-    ("gti_file", gti_file_envelope, Verdict.SUSPICIOUS),
-    ("urlscan", urlscan_scan_envelope, Verdict.SUSPICIOUS),
+    ("gti_file", gti_file_envelope, _gti_subject, Verdict.SUSPICIOUS),
+    ("urlscan", urlscan_scan_envelope, _urlscan_subject, Verdict.SUSPICIOUS),
     # Malicious *scanning*, which is a different accusation from C2.
-    ("greynoise", greynoise_envelope, Verdict.SUSPICIOUS),
+    (
+        "greynoise",
+        greynoise_envelope,
+        lambda: observable(greynoise_payloads.SCANNER_IP),
+        Verdict.SUSPICIOUS,
+    ),
     # A sandbox classification corroborates and never decides.
-    ("sandbox", sandbox_envelope, Verdict.SUSPICIOUS),
+    ("sandbox", sandbox_envelope, _sandbox_subject, Verdict.SUSPICIOUS),
     (
         "sandbox_divergent",
-        lambda: sandbox_envelope(search=sandbox_payloads.search_hash_divergent()),
+        functools.partial(sandbox_envelope, search=sandbox_payloads.search_hash_divergent()),
+        _divergent_sandbox_subject,
         Verdict.SUSPICIOUS,
     ),
     # Exposure is not an accusation; a payload record is provenance.
-    ("censys", censys_host_envelope, Verdict.INCONCLUSIVE),
-    ("urlhaus_payload", urlhaus_payload_envelope, Verdict.INCONCLUSIVE),
+    (
+        "censys",
+        censys_host_envelope,
+        lambda: observable(censys_payloads.HOST_IP),
+        Verdict.INCONCLUSIVE,
+    ),
+    (
+        "urlhaus_payload",
+        urlhaus_payload_envelope,
+        _urlhaus_payload_subject,
+        Verdict.INCONCLUSIVE,
+    ),
 )
 
 
-@pytest.mark.parametrize("name,builder,expected", GOLDEN, ids=[case[0] for case in GOLDEN])
+@pytest.mark.parametrize(
+    "name,builder,subject_factory,expected", GOLDEN, ids=[case[0] for case in GOLDEN]
+)
 def test_one_provider_alone_reaches_the_verdict_its_semantics_justify(
-    name: str, builder, expected: Verdict
+    name: str, builder, subject_factory, expected: Verdict
 ) -> None:
     """The whole policy in one table, driven by real adapter output.
 
@@ -179,7 +254,7 @@ def test_one_provider_alone_reaches_the_verdict_its_semantics_justify(
     every one is a judgement, an aggregate, or a claim about the neighbourhood.
     That line — specificity, not vendor reputation — is the policy.
     """
-    assert _assess(builder).assessment.verdict is expected
+    assert _assess(builder, subject_factory).assessment.verdict is expected
 
 
 def test_urlhaus_payload_presence_is_not_malware_identity() -> None:
@@ -190,20 +265,22 @@ def test_urlhaus_payload_presence_is_not_malware_identity() -> None:
     So the payload record produces no directional claim at all, and identity is
     left to a platform that vets samples.
     """
-    payload = urlhaus_payload_envelope()
+    _, payload = _answered(urlhaus_payload_envelope, _urlhaus_payload_subject)
     claims = _claims(payload)
 
     assert all(claim.semantic is not ClaimSemantic.MALWARE_SAMPLE_IDENTITY for claim in claims)
-    assert _assess(urlhaus_payload_envelope).assessment.verdict is Verdict.INCONCLUSIVE
+    assert (
+        _assess(urlhaus_payload_envelope, _urlhaus_payload_subject).assessment.verdict
+        is Verdict.INCONCLUSIVE
+    )
 
 
 def test_a_vetted_repository_supplies_the_identity_urlhaus_declines_to() -> None:
     """Payload provenance plus a curated sample record: the second one decides."""
-    payload = urlhaus_payload_envelope()
-    bazaar = malwarebazaar_envelope()
-    scene = scenario(bazaar.objects[0]).with_envelope(bazaar).with_envelope(payload)
-
-    result = fuse(scene)
+    sample = _malwarebazaar_subject()
+    bazaar = malwarebazaar_envelope(subject=sample)
+    payload = urlhaus_payload_envelope(subject=sample)
+    result = fuse(scenario(sample).with_envelope(bazaar).with_envelope(payload))
 
     assert result.assessment.verdict is Verdict.MALICIOUS
     assert result.assessment.verdict_rule_id == VERDICT_RULES["malicious_decisive"]
@@ -217,7 +294,7 @@ def test_threatfox_source_confidence_never_becomes_engine_confidence() -> None:
     reasoning layers: there is no calibration mapping 75 onto MEDIUM, so
     inventing one would manufacture precision from a submitter's self-report.
     """
-    threatfox = threatfox_ip_envelope()
+    threatfox = threatfox_ip_envelope(subject=observable(abusech_payloads.SCANNER_IP))
     levels = [
         record.attributes["confidence_level"]
         for record in threatfox.evidence
@@ -332,17 +409,19 @@ def test_a_benign_scanner_classification_does_not_refute_a_c2_claim() -> None:
 
 
 CONTEXT_ONLY_BUILDERS = (
-    ("censys", censys_host_envelope),
-    ("urlhaus_payload", urlhaus_payload_envelope),
+    ("censys", censys_host_envelope, lambda: observable(censys_payloads.HOST_IP)),
+    ("urlhaus_payload", urlhaus_payload_envelope, _urlhaus_payload_subject),
 )
 
 
 @pytest.mark.parametrize(
-    "name,builder", CONTEXT_ONLY_BUILDERS, ids=[case[0] for case in CONTEXT_ONLY_BUILDERS]
+    "name,builder,subject_factory",
+    CONTEXT_ONLY_BUILDERS,
+    ids=[case[0] for case in CONTEXT_ONLY_BUILDERS],
 )
-def test_context_and_absence_never_reach_likely_benign(name: str, builder) -> None:
+def test_context_and_absence_never_reach_likely_benign(name: str, builder, subject_factory) -> None:
     """Nothing said is INCONCLUSIVE, which is not a finding of safety."""
-    result = _assess(builder)
+    result = _assess(builder, subject_factory)
 
     assert result.assessment.verdict is Verdict.INCONCLUSIVE
     assert result.assessment.confidence is AssessmentConfidence.UNSPECIFIED
@@ -379,11 +458,11 @@ def test_a_sandbox_that_saw_no_threat_supports_nothing_benign() -> None:
     note and a coverage record — so there is nothing directional for fusion to
     read, and the assessment says exactly that rather than reporting reassurance.
     """
-    quiet = sandbox_envelope(search=sandbox_payloads.search_hash_no_reports())
+    sample = file_object(sha256="f" * 64)
+    quiet = sandbox_envelope(search=sandbox_payloads.search_hash_no_reports(), subject=sample)
     assert quiet.evidence, "fixture should still describe what was looked for"
     assert all(record.effect is EvidenceEffect.CONTEXT_ONLY for record in quiet.evidence)
 
-    sample = file_object(sha256="f" * 64)
     result = fuse(scenario(sample).with_envelope(quiet))
 
     assert result.normalized_claims == ()

@@ -55,10 +55,16 @@ CONFIDENCE_ORDER = {
 #: root claim and this file would test nothing.
 PIVOT_OBJECT = observable(ELSEWHERE)
 
+#: Likewise for the root: every root-subject claim in this file must be built from
+#: the same instance the run is rooted on, or it resolves to nothing and is
+#: excluded from the assessment — which would make the "never strengthens" cases
+#: below pass for the wrong reason.
+ROOT_OBJECT = observable(ROOT)
+
 
 def _root_and_extra(extra=(), findings=()):
     """A fixed root claim, plus whatever else the case adds."""
-    root = observable(ROOT)
+    root = ROOT_OBJECT
     other = PIVOT_OBJECT
     basis = evidence(root, claim_type="root_claim", provider="alpha", source_family="fam_a")
     scene = scenario(root).with_envelope(envelope(basis, provider="alpha", objects=(root,)))
@@ -151,9 +157,7 @@ NON_STRENGTHENING = {
     # The same family answering twice.
     "same_family_repeat": lambda: (
         (
-            evidence(
-                observable(ROOT), claim_type="again", provider="alpha2", source_family="fam_a"
-            ),
+            evidence(ROOT_OBJECT, claim_type="again", provider="alpha2", source_family="fam_a"),
             "malicious_reputation",
             "root",
         ),
@@ -162,7 +166,7 @@ NON_STRENGTHENING = {
     "relayed_copy": lambda: (
         (
             evidence(
-                observable(ROOT),
+                ROOT_OBJECT,
                 claim_type="relayed",
                 provider="transport",
                 origin_provider="alpha",
@@ -175,7 +179,7 @@ NON_STRENGTHENING = {
     # An aggregate: one source relaying many opinions, compatible with nothing.
     "aggregate": lambda: (
         (
-            evidence(observable(ROOT), claim_type="agg", provider="beta", source_family="fam_b"),
+            evidence(ROOT_OBJECT, claim_type="agg", provider="beta", source_family="fam_b"),
             "aggregated_reputation",
             "root",
         ),
@@ -183,7 +187,7 @@ NON_STRENGTHENING = {
     # Independent and directional, but about a different proposition.
     "incompatible_proposition": lambda: (
         (
-            evidence(observable(ROOT), claim_type="scan", provider="gamma", source_family="fam_g"),
+            evidence(ROOT_OBJECT, claim_type="scan", provider="gamma", source_family="fam_g"),
             "scanner_activity",
             "root",
         ),
@@ -192,7 +196,7 @@ NON_STRENGTHENING = {
     "host_scope_claim": lambda: (
         (
             evidence(
-                observable(ROOT),
+                ROOT_OBJECT,
                 claim_type="host",
                 provider="delta",
                 source_family="fam_d",
@@ -234,7 +238,7 @@ def test_genuinely_independent_compatible_evidence_may_strengthen() -> None:
         (
             (
                 evidence(
-                    observable(ROOT),
+                    ROOT_OBJECT,
                     claim_type="sandbox",
                     provider="beta",
                     source_family="fam_b",
@@ -265,7 +269,7 @@ def test_a_provider_that_answered_with_nothing_changes_nothing(
     status: ProviderRunStatus,
 ) -> None:
     """Absence is coverage. It is not support, and not doubt either."""
-    root = observable(ROOT)
+    root = ROOT_OBJECT
     basis = evidence(root, claim_type="root_claim", provider="alpha", source_family="fam_a")
     baseline = _baseline()
 
@@ -288,7 +292,7 @@ def test_a_provider_that_answered_with_nothing_changes_nothing(
 
 def test_an_explanation_never_makes_an_assessment_more_malicious() -> None:
     """Explaining evidence can only remove support, never add it."""
-    root = observable(ROOT)
+    root = ROOT_OBJECT
     basis = evidence(root, claim_type="root_claim", provider="alpha", source_family="fam_a")
     without = fuse_with_semantics(
         scenario(root).with_envelope(envelope(basis, provider="alpha", objects=(root,))),
@@ -316,7 +320,7 @@ def test_a_qualifying_finding_is_not_an_explanation() -> None:
     one as an explanation would clear real evidence behind a verdict that looked
     thoroughly reasoned.
     """
-    root = observable(ROOT)
+    root = ROOT_OBJECT
     basis = evidence(root, claim_type="root_claim", provider="alpha", source_family="fam_a")
     result = fuse_with_semantics(
         scenario(root)
