@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
 
 from ti_recon.enums import EvidenceEffect
 from ti_recon.models.evidence import Evidence
@@ -28,7 +28,25 @@ from ti_recon.models.intel_object import IntelObject
 from ti_recon.providers.result import ProviderResultEnvelope
 from ti_recon.reasoning.claims.models import NormalizedClaim
 
-__all__ = ["ClaimTranslationContext", "ClaimTranslator", "directional_evidence"]
+__all__ = [
+    "UNRESOLVED_SUBJECT_PREFIX",
+    "ClaimTranslationContext",
+    "ClaimTranslator",
+    "directional_evidence",
+    "is_unresolved_subject",
+]
+
+
+#: Prefix marking a subject nothing in the run could resolve.
+#:
+#: Deliberately not a canonical key shape, so an unresolved claim can never
+#: collide with a real object and can always be recognised again downstream.
+UNRESOLVED_SUBJECT_PREFIX: Final[str] = "unresolved-subject:"
+
+
+def is_unresolved_subject(subject_key: str) -> bool:
+    """Whether a claim's subject is one this run could not place."""
+    return subject_key.startswith(UNRESOLVED_SUBJECT_PREFIX)
 
 
 @dataclass(frozen=True)
@@ -52,15 +70,31 @@ class ClaimTranslationContext:
     def subject_key_for(self, object_id: str | None) -> str:
         """The canonical key a piece of evidence is about.
 
-        Falls back to the run's root, which is what an adapter anchors to when a
-        claim has no object of its own; then to the id itself, which is honest
-        and never a fabricated key.
+        Three outcomes, and the third is the point:
+
+        * the id resolves — to the root object or to any other object this run
+          knows — and the claim is about that object;
+        * the id resolves to nothing, and the claim is **unresolved**. It keeps a
+          key of its own, prefixed so it can never collide with a canonical one.
+
+        Unresolved is deliberately not the root. An earlier version fell back to
+        ``root_key``, on the reading that an adapter anchoring a claim to the
+        requested observable would arrive that way. It does not: ``build``
+        indexes the root object's own id, so a legitimate root claim resolves
+        explicitly through :attr:`node_keys`. The fallback therefore only ever
+        fired on an id nothing could account for — and handed that claim the
+        root's identity, letting a malformed or misrouted record vote on the
+        assessment of whatever the analyst had typed.
+
+        **Unknown is not root.** A claim nobody can place is retained, reported
+        as an issue, and excluded from the verdict rather than guessed at.
         """
-        if object_id is not None:
-            resolved = self.node_keys.get(object_id)
-            if resolved is not None:
-                return resolved
-        return self.root_key or (object_id or "unknown")
+        if object_id is None:
+            return f"{UNRESOLVED_SUBJECT_PREFIX}missing"
+        resolved = self.node_keys.get(object_id)
+        if resolved is not None:
+            return resolved
+        return f"{UNRESOLVED_SUBJECT_PREFIX}{object_id}"
 
     @classmethod
     def build(

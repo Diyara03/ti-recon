@@ -48,7 +48,11 @@ from ti_recon.reasoning.claims.models import (
 )
 from ti_recon.reasoning.claims.policy import CLAIM_SEMANTICS_POLICY_VERSION, compatible
 from ti_recon.reasoning.claims.registry import translate_envelope
-from ti_recon.reasoning.claims.translation import ClaimTranslationContext, ClaimTranslator
+from ti_recon.reasoning.claims.translation import (
+    ClaimTranslationContext,
+    ClaimTranslator,
+    is_unresolved_subject,
+)
 from ti_recon.reasoning.false_positive.results import FalsePositiveReasoningResult
 from ti_recon.reasoning.fusion.confidence import decide_confidence
 from ti_recon.reasoning.fusion.dispositions import (
@@ -733,20 +737,38 @@ class EvidenceFusionEngine:
         )
 
     def _claim_issues(self, claims: Sequence[NormalizedClaim]) -> tuple[FusionIssue, ...]:
+        found: list[FusionIssue] = []
         unmapped = sorted(
             item.claim_id
             for item in claims
             if item.semantic is ClaimSemantic.UNCLASSIFIED_DIRECTIONAL
         )
-        if not unmapped:
-            return ()
-        return (
-            FusionIssue(
-                issue_type=FusionIssueType.UNMAPPED_DIRECTIONAL_CLAIM,
-                detail=f"{len(unmapped)} directional claim(s) have no semantic mapping",
-                refs=tuple(unmapped[:20]),
-            ),
+        if unmapped:
+            found.append(
+                FusionIssue(
+                    issue_type=FusionIssueType.UNMAPPED_DIRECTIONAL_CLAIM,
+                    detail=f"{len(unmapped)} directional claim(s) have no semantic mapping",
+                    refs=tuple(unmapped[:20]),
+                )
+            )
+
+        # A claim naming an object this run never saw. It stays in the trace and
+        # is named here rather than being quietly attributed to the root.
+        orphaned = sorted(
+            item.claim_id for item in claims if is_unresolved_subject(item.subject_key)
         )
+        if orphaned:
+            found.append(
+                FusionIssue(
+                    issue_type=FusionIssueType.UNRESOLVED_CLAIM_SUBJECT,
+                    detail=(
+                        f"{len(orphaned)} claim(s) name a subject object this run never saw; "
+                        "they are retained and excluded from the assessment"
+                    ),
+                    refs=tuple(orphaned[:20]),
+                )
+            )
+        return tuple(found)
 
     def _coverage(
         self,

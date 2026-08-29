@@ -185,6 +185,10 @@ class FusionIssueType(StrEnum):
     INPUT_REFERENCE_MISMATCH = "input_reference_mismatch"
     #: Directional evidence exists but no claim could be built for it.
     INCOMPLETE_DIRECTIONAL_COVERAGE = "incomplete_directional_coverage"
+    #: A claim names a subject object this run never saw. Kept and reported, and
+    #: never attributed to the root: a record nobody can place must not vote on
+    #: the assessment of whatever the analyst happened to type.
+    UNRESOLVED_CLAIM_SUBJECT = "unresolved_claim_subject"
 
 
 class FusionIssue(FrozenTiReconModel):
@@ -361,7 +365,7 @@ class FusionAssessment(FrozenTiReconModel):
         return self
 
 
-#: Length of an assessment's content-derived identity.
+#: Length of an assessment's derived identity.
 ASSESSMENT_ID_LENGTH: Final[int] = 32
 
 
@@ -375,12 +379,22 @@ def assessment_id_for(
     finding_ids: tuple[str, ...],
     as_of: str,
 ) -> str:
-    """An assessment's stable identity, derived from what it concluded and why.
+    """An assessment's record identity, derived from what it concluded and why.
 
     Sorted refs, so discovery order cannot mint two identities for one
     conclusion. The policy version participates because a rule change alters what
     the verdict means, and reusing an id would make two incomparable assessments
     look like the same one revised.
+
+    **Record identity, not a cross-run semantic fingerprint.** ``claim_ids`` are
+    built over ``Evidence.id``, a UUID minted when the evidence was collected, so
+    this id is deterministic for one serialized evidence set and *differs* across
+    fresh collections of semantically identical intelligence. What is stable
+    across collections is the proposition -- subject, semantic and scope -- which
+    is the identity to compare when asking whether two runs concern the same
+    claim about the same thing. A persistent product wanting to recognise "the
+    same assessment reached again next week" needs a separate fingerprint over
+    semantic identities; that does not exist yet and must not be assumed of this.
     """
     material = "|".join(
         (
