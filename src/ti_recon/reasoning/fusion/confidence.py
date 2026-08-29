@@ -45,6 +45,7 @@ from ti_recon.reasoning.false_positive.models import (
     ReasonCode,
 )
 from ti_recon.reasoning.false_positive.results import FalsePositiveReasoningResult
+from ti_recon.reasoning.fusion.independence import independence_index
 from ti_recon.reasoning.fusion.models import (
     AssessmentConfidence,
     ClaimDecisionRole,
@@ -105,7 +106,11 @@ def _band(
     """The band the evidence structure earns, before any cap applies."""
     if verdict is Verdict.INCONCLUSIVE:
         # Nothing was concluded, so there is nothing to be confident about. This
-        # is the one band that is not a judgement about strength.
+        # is the one band that is not a judgement about strength. Which of the two
+        # ways it was reached still matters to whoever reads the trace: sources
+        # disagreeing is not the same situation as no source saying anything.
+        if verdict_rule_id == VERDICT_RULES["inconclusive_conflict"]:
+            return AssessmentConfidence.UNSPECIFIED, CONFIDENCE_RULES["unspecified_conflicted"]
         return AssessmentConfidence.UNSPECIFIED, CONFIDENCE_RULES["unspecified_no_support"]
 
     if verdict is Verdict.LIKELY_BENIGN:
@@ -118,9 +123,12 @@ def _band(
         return AssessmentConfidence.MEDIUM, CONFIDENCE_RULES["medium_corroborated"]
 
     decisive = [item for item in basis if decision_role_for(item) is ClaimDecisionRole.DECISIVE]
-    families = {item.source_family for item in basis}
+    # Independence components rather than families, for the same reason the
+    # verdict uses them: a relay that crosses a family boundary is one source.
+    index = independence_index(basis)
+    origins = {index[item.claim_id] for item in basis}
 
-    if decisive and len(families) >= 2:
+    if decisive and len(origins) >= 2:
         # A specific claim about the artifact, and a separate origin agreeing.
         # The strongest structure this engine recognises.
         return AssessmentConfidence.HIGH, CONFIDENCE_RULES["high_decisive_corroborated"]
@@ -130,7 +138,7 @@ def _band(
     broad = any(
         group.breadth is SupportBreadth.MULTIPLE_INDEPENDENT_SOURCES for group in corroboration
     )
-    if broad and len(families) >= 2:
+    if broad and len(origins) >= 2:
         return AssessmentConfidence.MEDIUM, CONFIDENCE_RULES["medium_corroborated"]
 
     return AssessmentConfidence.LOW, CONFIDENCE_RULES["low_single_weak"]
@@ -158,14 +166,22 @@ def _caps(
 
     # Sandbox divergence is a property of the sample, not a defect -- but two
     # environments disagreeing means one of them would have told us less, so the
-    # assessment cannot be at its firmest.
-    if any(
-        finding.reason_code is ReasonCode.SANDBOX_RESULT_ENVIRONMENT_DEPENDENT
-        for finding in reasoning.findings
+    # assessment cannot be at its firmest. Scoped like the stale cap below: a
+    # divergent detonation of some *other* object reached on a pivot says nothing
+    # about this verdict's basis.
+    basis_evidence = {item.evidence_id for item in basis}
+    if _bears_on_basis(
+        reasoning,
+        basis_evidence,
+        reason_code=ReasonCode.SANDBOX_RESULT_ENVIRONMENT_DEPENDENT,
     ):
         found.add(CONFIDENCE_CAPS["sandbox_divergence"])
 
-    if _decision_rests_on_stale_context(basis, reasoning):
+    if _bears_on_basis(
+        reasoning,
+        basis_evidence,
+        limitation=FindingLimitation.SUPPORTING_CONTEXT_DATASET_STALE,
+    ):
         found.add(CONFIDENCE_CAPS["stale_supporting_context"])
 
     supporting = [
@@ -180,25 +196,32 @@ def _caps(
     return found
 
 
-def _decision_rests_on_stale_context(
-    basis: Sequence[NormalizedClaim], reasoning: FalsePositiveReasoningResult
+def _bears_on_basis(
+    reasoning: FalsePositiveReasoningResult,
+    basis_evidence: set[str],
+    *,
+    reason_code: ReasonCode | None = None,
+    limitation: FindingLimitation | None = None,
 ) -> bool:
-    """Whether a stale dataset actually bears on what the verdict relied on.
+    """Whether a qualification actually touches what the verdict relied on.
 
-    Scoped deliberately, and this is the Task 16 fix carried forward. A stale
-    warninglist snapshot elsewhere in the run says nothing about an independent
-    malware-sample claim, and capping that assessment's confidence would attach a
-    caveat to evidence the stale data never touched.
+    This is the Task 16 scoping fix, generalised. A stale warninglist snapshot
+    somewhere else in the run says nothing about an independent malware-sample
+    claim, and a divergent sandbox report on an object reached two pivots away
+    says nothing about this address -- capping either assessment would attach a
+    caveat to evidence the condition never touched.
 
-    So the cap requires two things at once: a finding carrying the stale
-    limitation, *and* that finding linking to a piece of evidence the verdict's
-    basis actually used.
+    So a cap requires two things at once: a finding carrying the condition, *and*
+    that finding linking to a piece of evidence the basis actually used. A
+    run-level ``any()`` over findings is the shape of the original bug, and it is
+    deliberately not available here.
     """
-    basis_evidence = {item.evidence_id for item in basis}
     if not basis_evidence:
         return False
     for finding in reasoning.findings:
-        if FindingLimitation.SUPPORTING_CONTEXT_DATASET_STALE not in finding.limitations:
+        if reason_code is not None and finding.reason_code is not reason_code:
+            continue
+        if limitation is not None and limitation not in finding.limitations:
             continue
         for link in finding.links:
             if link.target is LinkTarget.EVIDENCE and link.ref in basis_evidence:

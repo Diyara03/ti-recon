@@ -162,6 +162,11 @@ CONFIDENCE_RULES: Final[dict[str, str]] = {
     "medium_explained": "medium.exact_explanation_complete.v1",
     "low_single_weak": "low.limited_or_qualified_support.v1",
     "unspecified_no_support": "unspecified.no_directional_support.v1",
+    # Distinct from the rule above, because the situations are opposites:
+    # nothing was said, versus sources said incompatible things. Both land on
+    # UNSPECIFIED, and a trace that called the second one "no directional
+    # support" would be plainly false to an analyst reading it.
+    "unspecified_conflicted": "unspecified.unresolved_conflict.v1",
 }
 
 #: Named reasons a confidence band was held down.

@@ -37,8 +37,8 @@ from ti_recon.reasoning.fusion.dispositions import (
 from ti_recon.reasoning.fusion.engine import EvidenceFusionEngine
 from ti_recon.reasoning.fusion.independence import (
     breadth_of,
-    group_key_for,
     independence_groups,
+    independence_index,
 )
 from ti_recon.reasoning.fusion.metrics import (
     FusionMetric,
@@ -115,8 +115,8 @@ __all__ = [
     "dispositions_for",
     "explained_evidence_ids",
     "findings_touching",
-    "group_key_for",
     "independence_groups",
+    "independence_index",
     "is_benign_basis",
     "is_decisive_basis",
     "limiting_findings",

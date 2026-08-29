@@ -57,7 +57,11 @@ from ti_recon.reasoning.fusion.dispositions import (
     findings_touching,
     limiting_findings,
 )
-from ti_recon.reasoning.fusion.independence import breadth_of, group_key_for, independence_groups
+from ti_recon.reasoning.fusion.independence import (
+    breadth_of,
+    independence_groups,
+    independence_index,
+)
 from ti_recon.reasoning.fusion.metrics import (
     FusionMetric,
     FusionMetricsSink,
@@ -267,12 +271,13 @@ class EvidenceFusionEngine:
         skipped: a claim something already accounts for is not competing to
         represent anybody.
         """
+        index = independence_index(claims)
         seen: dict[tuple[str, str, str], str] = {}
         duplicates: set[str] = set()
         for claim in sorted(claims, key=lambda item: item.claim_id):
             if claim.evidence_id in explained:
                 continue
-            key = (claim.proposition.ref, claim.effect.value, group_key_for(claim))
+            key = (claim.proposition.ref, claim.effect.value, index[claim.claim_id])
             if key in seen:
                 duplicates.add(claim.claim_id)
             else:
@@ -511,6 +516,7 @@ class EvidenceFusionEngine:
         stays solved. Weak semantics cannot participate at all.
         """
         by_id = {item.claim_id: item for item in claims}
+        index = independence_index(claims)
         for group in corroboration:
             if group.effect is not EvidenceEffect.SUPPORTS_MALICIOUS:
                 continue
@@ -524,8 +530,11 @@ class EvidenceFusionEngine:
                 and dispositions[item.claim_id]
                 in {ClaimDisposition.UNEXPLAINED, ClaimDisposition.QUALIFIED_ONLY}
             ]
-            families = {item.source_family for item in usable}
-            if len(usable) >= 2 and len(families) >= 2:
+            # Independence components, not families: a relay can cross a family
+            # boundary while naming the same origin, and counting families would
+            # read that one source as two.
+            origins = {index[item.claim_id] for item in usable}
+            if len(usable) >= 2 and len(origins) >= 2:
                 return tuple(sorted(item.claim_id for item in usable))
 
         # Support may also arrive as compatible claims across *different*
@@ -550,13 +559,12 @@ class EvidenceFusionEngine:
             ),
             key=lambda item: item.claim_id,
         )
-        for index, first in enumerate(usable):
-            for second in usable[index + 1 :]:
+        index = independence_index(claims)
+        for position, first in enumerate(usable):
+            for second in usable[position + 1 :]:
                 if first.subject_key != second.subject_key:
                     continue
-                if first.source_family == second.source_family:
-                    continue
-                if group_key_for(first) == group_key_for(second):
+                if index[first.claim_id] == index[second.claim_id]:
                     continue
                 if compatible(first.semantic, second.semantic):
                     return (first.claim_id, second.claim_id)
