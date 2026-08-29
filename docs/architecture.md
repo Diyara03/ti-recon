@@ -68,12 +68,36 @@
            |   +-- SOURCE_DEPENDENCE          not independent corroboration
            +-- UNRESOLVED_TENSION         opposing facts, left unresolved
            |
-     Evidence Fusion               FUTURE — Task 17. weighting, independence,
-           |                                decay
-     Decision Readiness            FUTURE — Task 18
+     Claim Semantics               IMPLEMENTED — Task 17A. provider-neutral
+           |                                      propositions; provider-owned
+           |                                      translation
            |
-     Assessment                    MODELS IMPLEMENTED, scoring engine FUTURE
+     Independence /                IMPLEMENTED — Task 17B. originating source
+     Corroboration                                family; compatible propositions
+           |
+     Explanation-Aware Fusion      IMPLEMENTED — Task 17C. Task 16 EXPLAINS links
+           |                                      only; deterministic rules
+           |
+     Assessment + Confidence       IMPLEMENTED — Task 17D. verdict and confidence
+           |                                      decided separately; no score
+           |
+     Decision Readiness            FUTURE — Task 18. is the assessment sufficient
+           |                                for a particular decision?
+           |
+     Interface / MCP / Skill       FUTURE
 ```
+
+Task 17 is the first layer allowed to conclude, and the last one that concludes
+anything about the *observable* alone. It produces a verdict and a confidence
+band and deliberately no action: whether to block, quarantine or close depends on
+the environment and the asset, and a MALICIOUS verdict on shared or compromised
+infrastructure can make blocking actively harmful.
+
+Task 3's `Assessment` model remains the untouched Task 3 placeholder. It requires
+a `risk_score` Task 17 must not produce, and its `AssessmentContribution` is built
+on `base_strength` times multiplicative dampening factors — the arithmetic fusion
+model Tasks 15 and 16 spent two tasks refusing. Task 17 owns `FusionAssessment`
+and reuses Task 3's `Verdict` enum, which was always the right part.
 
 Task 16 is **not** fusion either. It says which evidence context legitimately
 explains and which it does not, and hands both sets on: it never selects the

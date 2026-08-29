@@ -11,8 +11,8 @@ eventually produce an explainable, auditable assessment.
 This repository currently contains the foundation, its first nine providers, the
 adaptive enrichment planner that chooses between them, the correlation graph that
 assembles what they return, the layer that says what each finding means in time
-and context, and the layer that asks whether that context explains anything
-(Jira Tasks 1-16):
+and context, the layer that asks whether that context explains anything, and the
+layer that finally reaches a verdict (Jira Tasks 1-17):
 
 | Task | Scope | State |
 |------|-------|-------|
@@ -32,6 +32,7 @@ and context, and the layer that asks whether that context explains anything
 | 14 | Correlation graph + controlled pivots | Implemented (exact identity, bounded pivots, no verdict) |
 | 15 | Temporal evidence qualification + context reasoning | Implemented (typed instants, explicit `as_of`, no decay, no verdict) |
 | 16 | False-positive + alternative-explanation reasoning | Implemented (scoped explanations, no FP boolean, no verdict) |
+| 17 | Claim semantics + evidence fusion + assessment | Implemented (deterministic verdict, qualitative confidence, no score) |
 
 **Seven providers are integrated**, all passive, each answering a different
 question. Google Threat Intelligence enriches with each analyst's own VirusTotal
@@ -121,9 +122,36 @@ never clears an exact URL; a public resolver explains a *contact* and never the
 file that made it; low AV detection counts, code signatures and popularity
 explain nothing on their own, each with a regression test saying so.
 
+Task 17 is the first layer allowed to reach a verdict, and it starts by fixing
+something Task 16 found and could not fix: every `claim_type` in this repository
+is provider-prefixed, so a generic layer could not tell "this address scans the
+internet" from "this address is a command-and-control server". Both arrive as a
+curated threat assertion pointing malicious. A provider-neutral **claim
+semantics** layer now says what each finding actually asserts, translated by
+provider-owned modules, so those two are different propositions and neither can
+vouch for the other.
+
+Fusion then reasons over propositions rather than over provider output.
+Independence comes from the *originating* source family, so three abuse.ch
+datasets are one origin and a relayed VirusTotal ratio joins the family a direct
+GTI result belongs to — every claim stays visible, and only its ability to
+corroborate collapses. Corroboration additionally requires *compatible*
+propositions, so two sources agreeing about different things have agreed about
+nothing.
+
+Specificity decides rather than popularity: one curated repository holding an
+exact sample reaches MALICIOUS on its own, while one generic reputation claim
+reaches SUSPICIOUS. There is no score, no weight and no probability anywhere —
+there is no calibration data behind any coefficient, so a formula would
+manufacture precision nobody could defend. Verdict and confidence are separate
+decisions from different inputs, and MALICIOUS at MEDIUM confidence is an
+ordinary thing to say.
+
 There is no SecurityTrails, AbuseIPDB, Shodan or IPinfo client yet, no *active*
-sandboxing, and there is no evidence fusion, no verdict scoring, no MCP server
-and no Claude Skill. Those are later Jira tasks.
+sandboxing, and there is no decision-readiness layer, no MCP server and no Claude
+Skill. Those are later Jira tasks. Task 17 assesses the observable and
+deliberately recommends no action: a MALICIOUS verdict on shared or compromised
+infrastructure can make blocking actively harmful.
 
 Task 6 added the execution layer every adapter runs behind — caching, retry and
 backoff, rate-limit and quota tracking, cooldowns, bounded concurrency and
@@ -245,6 +273,11 @@ Design principles that shape every layer:
   none of them clears an exact URL, and none of them propagates along an edge.
 - **A false positive belongs to a detection, not an IOC** — an explanation names
   the evidence it accounts for, and evidence nothing accounts for stays visible.
+- **Providers are never counted** — independence comes from the originating
+  source family, corroboration requires compatible propositions, and there is no
+  score, weight or probability in the verdict.
+- **Verdict and confidence are separate** — confidence says how sure TI Recon is
+  that its assessment is right, never how malicious the object is.
 - **Discovery is not disclosure** — finding an object in a provider's response
   does not authorise querying third parties about it. Pivoting is explicit,
   globally budgeted and stops one hop from the submitted observable.

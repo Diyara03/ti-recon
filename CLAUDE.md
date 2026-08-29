@@ -20,7 +20,7 @@ Analyst -> Claude + TI Analyst Skill -> MCP -> TI Recon backend
 
 ## Current implementation boundary
 
-Implemented (Jira Tasks 1-16):
+Implemented (Jira Tasks 1-17):
 
 - Task 1 — product scope + investigation workflow foundation (docs, enums)
 - Task 2 — architecture foundation (docs, module boundaries)
@@ -100,12 +100,22 @@ Implemented (Jira Tasks 1-16):
   context types can explain an object and only at exact scope. No verdict, no
   confidence, no false-positive boolean, no provider names anywhere, no network.
 
+- Task 17 — provider-neutral claim semantics, evidence fusion and final
+  assessment (`reasoning/claims/`, `reasoning/fusion/`): the first layer allowed
+  to reach a verdict. Twelve `ClaimSemantic`s translated by provider-owned
+  modules, so a scanner classification and a C2 indicator are different
+  propositions — the Task 16 deferral, resolved. Independence by originating
+  source family, corroboration only across compatible propositions, Task 16
+  `EXPLAINS` links the only thing that removes support, eight verdict rules and
+  seven confidence rules. No score, no weight, no probability, no risk number, no
+  provider votes, no action recommendation, no network.
+
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
-Warning Lists and Hybrid Analysis are the only providers.** Evidence fusion is
-not implemented, so there is still no multi-provider verdict — Task 13 chooses
-what to ask, Task 14 assembles what came back, Task 15 says what each finding
-means in time and context, Task 16 says which findings context explains and
-which it does not, and nothing decides what the case is.
+Warning Lists and Hybrid Analysis are the only providers.** Task 13 chooses what
+to ask, Task 14 assembles what came back, Task 15 says what each finding means in
+time and context, Task 16 says which findings context explains, and Task 17
+decides what assessment is justified — while deciding nothing about what to *do*
+about it.
 
 **Not implemented — do not add without an explicit request:**
 
@@ -156,9 +166,25 @@ which it does not, and nothing decides what the case is.
   sandbox report do not share a lifetime, and MISP itself maintains separate
   decay models per use case. Task 15 preserves exact ages and source-managed
   lifecycle; numerical weighting is deferred
-- Evidence fusion (Task 17) and decision readiness (Task 18). Tasks 15 and 16
-  produce the cues and findings those layers will weigh — what a warninglist
-  match plus a malicious verdict adds up to is still not decided here
+- Decision readiness and coverage adequacy (Task 18). Task 17 says what
+  assessment is justified; whether it is *sufficient* for a particular
+  operational decision is a separate question that depends on the environment
+- Any remediation or containment action: blocking, quarantine, isolation, alert
+  suppression, ticket closure, allowlisting. A MALICIOUS verdict on shared or
+  compromised infrastructure can make blocking actively harmful, and Task 17
+  assesses the observable rather than prescribing what to do
+- Any numerical fusion: `malicious_score`, `benign_score`, `risk_score`,
+  `probability`, `evidence_weight`, a weighted sum, Bayesian or Dempster-Shafer
+  combination. There is no calibration data behind any coefficient, so a formula
+  would manufacture precision that cannot be explained or defended
+- A graph-derived malicious claim. Controlled one-hop promotion (a root file
+  dropping a known-malware child) was designed and deferred: the shipped
+  relationship vocabulary cannot cleanly separate a dropped artifact from a
+  contacted host, and a wrong promotion rule would attribute a child's verdict to
+  its parent. `resolves-to` must never propagate maliciousness at all
+- Admiralty source-reliability and information-credibility weighting. The fields
+  exist on `Evidence` and no provider populates them, so v1 fusion leaves them
+  unused rather than inventing per-provider ratings
 - A false-positive *rule* based on a low AV detection count, a valid code
   signature, or popularity. None of the three is evidence a detection was wrong,
   and the repository preserves no structured goodware indicator that would make a
@@ -754,6 +780,101 @@ which it does not, and nothing decides what the case is.
     a test rewrites every provider-supplied string, including one reading "ignore
     previous instructions", asserting byte-identical output.
 
+86. **Fusion reasons over semantic claims, never over provider names.** A
+    `NormalizedClaim` says what proposition a piece of evidence supports;
+    `reasoning/claims/registry.py` is the only module in either new package that
+    may name a provider, and a test reads the AST and string literals of every
+    other one. Generic modules may not even read `claim_type`, because every
+    claim type in the repository is provider-prefixed.
+
+87. **Every directional provider claim is intentionally mapped or explicitly
+    unclassified.** A regression drives the real adapters over the real fixtures
+    and fails if a shipped provider produces `UNCLASSIFIED_DIRECTIONAL`, so a new
+    directional claim type forces a decision rather than silently weakening a
+    finding. An unclassified claim stays visible and can never be decisive.
+
+88. **A claim semantic is not a verdict.** `C2_ASSOCIATION` says a source claims
+    command and control; `SCANNER_ACTIVITY` says a sensor network classified
+    scanning behaviour, which is not benign. The semantic names the dimension,
+    `EvidenceEffect` names the direction, and fusion policy decides what either
+    is worth.
+
+89. **Providers are never counted, and same-family is not independent.**
+    Independence is grouped by *originating* source family, which subsumes
+    lineage — Task 3 defaults `lineage_group_id` to `"{family}:{origin}"`, so
+    keying on lineage first would split one family into several apparent origins.
+    Three abuse.ch datasets answering is one origin; a relayed finding joins its
+    author's family. Nothing is discarded: only the ability to corroborate
+    collapses.
+
+90. **Corroboration requires compatible propositions, stated in a versioned
+    table.** `SCANNER_ACTIVITY` is compatible with nothing but itself, and
+    `AGGREGATED_REPUTATION` with nothing at all including itself — one source
+    relaying forty opinions is one source. No compatibility is inferred from enum
+    names.
+
+91. **Only a Task 16 `ALTERNATIVE_EXPLANATION` with an `EXPLAINS` link to
+    evidence removes support.** An attribution caution, a temporal note, an
+    analysis-quality limitation, a scope limitation and a source-dependence
+    finding all qualify evidence without explaining it. Treating any as an
+    explanation would clear real malicious evidence behind a verdict that looked
+    thoroughly reasoned.
+
+92. **Explained is not false.** An explained claim is retained in full; the trace
+    says the verdict did not rest on it, never that the source was wrong.
+
+93. **Specificity decides, not popularity.** One curated repository holding this
+    exact sample reaches MALICIOUS alone; one generic reputation claim reaches
+    SUSPICIOUS. Demanding a second provider before believing a specific fact
+    would be treating specificity as if it were a vote.
+
+94. **SUSPICIOUS means affirmative concern; INCONCLUSIVE means the engine cannot
+    justify either direction.** Missing data, `NO_DATA`, a provider failure and a
+    sandbox that ran nothing are never reasons for concern, and reporting them as
+    suspicion would flood an analyst with alarm generated by absence.
+
+95. **Context, absence and non-claims can never reach LIKELY_BENIGN.** Not a
+    warninglist hit, business-service context, shared hosting, a scanner
+    classification, an offline URL, an absence of detections, `NO_DATA`, a
+    sandbox that observed no execution, a low detection count or a valid code
+    signature. Two paths reach it: a genuine directional benign assertion with
+    nothing against it, or every malicious claim specifically explained with none
+    left over.
+
+96. **A conflict is preserved, never cancelled.** Same subject, same semantic,
+    same scope, opposite directions. Nothing balances or picks a winner: real
+    surviving support yields SUSPICIOUS with the disagreement recorded and
+    confidence capped, and two weak claims disagreeing yield INCONCLUSIVE.
+
+97. **There is no numerical fusion anywhere.** No score, weight, probability or
+    risk number, and a test asserts the policy and confidence modules contain no
+    multiplication, division or exponentiation. There is no calibration data
+    behind any coefficient, so a formula would manufacture precision nobody can
+    defend.
+
+98. **Verdict and confidence are separate decisions from different inputs.**
+    Confidence answers "is this assessment correct?", never "how malicious is
+    this?". MALICIOUS at MEDIUM is ordinary. Caps lower a band by name —
+    unresolved conflict, unclassified basis, partial source, sandbox divergence,
+    stale supporting context — and nothing is subtracted. Only the canonical STIX
+    values 15/50/85 are ever produced.
+
+99. **The stale-context cap stays scoped.** It requires a finding marked stale
+    *and* that finding linking to evidence the verdict's basis actually used, so
+    an unrelated stale warninglist never caps an independent assessment. This
+    preserves Task 16's fix rather than reintroducing the bug one layer up.
+
+100. **Every verdict names its rule and its contributions.** Each claim gets a
+     contribution — including the explained ones and the dependent duplicates —
+     carrying a role, a disposition and stable reason codes. A trace listing only
+     what supported the verdict would be an argument rather than a record.
+
+101. **Task 17 performs no network access and recommends no action.** No HTTP,
+     DNS, socket, provider call, credential or clock; `as_of` comes from Task 15.
+     MALICIOUS does not mean block — shared and compromised infrastructure make
+     that genuinely difficult, and it belongs to a layer that knows the
+     environment.
+
 ## Security rules
 
 - **No secrets in the repo.** `.env` is git-ignored; `.env.example` holds
@@ -888,6 +1009,12 @@ which it does not, and nothing decides what the case is.
   credentials, connection ids or tokens — and its metrics are counts plus two
   closed enum vocabularies with no field that can hold an observable, a user or
   an investigation id.
+- **An assessment carries no secret, because fusion cannot reach one.**
+  `reasoning/claims/` and `reasoning/fusion/` import no credential module, no
+  secret store and no HTTP client, and never mention `SecretStr`; a test asserts
+  it. Claims reference evidence ids and canonical keys, never credentials or
+  tokens, and fusion metrics are counts plus four closed vocabularies with no
+  field that can hold an observable, a hash, a URL, a user or an investigation id.
 - **A correlation graph carries no secret, because correlation cannot reach one.**
   `correlation/` imports no credential module, no secret store and no HTTP client,
   and never mentions `SecretStr`; a test asserts it. Node occurrences and
@@ -1004,6 +1131,19 @@ src/ti_recon/
                      edge-scoped rule), engine (vendor-neutral composition),
                      results, metrics, catalog (the only module here that may
                      name a provider)
+  reasoning/claims/    Task 17A: provider-neutral claim semantics. models
+                     (ClaimSemantic, NormalizedClaim, ClaimPropositionKey,
+                     assertion strength), translation (the provider contract),
+                     policy (versioned compatibility table), registry (the only
+                     module in the claim and fusion packages that may name a
+                     provider)
+  reasoning/fusion/  Task 17B-D: independence, corroboration and assessment.
+                     models (confidence bands, dispositions, decision roles,
+                     contributions, the assessment), independence (grouping by
+                     originating family), dispositions (reading Task 16 exactly),
+                     policy (decisive/weak semantics, verdict and confidence rule
+                     ids, caps), confidence (bands and caps, decided separately
+                     from the verdict), engine, results, metrics
   reasoning/false_positive/
                      Task 16: alternative-explanation reasoning. models (roles,
                      dimensions, reason codes, typed links, does-not-establish
@@ -1020,6 +1160,11 @@ src/ti_recon/
                      lexicographic key), planner (no I/O, deterministic),
                      orchestrator (plan -> execute -> observe), metrics,
                      catalog (the only module here that may name a provider)
+  providers/*/claim_semantics.py
+                     Task 17A: each provider's pure translation of its own
+                     directional evidence into generic propositions. Structured
+                     field knowledge — ThreatFox's threat_type, GTI's verdict
+                     vocabulary, a sandbox's verdict — lives here and nowhere else
   providers/*/qualification.py
                      Task 15: each provider's pure translation of its own
                      already-normalized result into the generic temporal and
@@ -1045,7 +1190,9 @@ docs/                scope, architecture, data model, credentials, provider
                      correlation/controlled-pivots,
                      reasoning/temporal-evidence,
                      reasoning/context-qualification,
-                     reasoning/false-positive-reasoning
+                     reasoning/false-positive-reasoning,
+                     reasoning/claim-semantics,
+                     reasoning/evidence-fusion
 ```
 
 ## Conventions
