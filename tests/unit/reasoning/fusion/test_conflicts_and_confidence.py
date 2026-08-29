@@ -33,6 +33,7 @@ from ti_recon.reasoning.false_positive.models import (
 )
 from ti_recon.reasoning.fusion import (
     CONFIDENCE_CAPS,
+    REASON_CODES,
     STIX_CONFIDENCE,
     VERDICT_RULES,
     AssessmentConfidence,
@@ -214,19 +215,54 @@ def test_only_canonical_stix_confidence_values_are_ever_produced() -> None:
     assert result.assessment.stix_confidence in {None, 15, 50, 85}
 
 
-def test_a_partial_source_caps_confidence() -> None:
+def test_a_partial_envelope_does_not_lower_confidence() -> None:
+    """A partial *envelope* is not a partial *claim*.
+
+    All the repository knows is the status of the provider result. That does not
+    separate "the fact we used arrived complete, and an optional enrichment did
+    not" from "the fact we used is itself incomplete", and only the second bears
+    on whether this assessment is correct. Capping on the status reported a
+    coverage gap as doubt about a verdict-bearing fact.
+
+    The status is not hidden -- see the reason code and coverage assertions
+    below. It simply no longer moves a band.
+    """
     from ti_recon.enums import ProviderRunStatus
 
     sample = file_object(sha256="1" * 64)
-    record = evidence(sample, claim_type="alpha_sample", provider="alpha")
-    scene = scenario(sample).with_envelope(
-        envelope(record, objects=(sample,), status=ProviderRunStatus.PARTIAL)
+
+    def assess(status: ProviderRunStatus):
+        record = evidence(sample, claim_type="alpha_sample", provider="alpha")
+        scene = scenario(sample).with_envelope(envelope(record, objects=(sample,), status=status))
+        return fuse_as(scene, "malware_sample_identity")
+
+    complete = assess(ProviderRunStatus.SUCCESS)
+    partial = assess(ProviderRunStatus.PARTIAL)
+
+    assert partial.assessment.verdict is complete.assessment.verdict
+    assert partial.assessment.confidence is complete.assessment.confidence
+    assert partial.assessment.confidence_rule_id == complete.assessment.confidence_rule_id
+    assert partial.assessment.confidence_caps == complete.assessment.confidence_caps
+
+    # Visible, just not decisive.
+    assert partial.coverage.partial_sources == 1
+    assert complete.coverage.partial_sources == 0
+    assert any(
+        REASON_CODES["partial"] in contribution.reason_codes
+        for contribution in partial.contributions
     )
+    assert all(claim.source_partial for claim in partial.normalized_claims)
 
-    result = fuse_as(scene, "malware_sample_identity")
 
-    assert CONFIDENCE_CAPS["partial_source"] in result.assessment.confidence_caps
-    assert result.assessment.confidence is AssessmentConfidence.LOW
+def test_no_confidence_cap_exists_for_a_partial_provider_result() -> None:
+    """Retired deliberately, not left dangling.
+
+    A dangling cap id invites a future reader to wire it back up. When a
+    claim-level completeness signal exists, it will be a different condition and
+    deserves an id of its own.
+    """
+    assert "partial_source" not in CONFIDENCE_CAPS
+    assert not any("partial" in value for value in CONFIDENCE_CAPS.values())
 
 
 def test_an_unclassified_basis_caps_confidence() -> None:

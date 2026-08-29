@@ -18,11 +18,24 @@ would quietly push analysts toward false certainty.
 Caps, not penalties
 -------------------
 
-An unresolved conflict, an unclassified basis, a partial source, sandbox
-divergence or a decision resting on stale context each *cap* confidence rather
-than subtracting from it. There is no number to subtract from, and a cap is
-auditable in a way a decremented score is not: it says which condition held the
-band down, by name.
+An unresolved conflict, an unclassified basis, sandbox divergence or a decision
+resting on stale context each *cap* confidence rather than subtracting from it.
+There is no number to subtract from, and a cap is auditable in a way a decremented
+score is not: it says which condition held the band down, by name.
+
+A partial envelope is not a partial claim
+-----------------------------------------
+
+There is no cap for a partial provider result. All the repository knows is that
+an *envelope* carried the status, which does not distinguish "the fact we used
+arrived complete, and an optional enrichment did not" from "the fact we used is
+itself incomplete". Only the second bears on whether this assessment is correct,
+and nothing here can tell them apart -- so treating the status as proof of the
+second would report a coverage gap as a doubt about a verdict-bearing fact.
+
+Partiality stays fully visible: on the claim, on the contribution's reason codes
+and in coverage. Whether missing coverage limits what may be *done* with the
+assessment is Task 18's question.
 
 Stale context is scoped
 -----------------------
@@ -165,9 +178,6 @@ def _caps(
 
     if any(item.semantic is ClaimSemantic.UNCLASSIFIED_DIRECTIONAL for item in basis):
         found.add(CONFIDENCE_CAPS["unclassified_basis"])
-
-    if any(item.source_partial for item in basis):
-        found.add(CONFIDENCE_CAPS["partial_source"])
 
     # Sandbox divergence is a property of the sample, not a defect -- but two
     # environments disagreeing means one of them would have told us less, so the

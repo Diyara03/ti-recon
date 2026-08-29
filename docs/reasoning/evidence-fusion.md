@@ -206,20 +206,21 @@ verdict's ordinal.
 `85`, or `None`. Nothing computes an integer, and no other value is ever produced:
 an assessment reporting 63 would claim a precision nobody measured.
 
-**Caps, not penalties.** An unresolved conflict, an unclassified basis, a partial
-source, sandbox divergence, a decision resting on stale context, and support that
-is entirely weak each lower the band by name. Nothing is subtracted, and stacking
-caps never reaches a fourth band — that arithmetic would be the weighted score by
-another route.
+**Caps, not penalties.** An unresolved conflict, an unclassified basis, sandbox
+divergence, a decision resting on stale context, and support that is entirely weak
+each lower the band by name. Nothing is subtracted, and stacking caps never
+reaches a fourth band — that arithmetic would be the weighted score by another
+route.
 
 | Cap | Scoped by |
 |---|---|
 | `unresolved_conflict` | the conflict is about a proposition the basis rests on |
 | `unclassified_basis` | a basis claim is `UNCLASSIFIED_DIRECTIONAL` |
-| `partial_source` | a basis claim's own envelope was partial |
 | `sandbox_divergence` | the finding links to basis evidence |
 | `stale_supporting_context` | the finding links to basis evidence |
 | `single_weak_support` | every basis claim is weak |
+
+There is deliberately **no cap for a partial provider result** — see below.
 
 **Every cap is scoped to the decision.** This is Task 16's scoping fix,
 generalised to the whole table: a cap must bear on the claims the verdict actually
@@ -236,6 +237,42 @@ disagreement about a different object, and the weak-support cap was *suppressed*
 by a non-weak claim about a different object, handing the root a higher band than
 its own support earned.
 
+### A partial envelope is not a partial claim
+
+Three statements are easy to run together, and they have three different owners:
+
+| Signal | Means | Owned by |
+|---|---|---|
+| envelope `PARTIAL` / `PLAN_LIMITED` | the provider *result* was incomplete | Task 17 coverage |
+| the basis claim itself incomplete | the fact used is qualified | Task 17 confidence — *no such signal exists* |
+| coverage insufficient to act on | decision readiness | Task 18 |
+
+Task 17 v1 does **not** reduce correctness confidence because an envelope is
+partial. All the repository records is the status of the response;
+`NormalizedClaim.source_partial` is derived from it and is the only completeness
+signal there is. It describes the response, not the proposition, so it cannot
+separate "the fact we used arrived complete while an optional relationship lookup
+failed" from "the fact we used is itself incomplete". Only the second bears on
+whether the assessment is correct.
+
+Capping on the status treated the first as if it were the second, and it bit
+hardest where the evidence was strongest: a decisive exact claim with an
+independent origin agreeing earned `HIGH` and was knocked to `MEDIUM` because some
+optional part of one of the two responses was missing. Nothing about the malware
+identification had become less correct.
+
+Partiality is not hidden. It stays in three places:
+
+- `NormalizedClaim.source_partial` on every claim the envelope produced;
+- `REASON_CODES["partial"]` on that claim's `ClaimContribution`;
+- `FusionCoverage.partial_sources`.
+
+Should a genuine **claim-level** completeness signal ever be modelled, it may
+legitimately inform confidence — after deliberate review, and under a cap id of
+its own, because it is a different condition. It must not be anticipated with a
+heuristic over the envelope status, and the retired `partial_source` id is gone
+rather than left dangling for someone to wire back up.
+
 ### Confidence is not coverage
 
 Confidence says the assessment is correct. `FusionCoverage` says what was examined
@@ -249,7 +286,8 @@ Whether the coverage is *sufficient to act on* is a third question, and it is Ta
 > `MALICIOUS` · `HIGH` confidence · incomplete provider coverage
 
 An exact known-malware hash can establish maliciousness on its own while half the
-optional providers were unavailable. Task 18 may well say readiness is limited for
+optional providers were unavailable — or while the provider that identified it
+returned everything else about the sample incompletely. Task 18 may well say readiness is limited for
 some operational purpose; that does not make the identification less correct, and
 answering it here by quietly lowering a band would put it beyond appeal.
 

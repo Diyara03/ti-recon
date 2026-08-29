@@ -866,8 +866,8 @@ about it.
 98. **Verdict and confidence are separate decisions from different inputs.**
     Confidence answers "is this assessment correct?", never "how malicious is
     this?". MALICIOUS at MEDIUM is ordinary. Caps lower a band by name —
-    unresolved conflict, unclassified basis, partial source, sandbox divergence,
-    stale supporting context — and nothing is subtracted. Only the canonical STIX
+    unresolved conflict, unclassified basis, sandbox divergence, stale supporting
+    context, wholly weak support — and nothing is subtracted. Only the canonical STIX
     values 15/50/85 are ever produced. `FusionAssessment` is the authoritative
     assessment from Task 17 onward; Task 3's `Assessment` is legacy, retained for
     backward compatibility, and a boundary test asserts `claims/` and `fusion/`
@@ -881,7 +881,14 @@ about it.
     claim is weak. So an unrelated stale warninglist, a divergent sandbox
     detonation of another object, a disputed reputation on a pivot and an
     optional provider returning `NO_DATA` all leave an independent assessment
-    untouched — they are recorded in coverage, where they belong. A run-wide read
+    untouched — they are recorded in coverage, where they belong. A partial
+    provider result caps nothing at all: the repository knows only that an
+    *envelope* was incomplete, which does not say whether the basis claim itself
+    is, and a provider that returned its verdict-bearing fact in full while an
+    optional lookup failed has told us nothing less correct. Partiality stays on
+    the claim, on its contribution and in coverage; a future *claim-level*
+    completeness signal would be a different condition needing its own id and a
+    deliberate decision. A run-wide read
     is a bug in *both* directions, and both have happened: the conflict cap
     lowered a band over a disagreement about a different object, and the
     weak-support cap was suppressed by a non-weak claim about a different object,

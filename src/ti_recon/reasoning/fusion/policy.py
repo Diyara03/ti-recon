@@ -174,10 +174,19 @@ CONFIDENCE_RULES: Final[dict[str, str]] = {
 #: Caps rather than penalties. Nothing is subtracted, because there is no number
 #: to subtract from; a cap says "this could not be HIGH, and here is why", which
 #: is auditable in a way a decremented score is not.
+#:
+#: There is deliberately no cap for a partial provider result. The repository
+#: knows only that an *envelope* was partial, which does not say whether the
+#: directional claim it carried is itself incomplete -- and a provider that
+#: returned its verdict-bearing fact in full while an optional relationship
+#: lookup failed has told us nothing less correct. Partiality stays visible as
+#: ``REASON_CODES["partial"]`` on the contribution and in
+#: ``FusionCoverage.partial_sources``; what it no longer does is move a band.
+#: A future *claim-level* completeness signal would be a different condition
+#: deserving its own id, added after deliberate review rather than inferred.
 CONFIDENCE_CAPS: Final[dict[str, str]] = {
     "unresolved_conflict": "cap.unresolved_same_scope_conflict.v1",
     "unclassified_basis": "cap.unclassified_directional_claim.v1",
-    "partial_source": "cap.partial_provider_result.v1",
     "stale_supporting_context": "cap.decision_depends_on_stale_context.v1",
     "sandbox_divergence": "cap.sandbox_environment_divergence.v1",
     "single_weak_support": "cap.single_weak_support.v1",
