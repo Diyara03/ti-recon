@@ -13,6 +13,7 @@ from fixtures.false_positive.builders import (
     qualification,
     scenario,
     signal,
+    stale_dataset_qualification,
 )
 
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "qualification",
     "scenario",
     "signal",
+    "stale_dataset_qualification",
 ]

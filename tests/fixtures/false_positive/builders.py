@@ -45,6 +45,7 @@ from ti_recon.reasoning.models import (
     TemporalFact,
     TemporalFactKind,
     TemporalQualification,
+    dataset_subject,
     observable_subject,
 )
 from ti_recon.reasoning.models import EvidenceRef as QualificationEvidenceRef
@@ -181,6 +182,31 @@ def inactive_qualification(
         raw_field="last_online",
         lifecycle=lifecycle,
         evidence=QualificationEvidenceRef.of(record),
+    )
+    age = (AS_OF - fact.instant).total_seconds()
+    return TemporalQualification(fact=fact, age_seconds=age, age_days=age / 86_400.0)
+
+
+def stale_dataset_qualification(
+    family: str, *, provider: str | None = None
+) -> TemporalQualification:
+    """A Task 15 dataset-scoped fact saying one family's local corpus is stale.
+
+    Shaped exactly as Task 15 emits it: a ``CONTEXT_DATASET`` subject, a
+    snapshot instant, and ``DATASET_STALE`` carrying the family that owns the
+    dataset. Building the real fact rather than only bumping a coverage counter
+    is what lets a test prove the caveat lands on the right findings.
+    """
+    owner = provider or family
+    fact = TemporalFact(
+        subject=dataset_subject(owner, "warninglists"),
+        kind=TemporalFactKind.SNAPSHOT_GENERATED_AT,
+        instant=datetime(2026, 1, 2, 3, 4, tzinfo=UTC),
+        transport_provider=owner,
+        origin_provider=owner,
+        source_family=family,
+        raw_field="snapshot_generated_at",
+        lifecycle=SourceLifecycleState.DATASET_STALE,
     )
     age = (AS_OF - fact.instant).total_seconds()
     return TemporalQualification(fact=fact, age_seconds=age, age_days=age / 86_400.0)

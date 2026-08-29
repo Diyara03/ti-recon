@@ -136,17 +136,28 @@ def _signal_links(
 
 
 def _stale(index: ReasoningIndex, signals: Iterable[ContextSignal]) -> list[FindingLimitation]:
-    """Caveats about the support a finding leans on.
+    """Caveats about the support *this* finding leans on.
 
     A stale warninglist snapshot does not delete an explanation -- the list was
     right about EICAR last month and still is -- but a reader deserves to know
     the footing, and a numerical penalty would be a made-up number standing in
     for a fact that is already available.
+
+    Scoped to the finding's own supporting signals, and that scoping is the point.
+    Staleness belongs to the dataset that is stale: one provider shipping an old
+    snapshot says nothing about a second provider's compromised-host report, and
+    a run-level flag would stamp "supporting context dataset stale" onto findings
+    that never touched the stale corpus -- a caveat pointing at the wrong
+    evidence, which is worse than none.
     """
+    supporting = tuple(signals)
     found: list[FindingLimitation] = []
-    if index.stale_context_dataset:
+    if index.stale_context_families and any(
+        (item.source_family or item.transport_provider) in index.stale_context_families
+        for item in supporting
+    ):
         found.append(FindingLimitation.SUPPORTING_CONTEXT_DATASET_STALE)
-    if any(item.source_partial for item in signals):
+    if any(item.source_partial for item in supporting):
         found.append(FindingLimitation.SUPPORTING_RESULT_PARTIAL)
     return found
 

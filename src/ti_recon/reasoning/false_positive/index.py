@@ -84,10 +84,18 @@ class ReasoningIndex:
     #: Every graph edge, sorted, for rules that iterate rather than look up.
     edges: tuple[GraphEdge, ...]
 
-    #: ``True`` when any provider reported the local context dataset as stale, so
-    #: an explanation leaning on that dataset can say so rather than pretend its
-    #: footing is as firm as a fresh one.
-    stale_context_dataset: bool = False
+    #: Source families whose local context dataset a provider reported as stale.
+    #:
+    #: A *set of families* rather than a run-level flag, because staleness belongs
+    #: to the dataset that is stale. One provider shipping an old snapshot says
+    #: nothing about a second provider's compromised-host report, and annotating
+    #: the second with "supporting context dataset stale" would attach a caveat to
+    #: a finding that never touched the stale data.
+    #:
+    #: Derived from Task 15's own dataset-scoped facts, so the match is on
+    #: provenance the qualification layer already recorded and no provider is
+    #: named here.
+    stale_context_families: frozenset[str] = frozenset()
 
     _all_evidence: tuple[Evidence, ...] = field(default=())
 
@@ -248,9 +256,25 @@ class ReasoningIndex:
             },
             edges_into={key: tuple(value) for key, value in edges_into.items()},
             edges=edges,
-            stale_context_dataset=qualification.coverage.stale_context_datasets > 0,
+            stale_context_families=_stale_families(qualification),
             _all_evidence=tuple(sorted(all_evidence, key=_evidence_sort_key)),
         )
+
+
+def _stale_families(qualification: TemporalContextResult) -> frozenset[str]:
+    """Which source families reported their own local dataset stale.
+
+    Task 15 attaches ``DATASET_STALE`` to a dataset-scoped temporal fact carrying
+    the family that owns the dataset. Reading the family off that fact — rather
+    than reading the run-level count beside it — is what keeps the resulting
+    caveat on findings that actually lean on the stale corpus.
+    """
+    return frozenset(
+        family
+        for item in qualification.temporal_qualifications
+        if item.fact.lifecycle is SourceLifecycleState.DATASET_STALE
+        and (family := item.fact.source_family or item.fact.transport_provider)
+    )
 
 
 def edge_ref(edge: GraphEdge) -> str:

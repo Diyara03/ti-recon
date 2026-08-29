@@ -23,6 +23,7 @@ from fixtures.false_positive import (
     observable,
     scenario,
     signal,
+    stale_dataset_qualification,
 )
 from ti_recon.enums import EvidenceEffect, MatchScope
 from ti_recon.reasoning.false_positive import (
@@ -34,7 +35,11 @@ from ti_recon.reasoning.false_positive import (
     ReasoningDimension,
     ReasoningRole,
 )
-from ti_recon.reasoning.models import ContextSignalType, SourceLifecycleState
+from ti_recon.reasoning.models import (
+    ContextSignalType,
+    SignalOrigin,
+    SourceLifecycleState,
+)
 
 
 def reason(scene: object) -> FalsePositiveReasoningResult:
@@ -389,9 +394,17 @@ def test_a_stale_context_dataset_annotates_rather_than_suppresses() -> None:
     scene = (
         scenario(sample)
         .with_envelope(envelope(classification, objects=(sample,)))
-        .with_signal(signal(sample, ContextSignalType.TEST_ARTIFACT, source_key="eicar.com"))
+        .with_signal(
+            signal(
+                sample,
+                ContextSignalType.TEST_ARTIFACT,
+                source_key="eicar.com",
+                provider="context_family",
+            )
+        )
+        # The dataset the explanation actually leans on is the stale one.
+        .with_temporal(stale_dataset_qualification("context_family"))
     )
-    scene.stale_context_datasets = 1
 
     result = reason(scene)
 
@@ -403,6 +416,114 @@ def test_a_stale_context_dataset_annotates_rather_than_suppresses() -> None:
     dumped = result.model_dump_json().lower()
     for word in ("penalty", "discount", "strength", "score"):
         assert word not in dumped
+
+
+def test_a_stale_dataset_does_not_annotate_findings_that_never_used_it() -> None:
+    """Staleness belongs to the dataset that is stale.
+
+    One provider shipping an old snapshot says nothing about a second provider's
+    compromised-host report, its sandbox run, its offline URL or its relayed
+    finding. A run-level flag would stamp "supporting context dataset stale" onto
+    all of them -- a caveat pointing at the wrong evidence, which is worse than
+    no caveat at all -- so the check is against the finding's own supporting
+    signals.
+    """
+    ip = observable("203.0.113.9")
+    url = observable("https://malware.example/bin/loader.exe")
+    sample = file_object(sha256="f" * 64)
+
+    compromised_claim = evidence(ip, claim_type="alpha_ioc", provider="alpha")
+    url_claim = evidence(url, claim_type="beta_exact_url", provider="beta")
+    relayed = evidence(
+        url,
+        claim_type="beta_relayed",
+        provider="beta",
+        origin_provider="upstream",
+        source_family="upstream_family",
+        effect=EvidenceEffect.CONTEXT_ONLY,
+    )
+
+    scene = (
+        scenario(ip)
+        .with_envelope(envelope(compromised_claim, objects=(ip,)))
+        .with_envelope(envelope(url_claim, relayed, provider="beta", objects=(url,)))
+        # Provider-reported context, nothing to do with any local dataset.
+        .with_signal(
+            signal(
+                ip,
+                ContextSignalType.COMPROMISED_INFRASTRUCTURE,
+                provider="alpha",
+                origin=SignalOrigin.PROVIDER_REPORTED,
+                source_key="is_compromised",
+            )
+        )
+        .with_signal(
+            signal(sample, ContextSignalType.SANDBOX_LOW_EXECUTION, provider="sandbox_alpha")
+        )
+        .with_signal(
+            signal(url, ContextSignalType.RELAYED_SOURCE, provider="beta", for_evidence=relayed)
+        )
+        .with_temporal(inactive_qualification(url, url_claim))
+        # A different family's local corpus is stale.
+        .with_temporal(stale_dataset_qualification("warninglist_family"))
+    )
+
+    result = reason(scene)
+
+    # Every one of these is a rule that could have picked the flag up.
+    unrelated = (
+        ReasonCode.COMPROMISED_INFRASTRUCTURE_SEPARATES_OWNER_FROM_ACTOR,
+        ReasonCode.SANDBOX_NEGATIVE_NOT_INFORMATIVE_WITHOUT_EXECUTION,
+        ReasonCode.CURRENT_INACTIVITY_DOES_NOT_ERASE_HISTORICAL_MALICIOUSNESS,
+        ReasonCode.RELAYED_FINDINGS_NOT_INDEPENDENT,
+    )
+    for reason_code in unrelated:
+        findings = result.of_reason(reason_code)
+        assert findings, reason_code.value
+        for finding in findings:
+            assert finding.limitations == (), reason_code.value
+
+    assert "supporting_context_dataset_stale" not in result.model_dump_json()
+
+
+def test_a_stale_dataset_annotates_only_the_findings_that_lean_on_it() -> None:
+    """Both halves in one run: the finding that used the stale corpus is
+    annotated, and the one beside it is not."""
+    sample = file_object(md5="44d88612fea8a8f36de82e1278abb02f")
+    ip = observable("203.0.113.9")
+    classification = evidence(sample, claim_type="alpha_reputation")
+    compromised_claim = evidence(ip, claim_type="beta_ioc", provider="beta")
+
+    scene = (
+        scenario(sample)
+        .with_envelope(envelope(classification, objects=(sample,)))
+        .with_envelope(envelope(compromised_claim, provider="beta", objects=(ip,)))
+        .with_signal(
+            signal(
+                sample,
+                ContextSignalType.TEST_ARTIFACT,
+                source_key="eicar.com",
+                provider="warninglist_family",
+            )
+        )
+        .with_signal(
+            signal(
+                ip,
+                ContextSignalType.COMPROMISED_INFRASTRUCTURE,
+                provider="beta",
+                origin=SignalOrigin.PROVIDER_REPORTED,
+            )
+        )
+        .with_temporal(stale_dataset_qualification("warninglist_family"))
+    )
+
+    result = reason(scene)
+
+    explained = result.of_reason(ReasonCode.EXPECTED_TEST_ARTIFACT_DETECTION)[0]
+    assert explained.limitations == ("supporting_context_dataset_stale",)
+
+    caution = result.of_reason(ReasonCode.COMPROMISED_INFRASTRUCTURE_SEPARATES_OWNER_FROM_ACTOR)[0]
+    assert caution.limitations == ()
 
 
 def test_a_partial_supporting_result_is_recorded_on_the_finding() -> None:

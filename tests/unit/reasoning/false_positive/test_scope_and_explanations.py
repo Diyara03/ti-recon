@@ -592,3 +592,175 @@ def test_popularity_alone_explains_nothing_about_an_exact_artifact() -> None:
         )
     )
     assert explanations(reason(scene)) == ()
+
+
+# --------------------------------------------------------------------------- #
+# Business-service conservatism
+# --------------------------------------------------------------------------- #
+#
+# Task 15's BUSINESS_SERVICE is deliberately coarse: it says an address is common
+# business-service infrastructure and carries no trust level, no service class and
+# no statement about the traffic. GreyNoise says outright that it is not an allow
+# list.
+#
+# So it may speak to a *relationship* -- talking to a common service is ordinary
+# -- and it may bound how broadly an address should be blocked. It must never
+# explain a directional claim about an object, and Task 16 encodes that by keeping
+# it out of the object-explaining set entirely rather than by a rule that could be
+# relaxed later without anybody noticing.
+#
+# Richer semantics would need generic structure Task 15 does not expose. Reading a
+# trust level here would mean parsing one provider's scale inside the vendor-neutral
+# engine, so it is deferred rather than smuggled in.
+
+
+def test_business_service_is_not_in_the_object_explaining_set() -> None:
+    """Structural, not incidental: there is no rule to reach for.
+
+    A behavioural test could pass because some other guard happened to fire
+    first. This asserts the signal simply cannot reach an object-level
+    explanation.
+    """
+    from ti_recon.reasoning.false_positive import EXPLAINABLE_CONTEXT_SIGNALS
+
+    assert ContextSignalType.BUSINESS_SERVICE not in EXPLAINABLE_CONTEXT_SIGNALS
+    assert set(EXPLAINABLE_CONTEXT_SIGNALS) == {
+        ContextSignalType.TEST_ARTIFACT,
+        ContextSignalType.EMPTY_ARTIFACT,
+    }
+
+
+def test_business_service_leaves_exact_malicious_address_evidence_unexplained() -> None:
+    """Case A. Common business-service infrastructure is still infrastructure
+    somebody has accused of something specific.
+
+    The context does not account for the accusation, and nothing marks it
+    explained.
+    """
+    ip = observable("203.0.113.20")
+    malicious = evidence(ip, claim_type="alpha_ioc")
+    scene = (
+        scenario(ip)
+        .with_envelope(envelope(malicious, objects=(ip,)))
+        .with_signal(signal(ip, ContextSignalType.BUSINESS_SERVICE, source_key="bsi"))
+    )
+
+    result = reason(scene)
+
+    assert explanations(result) == ()
+    assert malicious.id not in result.explained_evidence_ids
+    assert result.coverage.directional_evidence_with_explanations == 0
+    assert result.coverage.directional_evidence_without_explanations == 1
+    # And nothing anywhere claims the address is safe to ignore.
+    assert malicious.effect is EvidenceEffect.SUPPORTS_MALICIOUS
+
+
+def test_business_service_explains_a_contact_and_never_the_object_that_made_it() -> None:
+    """Case B. The explanation is scoped to the edge; the file keeps its claim.
+
+    Both halves asserted, because the failure mode is the over-reaching
+    explanation rather than the missing one.
+    """
+    sample = file_object(sha256="9" * 64)
+    service = observable("203.0.113.21")
+    reputation = evidence(sample, claim_type="alpha_reputation")
+
+    scene = (
+        scenario(sample)
+        .with_envelope(envelope(reputation, objects=(sample,)))
+        .with_envelope(contact_envelope(sample, service))
+        .with_signal(signal(service, ContextSignalType.BUSINESS_SERVICE, source_key="bsi"))
+        .with_graph()
+    )
+
+    result = reason(scene)
+
+    found = result.of_reason(ReasonCode.KNOWN_BUSINESS_SERVICE_MAY_EXPLAIN_CONNECTION)
+    assert found
+    explanation = found[0]
+    assert explanation.subject.kind.value == "relationship"
+    assert explanation.dimension is ReasoningDimension.RELATIONSHIP_INTERPRETATION
+    # A relationship was explained; no evidence was.
+    assert explanation.explained_evidence_ids == ()
+
+    # The root object's malicious claim is untouched and unaccounted for.
+    assert reputation.id not in result.explained_evidence_ids
+    assert result.coverage.directional_evidence_without_explanations == 1
+    assert DoesNotEstablish.OBJECT_BENIGN in explanation.does_not_establish
+    assert DoesNotEstablish.INFRASTRUCTURE_SAFE in explanation.does_not_establish
+
+
+def test_business_service_alone_produces_no_explanation() -> None:
+    """Case C. Nothing accused, nothing to explain."""
+    ip = observable("203.0.113.22")
+    scene = scenario(ip).with_signal(
+        signal(ip, ContextSignalType.BUSINESS_SERVICE, source_key="bsi")
+    )
+
+    result = reason(scene)
+
+    assert result.findings == ()
+    assert explanations(result) == ()
+
+
+def test_business_service_never_produces_safety_language() -> None:
+    """It is not an allow list, and nothing it produces may read like one."""
+    sample = file_object(sha256="8" * 64)
+    service = observable("203.0.113.23")
+    scene = (
+        scenario(sample)
+        .with_envelope(contact_envelope(sample, service))
+        .with_signal(signal(service, ContextSignalType.BUSINESS_SERVICE))
+        .with_graph()
+    )
+
+    result = reason(scene)
+    findings = result.of_reason(ReasonCode.KNOWN_BUSINESS_SERVICE_MAY_EXPLAIN_CONNECTION)
+    assert findings
+
+    for finding in findings:
+        assert not any(
+            word in finding.reason_code.value or word in finding.role.value
+            for word in ("safe", "benign", "trust", "allow")
+        )
+        # The only place "safe" may appear is the denial vocabulary.
+        assert DoesNotEstablish.INFRASTRUCTURE_SAFE in finding.does_not_establish
+
+
+def test_no_trust_level_is_read_anywhere_in_the_rules() -> None:
+    """The deferral, asserted rather than remembered.
+
+    Task 15 carries a provider's trust level as its own structured value on the
+    signal. Reading it here would mean interpreting one vendor's scale inside the
+    vendor-neutral engine, so no rule touches it -- and if richer generic
+    business-service semantics ever arrive, this is where the decision surfaces.
+    """
+    import ast
+    from pathlib import Path
+
+    tree = ast.parse(Path("src/ti_recon/reasoning/false_positive/rules.py").read_text())
+    literals = {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    for scale in ("trust_level", "trust_levels", "classification", "service_class"):
+        assert scale not in literals
+    assert not [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and node.attr == "trust_level"
+    ]
+    # ``detail`` is read once, for Task 15's own generic relayed-source boolean.
+    # That is structured, vendor-neutral and nothing to do with a trust scale.
+    detail_keys = {
+        node.args[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    }
+    assert detail_keys == {"direct_family_present"}
