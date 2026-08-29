@@ -578,3 +578,27 @@ suite — and the assertions needing a report skip themselves when there is none
 * Any second sandbox provider. The framework in [../sandbox.md](../sandbox.md) is
   provider-neutral so one can be added without touching passive evidence
   semantics — but adding one is a separate task.
+
+## Temporal and quality semantics (Task 15)
+
+`providers/hybrid_analysis/qualification.py` maps `analysis_start_time` to
+`ANALYZED_AT` at **report scope** — it is when somebody detonated the sample, not
+a first-seen, not a last-seen and not a "malware active at". Runs in different
+environments carry different analysis times and stay separate facts. Certificates
+observed during a run become `VALID_FROM` / `VALID_UNTIL` on the report.
+
+Execution quality comes from Task 12's `observed_any_execution`, treated as
+authoritative with no threshold invented here:
+
+| Completed run | Signal |
+|---------------|--------|
+| non-directional verdict, nothing ran | `SANDBOX_LOW_EXECUTION` |
+| non-directional verdict, execution observed | `SANDBOX_MEANINGFUL_EXECUTION` |
+| completed runs disagreed | `SANDBOX_DIVERGENCE` |
+
+A run that **errored**, queued or never finished produces none of them: it has no
+behavioural content, and letting an infrastructure failure look like a quiet run
+is the error Task 12's state/verdict split exists to prevent. `allowlisted` is
+treated as a non-directional outcome rather than a successful negative — it is
+somebody's list membership, not an observation of harmlessness. Nothing becomes
+`SUPPORTS_BENIGN`, and divergence is preserved rather than voted on.

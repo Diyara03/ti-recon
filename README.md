@@ -9,8 +9,9 @@ eventually produce an explainable, auditable assessment.
 ## Current development state
 
 This repository currently contains the foundation, its first nine providers, the
-adaptive enrichment planner that chooses between them, and the correlation graph
-that assembles what they return (Jira Tasks 1-14):
+adaptive enrichment planner that chooses between them, the correlation graph that
+assembles what they return, and the layer that says what each finding means in
+time and context (Jira Tasks 1-15):
 
 | Task | Scope | State |
 |------|-------|-------|
@@ -28,6 +29,7 @@ that assembles what they return (Jira Tasks 1-14):
 | 12 | Sandbox framework + Hybrid Analysis | Implemented (passive historical reports only) |
 | 13 | Adaptive enrichment planner + orchestrator | Implemented (deterministic, passive, no fusion) |
 | 14 | Correlation graph + controlled pivots | Implemented (exact identity, bounded pivots, no verdict) |
+| 15 | Temporal evidence qualification + context reasoning | Implemented (typed instants, explicit `as_of`, no decay, no verdict) |
 
 **Seven providers are integrated**, all passive, each answering a different
 question. Google Threat Intelligence enriches with each analyst's own VirusTotal
@@ -77,9 +79,31 @@ objects as possible pivots. Following one is explicit, budgeted and one hop deep
 discovering a domain in a sandbox report does not authorise asking six third
 parties about it.
 
+Task 15 adds the layer that says **what a finding means in time and context**,
+without saying what the case is. Its central refusal is simple and easy to get
+wrong: a timestamp has a *type*. VirusTotal's `last_analysis_date` is when a file
+was last scanned, URLhaus's `last_online` is when a URL last served a payload,
+and a sandbox's `analysis_start_time` is when somebody detonated a sample —
+pouring all three into one `last_seen` turns "we rescanned it yesterday" into "it
+attacked somebody yesterday". Every instant therefore carries a typed kind and
+the provider's own field name, ages against an explicit timezone-aware `as_of`
+with no wall clock anywhere, and never decays: a phishing URL, a malware hash, a
+cloud address and a certificate do not share a lifetime, so no single half-life
+is invented for them.
+
+The same layer records what contextual information *explains* and what it can
+never mean. A warninglist match, a shared cloud range and GreyNoise's Business
+Services Intelligence are all context, none of them is a safe list, and there is
+no signal, lifecycle or cue in the vocabulary containing *safe*, *trusted* or
+*benign*. Host-level context stays at host scope and never clears an exact URL;
+a sandbox that observed nothing is separated from one that ran; a relayed
+VirusTotal figure is recorded as dependent on the direct one rather than counted
+beside it; and no provider fact is ever rewritten — context is added *beside* a
+finding, never applied *to* it.
+
 There is no SecurityTrails, AbuseIPDB, Shodan or IPinfo client yet, no *active*
-sandboxing, and there is no evidence fusion, no verdict scoring, no MCP server and
-no Claude Skill. Those are later Jira tasks.
+sandboxing, and there is no false-positive reasoning, no evidence fusion, no
+verdict scoring, no MCP server and no Claude Skill. Those are later Jira tasks.
 
 Task 6 added the execution layer every adapter runs behind — caching, retry and
 backoff, rate-limit and quota tracking, cooldowns, bounded concurrency and
@@ -193,6 +217,12 @@ Design principles that shape every layer:
 - **Correlation merges exact identity, never similarity** — a shared ASN, /24,
   certificate issuer, malware family or fuzzy hash is an analytic signal, not the
   same object.
+- **A timestamp has a type** — a scan time is not an observation time, query time
+  is never observation time, and a source's own lifecycle outranks any generic
+  freshness rule. There is no universal decay model.
+- **Context explains, never exonerates** — a warninglist match, a shared cloud
+  range and business-service context are all context; none of them means safe,
+  none of them clears an exact URL, and none of them propagates along an edge.
 - **Discovery is not disclosure** — finding an object in a provider's response
   does not authorise querying third parties about it. Pivoting is explicit,
   globally budgeted and stops one hop from the submitted observable.

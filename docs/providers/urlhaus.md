@@ -298,3 +298,25 @@ this provider in a commercial context.
 
 Off by default. Enable with `RUN_ABUSECH_LIVE_TESTS=1` and `ABUSECH_AUTH_KEY`.
 See [malwarebazaar.md](malwarebazaar.md) §12 for the shared request accounting.
+
+## Temporal semantics (Task 15)
+
+`providers/urlhaus/qualification.py` maps this provider's three-valued
+`url_status` onto source-stated lifecycle, and keeps its two instants apart:
+
+| URLhaus field | Kind / state |
+|---------------|--------------|
+| `url_status: online` | `ACTIVE_BY_SOURCE` |
+| `url_status: offline` | `INACTIVE_BY_SOURCE` |
+| `url_status: unknown` | `STATUS_UNKNOWN` |
+| `date_added` | `ADDED_TO_DATASET_AT` |
+| `last_online` | `LAST_ONLINE_AT` |
+
+`date_added` is when URLhaus took the record — platform housekeeping — while
+`last_online` is a real observation of the URL serving. Collapsing them would
+make a long-dead URL look recently active on every re-import.
+
+`offline` never becomes benign. The evidence keeps `SUPPORTS_MALICIOUS`
+untouched; Task 15 adds the current state, the last-online instant and a
+`HISTORICAL_MALICIOUS_CURRENTLY_INACTIVE` cue beside it. A URL that distributed
+malware in March and stopped in April distributed malware.

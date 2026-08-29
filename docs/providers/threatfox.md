@@ -318,3 +318,23 @@ three in total** — issued once by a shared helper and read by every assertion.
 The count is enforced statically by `tests/unit/test_live_smoke_cost.py`, not by
 a comment or by test ordering. See [malwarebazaar.md](malwarebazaar.md) §12 for
 the accounting in full.
+
+## Temporal semantics (Task 15)
+
+`providers/threatfox/qualification.py` maps `first_seen` and `last_seen` to
+`FIRST_OBSERVED` / `LAST_OBSERVED` and attaches
+`SourceLifecycleState.WITHIN_SOURCE_API_HORIZON` to both, with the horizon in
+months read once per result from the coverage record.
+
+A returned record means **unexpired and present**, not live. There is
+deliberately no `ACTIVE_NOW` state for it to be mistaken for.
+
+A **miss** produces nothing at all — no times, no lifecycle, no "expired". It is
+compatible with never having been listed, with having been listed and expired,
+and with an indicator reported an hour ago, and manufacturing an expiry out of an
+absence would turn a coverage horizon into a claim about the world.
+
+`is_compromised` becomes a `COMPROMISED_INFRASTRUCTURE` signal and an attribution
+caution. It does not weaken the finding: a compromised host serving a payload is
+serving a payload. What changes is that attributing it to an actor would be wrong
+and blocking it has a victim.

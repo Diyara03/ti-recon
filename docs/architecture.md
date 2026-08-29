@@ -44,10 +44,32 @@
      Pivot Candidate Engine        IMPLEMENTED — Task 14. bounded, explicit,
            |                                     one hop; executes via Task 13
            |
-     Evidence Fusion               FUTURE — weighting, independence, decay
+     Temporal + Context            IMPLEMENTED — Task 15. typed instants,
+     Qualification                                explicit as_of, source
+           |                                      lifecycle, context signals,
+           |                                      interpretation cues
+           |
+           |   +-- TemporalFact          what kind of time this is
+           |   +-- SourceLifecycleState  what the source says is true now
+           |   +-- ContextSignal         structured context, never a direction
+           |   +-- sandbox quality       how informative a negative run was
+           |   +-- InterpretationCue     named cautions, with their derivation
+           +-- TemporalIssue         time that cannot be read literally
+           |
+     False-Positive Reasoning      FUTURE — Task 16
+           |
+     Evidence Fusion               FUTURE — Task 17. weighting, independence,
+           |                                decay
+     Decision Readiness            FUTURE — Task 18
            |
      Assessment                    MODELS IMPLEMENTED, scoring engine FUTURE
 ```
+
+Task 15 is **not** fusion. It hands the layers below it structured facts saying
+what happened, when the source actually says it happened, what kind of timestamp
+that is, what current state the source reports, which contextual caveats apply,
+what scope they apply to, how informative a sandbox result was, and whether two
+sources are dependent — without deciding the case.
 
 ## 2. The Claude boundary
 
