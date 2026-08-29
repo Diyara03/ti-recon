@@ -19,6 +19,9 @@ dev = [
     "pytest-asyncio>=0.24",
     "pytest-cov>=5.0",
     "respx>=0.21",
+    # Blocks the connection half of the test network boundary. The resolution
+    # half is ours, in tests/fixtures/network.py, which explains why.
+    "pytest-socket>=0.8,<0.9",
     "ruff>=0.6",
     "mypy>=1.11",
 ]
@@ -82,7 +85,11 @@ warn_required_dynamic_aliases = true
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
-addopts = "-ra --strict-markers --strict-config"
+# --disable-socket with --allow-hosts is pytest-socket's connection guard: every
+# test runs with external connections refused and loopback intact. It is half the
+# boundary — the resolution half lives in tests/fixtures/network.py, which
+# documents why this plugin cannot provide it without also breaking loopback.
+addopts = "-ra --strict-markers --strict-config --disable-socket --allow-hosts=127.0.0.1,::1"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 

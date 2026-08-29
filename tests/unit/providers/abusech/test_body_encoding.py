@@ -448,7 +448,7 @@ async def test_an_unmocked_lookup_cannot_reach_the_network() -> None:
     passing silently. That argument is only as good as the guarantee that the
     unit suite cannot actually reach abuse.ch — so here is that guarantee,
     exercised: no respx mock, a real client, and the connection refused by
-    ``tests/unit/conftest.py`` before it leaves the machine.
+    ``tests/conftest.py`` before it leaves the machine.
 
     The suite once authenticated against a live API by accident. This is the
     check that makes the same slip fail instead of succeed.
