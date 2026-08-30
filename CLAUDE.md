@@ -1452,6 +1452,38 @@ about it.
      arguments, so `user_confirmed` would be consent from nobody. A future Skill
      must not pre-approve these tools with `allowed-tools`.
 
+132. **The Skill presents; it never recalculates.** It drives the MCP tools and
+     never the CLI or a provider API, and it decides no verdict, confidence,
+     independence, explanation applicability, readiness or provider choice —
+     all of those arrive in the Task 20 report. It carries no `allowed-tools`
+     grant: permission belongs to the user's configuration, and a grant here
+     would undercut the human approval Claude Code requires for local files.
+
+133. **Detail is free; collection is not.** Explaining a result already in the
+     conversation must never cause a new tool call, however thorough the request
+     — "explain this thoroughly" re-reads, it does not re-run. Broader
+     collection (Deep, pivot enrichment, external pivot enrichment) is
+     user-directed: a suspicious verdict never escalates depth on the model's
+     initiative, and an ambiguous "more" gets one clarifying question rather
+     than a guess. Defaults stay STANDARD, RECOMMEND, external pivot off.
+
+134. **Disclosure needs intent, and files need selection.** External pivot
+     enrichment is enabled only on unambiguous intent, never silently.
+     `investigate_file` runs only for a file the user supplied, attached or
+     named — no browsing, no enumerating, no reading `.env`, and "check my
+     machine" is not a selection. Credentials are configured locally and never
+     pasted into a conversation; after a change the MCP server must be
+     reconnected, because configuration is read at startup.
+
+135. **The Skill inherits every vocabulary rule the engine enforces.** Sources
+     are provenance and never votes, so no tally is ever produced. `NO_DATA` is
+     checked-and-nothing-found, never clean. `UNATTRIBUTED` is not `NO_DATA`.
+     `NOT_CONFIGURED` is a local setup fact, not a provider being offline. A
+     related observable is a relationship, not an indicator. TI coverage is not
+     permission to act, and confidence is not a probability of maliciousness.
+     The Skill states the assessment and makes no organisational remediation
+     decision.
+
 126. **Task 20 recommends no action.** The report states an assessment; it never
      says to block, quarantine, isolate, allowlist, suppress, close an alert or
      declare an incident. Those decisions need asset criticality, business
