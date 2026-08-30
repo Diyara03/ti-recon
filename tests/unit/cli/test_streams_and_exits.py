@@ -264,11 +264,18 @@ def test_a_closed_pipe_is_not_a_traceback() -> None:
 
     from ti_recon.cli.main import main
 
+    # ``main`` owns a process, so it configures the package logger. Restored
+    # here because this test is not a process: leaving it configured would
+    # detach the logger for every test that ran afterwards, which is exactly
+    # the leak that moved this call out of ``run`` in the first place.
+    logger = logging.getLogger("ti_recon")
+    saved = (list(logger.handlers), logger.propagate, logger.level)
     original = (sys.stdout, sys.stderr)
     sys.stdout, sys.stderr = _ClosedPipe(), io.StringIO()
     try:
         code = main(["schema", "report"])
     finally:
         sys.stdout, sys.stderr = original
+        logger.handlers, logger.propagate, logger.level = saved
 
     assert code == EXIT_OK

@@ -354,3 +354,11 @@ incorporates the readiness result id, which incorporates the Task 17 assessment
 id, which is built over `Evidence.id` — a UUID minted when the evidence was
 collected. Deterministic for one stored investigation; different across fresh
 collections of the same intelligence, exactly as every id below it is.
+
+## What consumes this
+
+`InvestigationResult` is the internal record. Task 20 projects it onto
+`AnalystInvestigationReport`, which is the supported contract an application
+receives — bounded, versioned separately, and stable across refactors of the
+layers above. The full result stays reachable for anyone debugging a
+disagreement between layers. See `docs/analyst-output.md`.
