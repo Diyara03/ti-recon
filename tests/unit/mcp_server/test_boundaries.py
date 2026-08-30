@@ -477,3 +477,145 @@ def test_the_remote_composition_never_loads_environment_credentials() -> None:
 
     for path, text in _sources():
         assert "load_environment_credentials" not in text, path.name
+
+
+# --------------------------------------------------------------------------- #
+# HTTP stops at the MCP boundary too
+# --------------------------------------------------------------------------- #
+
+
+def test_the_engine_imports_no_http_server_machinery() -> None:
+    """Extends the token ban to the transport that carries one.
+
+    ``application/``, ``execution/``, ``credentials/``, ``providers/`` and
+    ``reasoning/`` must not learn that HTTP serving exists. ``providers/`` is an
+    HTTP *client* of third parties and imports ``httpx`` legitimately; what none
+    of them may import is a server framework, which is the only way to reach an
+    inbound request, a header, or ``AuthSettings``.
+    """
+    forbidden = ("starlette", "uvicorn", "fastapi", "asgiref", "hypercorn")
+    for path, source in _engine_sources():
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            names = (
+                [alias.name for alias in node.names]
+                if isinstance(node, ast.Import)
+                else [node.module or ""]
+                if isinstance(node, ast.ImportFrom)
+                else []
+            )
+            for name in names:
+                assert not name.startswith(forbidden), f"{path} imports {name}"
+
+
+def test_no_engine_module_names_an_http_auth_symbol() -> None:
+    """``AuthSettings``, ``Request`` and the transport knobs stay above the line."""
+    symbols = frozenset(
+        {
+            "AuthSettings",
+            "TransportSecuritySettings",
+            "RemoteHttpConfig",
+            "StrictTokenVerifier",
+            "RemotePrincipal",
+            "build_remote_http_app",
+            "streamable_http_app",
+        }
+    )
+    for path, source in _engine_sources():
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    assert alias.name not in symbols, f"{path} imports {alias.name}"
+            if isinstance(node, ast.Name):
+                assert node.id not in symbols, f"{path} names {node.id}"
+
+
+def test_the_remote_builder_never_registers_the_file_tool() -> None:
+    """Read from the AST, so "hidden from the docs" cannot pass for "absent".
+
+    ``build_remote_server`` must pass ``local_file_tool=False``, and the file
+    tool's registration must live behind that flag rather than beside it.
+    """
+    source = (MCP_PACKAGE / "server.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    remote = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "build_remote_server"
+    )
+    flags = {
+        keyword.arg: keyword.value
+        for node in ast.walk(remote)
+        if isinstance(node, ast.Call)
+        for keyword in node.keywords
+    }
+    value = flags.get("local_file_tool")
+    assert isinstance(value, ast.Constant) and value.value is False
+
+    register = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_register_tools"
+    )
+    guarded = [
+        node
+        for node in ast.walk(register)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Name)
+        and node.test.id == "local_file_tool"
+    ]
+    assert guarded, "the file tool must be registered behind the profile flag"
+
+
+def test_the_remote_modules_name_no_provider() -> None:
+    """Which source answers a question stays Task 13's ranked decision.
+
+    The transport layer must not be able to express a preference, so no module
+    added for HTTP may import an adapter or name one.
+    """
+    for name in ("http.py", "limits.py", "auth.py", "principal.py"):
+        source = (MCP_PACKAGE / name).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                assert not node.module.startswith("ti_recon.providers."), f"{name}: {node.module}"
+        for provider in ("virustotal", "urlscan", "greynoise", "censys", "abuse", "gti"):
+            assert provider not in source.lower().replace("provider", ""), f"{name}: {provider}"
+
+
+def test_no_permissive_token_verifier_ships() -> None:
+    """A development verifier reachable from production would end this boundary.
+
+    The one implementation in ``src`` is the strict wrapper, and it composes over
+    an injected delegate it has no default for.
+    """
+    for path, source in _sources():
+        lowered = source.lower()
+        for banned in ("unsafetokenverifier", "developmentverifier", "insecuretokenverifier"):
+            assert banned not in lowered.replace(" ", ""), f"{path.name}: {banned}"
+
+    tree = ast.parse((MCP_PACKAGE / "http.py").read_text(encoding="utf-8"))
+    factory = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "build_remote_http_app"
+    )
+    delegate = next(item for item in factory.args.kwonlyargs if item.arg == "delegate")
+    index = factory.args.kwonlyargs.index(delegate)
+    assert factory.args.kw_defaults[index] is None, "delegate must have no default"
+
+
+def test_no_remote_console_script_is_published() -> None:
+    """Running a remote server needs a real verifier, and that needs an IdP.
+
+    Shipping an entry point today would mean shipping something for it to
+    construct, and the only candidates are the three verifiers that must never
+    exist. The next phase adds both together.
+    """
+    manifest = Path("pyproject.toml").read_text(encoding="utf-8")
+    assert "ti-recon-mcp-http" not in manifest
+    assert "uvicorn" not in manifest
+    for path, source in _sources():
+        assert "--workers" not in source, path.name
