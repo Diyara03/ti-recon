@@ -76,7 +76,12 @@ information *within* them.
 - **Calls are never repeated.** Task 13's state carries what has been asked, so a
   continuation cannot re-ask it. This is not left to the cache: a cache is an
   optimisation, and correctness that depends on one breaks the first time it
-  misses.
+  misses. What is carried is `(provider_id, capability)` — a *question*, not a
+  source. A provider that answered a reputation lookup remains eligible for a
+  behaviour lookup, because a response shaped by what was requested has genuinely
+  not answered the other question yet. Where a provider declares
+  `capability_invariant_response`, Task 13 credits everything the one document
+  answered, and the second call never happens at all.
 - **Pivot budget and hop limit are investigation-wide.** `MAX_AUTOMATIC_PIVOT_HOP`
   stays 1 across every round, and a target enriched in round one is not enriched
   again in round two — which is also how a second hop would appear without anyone
@@ -86,6 +91,41 @@ Cache hits, coalesced results and local credential-free sources are valid covera
 at zero remote cost. The workflow therefore does **not** stop when the remote
 allowance empties: it hands the remaining state to Task 13 and lets its locality
 policy decide, because a local check that costs nothing may still close the gap.
+
+### Two allowances, one unit each
+
+The root observable and the pivot targets spend **different** budgets, and this is
+deliberate rather than accidental:
+
+| Allowance | Bounds | Carried by | Charged on |
+| --- | --- | --- | --- |
+| `EnrichmentBudget` | provider runs about the *submitted* observable | `PlanningState`, through `continuation()` | `called_provider` |
+| `PivotBudget` | targets and provider runs about things the root merely touched | `CorrelationSession` | `called_provider`, via Task 13's own figure |
+
+A pivot is handed the *remaining pivot* allowance as a Task 13
+`max_remote_provider_runs` reduction, and its planning state is its own — a pivot
+is a different observable with its own goals, and carrying the root's spend into
+it would charge one call to two budgets. Neither allowance can rise: the
+investigation's maximum remote disclosure is the sum of the two, both of which are
+reduction-only and both of which survive every continuation.
+
+Charging is on `called_provider` in both, so a cache hit, a coalesced request, a
+cooldown, an unconfigured credential and every local provider cost nothing on
+either side. A pivot served from cache discloses nothing and is free.
+
+### Where a pivot's results go
+
+Into the graph, *and* into the reasoning stages. Every provider outcome the
+investigation produced — root and pivot alike — is recorded on the
+`CorrelationSession`, and Tasks 15-18 read the whole set. A pivot result that
+reached the graph but not the session would leave the picture looking complete
+while the evidence behind half of it had never been qualified, explained or
+assessed.
+
+Present is not decisive. A pivot claim is indexed, qualified, explained and
+recorded as a contribution, and it does **not** vote on the root's verdict —
+Task 17 admits only claims whose subject is the assessment's own target. That
+rule needs the claims to exist in order to have anything to decline.
 
 ## 4. Continuation directives name capabilities
 

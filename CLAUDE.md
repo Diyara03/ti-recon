@@ -1148,13 +1148,49 @@ about it.
      investigation-wide, and a target enriched in one round is not enriched again
      in the next.
 
+111a. **A logical call is a provider *and* a question.** What carries between
+     rounds is `(provider_id, capability)`, so a source that answered a
+     reputation lookup stays eligible for the behaviour lookup it has genuinely
+     not answered — excluding it by provider id would turn one answered question
+     into a permanently unanswerable one. Where a provider declares
+     `capability_invariant_response`, Task 13 credits everything the one document
+     answered and the second call never happens; where it does not, the second
+     call is real incremental work. A whole provider is set aside only for the
+     failures Task 13 already treats as provider-wide — a refused credential, a
+     spent quota, an unreachable endpoint — and never because it answered
+     `NO_DATA`. The planner's attempt `sequence` continues across rounds, which
+     is what makes it an identity rather than a position: the round merge is
+     keyed on it, an identical record deduplicates, and two different records
+     sharing one sequence raise rather than overwrite.
+
+111b. **Root and pivot spend two allowances, and each call is charged once.**
+     `EnrichmentBudget` bounds provider runs about the submitted observable and
+     carries in the planning state; `PivotBudget` bounds targets and runs about
+     things the root merely touched and carries in the `CorrelationSession`. A
+     pivot receives the remaining pivot allowance as a Task 13 reduction and
+     plans from its own state — carrying the root's spend into it would charge
+     one call to two budgets, and carrying the root's focus would let readiness
+     decide what a pivot may ask. Both are charged on `called_provider`, so a
+     cached, coalesced or local pivot is free, and neither can rise: the
+     investigation's maximum remote disclosure is the sum of two reduction-only
+     limits. Every outcome either produces — root and pivot alike — is recorded
+     on the session and reaches Tasks 15-18. A pivot result that reached the
+     graph but not the reasoning stages would leave the picture looking complete
+     while the evidence behind half of it had never been qualified, explained or
+     assessed; that the claim then declines to vote on the root's verdict is
+     Task 17's rule, and it needs the claim to exist in order to decline it.
+
 112. **Pre-call family separation is a planning hint, not proof of
      independence.** A benign-challenge directive carries the families already
      known to share the benign basis's origin so the planner can prefer another,
      but a source that looks unrelated may relay the very origin it was meant to
      challenge. Task 17 regroups from the returned provenance and Task 18 reports
      the challenge still missing; the workflow never declares the answer
-     independent because it picked a different family.
+     independent because it picked a different family. The hint belongs to the
+     need that asked for independence and to no other: whether a sandbox shares
+     an origin with something that called the file benign has no bearing on what
+     the sandbox watched it do, and attaching the families to every directive
+     would record a constraint nobody asked for.
 
 113. **New evidence recomputes everything.** Tasks 15-18 re-run over the
      accumulated state rather than patching an old conclusion, using one instant
