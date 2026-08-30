@@ -357,3 +357,92 @@ async def test_the_server_instructions_stay_short_and_say_the_two_hard_parts() -
     assert "never votes" in lowered
     # Local transport is not offline collection.
     assert "does not make collection local" in lowered
+
+
+# --------------------------------------------------------------------------- #
+# Human approval for local file access
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_only_the_file_tool_asks_the_host_for_human_approval() -> None:
+    """Reading a file off somebody's disk deserves its own beat.
+
+    Claude Code reads this key and prompts on every call, including where an
+    allow rule would otherwise match — which is exactly the case worth
+    protecting: a standing yes to investigating observables must not become a
+    standing yes to opening local files.
+
+    The other two tools do not carry it, because asking for approval where none
+    is warranted trains a user to click through the ones that are.
+    """
+    server, _ = await _server()
+
+    async with Client(server) as client:
+        tools = {item.name: item for item in (await client.list_tools()).tools}
+
+    assert tools["investigate_file"].meta == {"anthropic/requiresUserInteraction": True}
+    assert tools["investigate_observable"].meta is None
+    assert tools["provider_status"].meta is None
+
+
+@pytest.mark.asyncio
+async def test_the_approval_key_reaches_the_wire_as_meta() -> None:
+    """It has to survive serialization to do anything.
+
+    A host reads ``_meta`` off the tool description; a key that only existed on
+    the Python object would be advisory to nobody.
+    """
+    server, _ = await _server()
+
+    async with Client(server) as client:
+        tools = {item.name: item for item in (await client.list_tools()).tools}
+    wire = tools["investigate_file"].model_dump(mode="json", by_alias=True)
+
+    assert wire["_meta"] == {"anthropic/requiresUserInteraction": True}
+
+
+@pytest.mark.asyncio
+async def test_consent_is_never_something_the_model_can_assert() -> None:
+    """No ``user_confirmed`` argument, because the model would set it.
+
+    Human approval belongs to the host, which can actually ask a human.
+    """
+    server, _ = await _server()
+
+    async with Client(server) as client:
+        tools = {item.name: item for item in (await client.list_tools()).tools}
+    surface = _field_names(tools["investigate_file"].input_schema)
+
+    for forbidden in ("confirm", "consent", "approved", "acknowledged"):
+        assert not any(forbidden in item for item in surface), forbidden
+
+
+@pytest.mark.asyncio
+async def test_the_metadata_changed_nothing_else_about_the_tool() -> None:
+    """Annotations, schemas and the description are untouched.
+
+    A permission hint must not quietly alter the contract a consumer already
+    integrated against.
+    """
+    server, _ = await _server()
+
+    async with Client(server) as client:
+        tools = {item.name: item for item in (await client.list_tools()).tools}
+    tool = tools["investigate_file"]
+
+    assert tool.annotations is not None
+    assert tool.annotations.read_only_hint is True
+    assert tool.annotations.open_world_hint is True
+    assert set(tool.input_schema["properties"]) == {
+        "path",
+        "depth",
+        "pivot_mode",
+        "allow_remote_pivot_lookup",
+    }
+    assert tool.output_schema == tools["investigate_observable"].output_schema
+    # The wording that carries the real boundary is still there.
+    description = (tool.description or "").lower()
+    assert "locally" in description
+    assert "not uploaded" in description or "never uploaded" in description
+    assert "detonation" in description

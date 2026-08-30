@@ -1440,6 +1440,18 @@ about it.
      nothing else; logging is configured by the entry point, never by the
      reusable factory.
 
+131. **Reading a local file needs a human, where the host can ask one.**
+     `investigate_file` carries `anthropic/requiresUserInteraction` in its
+     tool `_meta`, so Claude Code prompts on every call even when an allow rule
+     would match — a standing yes to investigating observables must not become
+     a standing yes to opening files. It is advisory and host-specific: a client
+     that does not know the key ignores it, which is why the real boundaries
+     stay elsewhere — the user selects the file, Task 20 accepts only a regular
+     file, the bytes are hashed locally and never sent, and an agent may not
+     browse for samples. Consent is never an input field: a model sets its own
+     arguments, so `user_confirmed` would be consent from nobody. A future Skill
+     must not pre-approve these tools with `allowed-tools`.
+
 126. **Task 20 recommends no action.** The report states an assessment; it never
      says to block, quarantine, isolate, allowlist, suppress, close an alert or
      declare an incident. Those decisions need asset criticality, business

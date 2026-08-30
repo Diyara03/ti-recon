@@ -25,7 +25,7 @@ is the only thing that turns one into a running process.
 from __future__ import annotations
 
 import json
-from typing import Annotated
+from typing import Annotated, Any
 
 from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
@@ -42,6 +42,7 @@ from ti_recon.reporting.models import AnalystInvestigationReport
 from ti_recon.reporting.schema import report_json_schema, request_json_schema
 
 __all__ = [
+    "FILE_TOOL_META",
     "REPORT_SCHEMA_URI",
     "REQUEST_SCHEMA_URI",
     "SERVER_INSTRUCTIONS",
@@ -56,6 +57,24 @@ REPORT_SCHEMA_URI = "ti-recon://schema/report"
 
 #: JSON Schema documents, not arbitrary JSON. Both are Draft 2020-12.
 _SCHEMA_MIME = "application/schema+json"
+
+#: Ask the host to obtain human approval every time the file tool runs.
+#:
+#: An Anthropic extension key, carried in the tool's ``_meta``. Claude Code
+#: 2.1.199 and later reads it and prompts on every call — including where an
+#: allow rule would otherwise match, which is the point: a standing "yes" to
+#: investigating observables should not become a standing "yes" to reading
+#: files off somebody's disk.
+#:
+#: **Defence in depth, and advisory.** A host that does not know the key ignores
+#: it, so this is never the boundary that matters most. Those are: the user
+#: chooses the file, Task 20 refuses anything that is not a regular file, the
+#: bytes are hashed locally and never sent, and the Skill may not go looking for
+#: files on its own. This only adds a human beat in the hosts that support it.
+#:
+#: Deliberately *not* an input field. A ``user_confirmed`` argument would be set
+#: by the model, which is not consent from anybody.
+FILE_TOOL_META: dict[str, Any] = {"anthropic/requiresUserInteraction": True}
 
 #: What a client is told about this server, kept short.
 #:
@@ -191,6 +210,7 @@ def _register_tools(server: MCPServer, runtime: McpRuntime) -> None:
     @server.tool(
         title="Investigate a local file",
         annotations=ToolAnnotations(read_only_hint=True, open_world_hint=True),
+        meta=FILE_TOOL_META,
     )
     async def investigate_file(
         path: Annotated[

@@ -68,6 +68,21 @@ submitted for detonation; its bytes do not leave the machine. Special files —
 pipes, devices — are refused rather than opened, because opening a pipe waits
 for a writer and would hang the call.
 
+Reading a file off somebody's disk gets its own consent beat. The tool carries
+`anthropic/requiresUserInteraction` in its `_meta`, and **Claude Code 2.1.199+
+prompts for human approval on every call — including where an allow rule would
+otherwise match it**. That is the case worth protecting: a standing yes to
+investigating observables should not quietly become a standing yes to opening
+local files. Other MCP clients apply their own permission model and may ignore
+the key.
+
+It is defence in depth, never the boundary that matters most. Those are: the
+user chooses the file, Task 20 refuses anything that is not a regular file, the
+bytes are hashed locally and never sent, and an agent driving this server must
+not go looking for files on its own. There is deliberately no `user_confirmed`
+argument — a model can set its own arguments, so that would be consent from
+nobody.
+
 ### `provider_status`
 
 Which sources this installation can use, what they cover, and whether their
