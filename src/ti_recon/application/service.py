@@ -14,6 +14,7 @@ the input, run the workflow, project the result.
 from __future__ import annotations
 
 import hashlib
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -115,11 +116,28 @@ def hash_local_file(path: Path) -> str:
     """The SHA-256 of a local file, computed here and nowhere else.
 
     The *only* thing that leaves this function is a digest. The bytes are read
-    in chunks, hashed, and discarded: nothing uploads the file, submits it for
-    detonation, or puts its content in a provider request. A hash lookup asks
-    "has anyone seen this exact sample?", which is a question a sample's owner
-    can ask without handing the sample to anybody.
+    a megabyte at a time, hashed, and discarded — never accumulated, so a large
+    sample costs a constant amount of memory — and nothing uploads the file,
+    submits it for detonation, or puts its content in a provider request. A hash
+    lookup asks "has anyone seen this exact sample?", which is a question a
+    sample's owner can ask without handing the sample to anybody.
+
+    **Regular files only.** Opening a FIFO blocks until somebody writes to it,
+    and a character device can be endless, so either would hang the command with
+    no output and no way to tell why. The check is against the *resolved* target,
+    so a symlink to a real file is followed deliberately — an analyst pointing at
+    a symlink means the file — while a symlink to a pipe is refused like the pipe
+    it is.
     """
+    try:
+        status = path.stat()
+    except OSError as error:
+        msg = f"cannot read {path}: {error.strerror or type(error).__name__}"
+        raise InvalidObservableError(msg) from error
+    if not stat.S_ISREG(status.st_mode):
+        msg = f"{path} is not a regular file"
+        raise InvalidObservableError(msg)
+
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         while chunk := handle.read(_READ_CHUNK):
