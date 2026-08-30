@@ -410,11 +410,18 @@ has never shipped and no persistent `1.0.0` assessment corpus exists, so the
 pre-release corrections above did not bump it.
 
 From the point at which a fusion policy version ships — or any assessment is
-persisted under it — a behavioural change to claim mapping, the compatibility
-table, independence, verdict rules or confidence rules **requires a version
-bump**, because the version is what distinguishes the resulting assessment
-identity. There is no migration machinery and none is needed yet; the rule is the
-mechanism.
+persisted under it — a behavioural change to any of
+
+- claim mapping (which semantic a provider's evidence becomes),
+- claim strength (asserted vs suspected, and the decision roles),
+- the compatibility table,
+- independence,
+- verdict rules,
+- confidence rules or caps,
+
+**requires an explicit policy-version review and bump**, because the version is
+what distinguishes the resulting assessment identity. There is no migration
+machinery and none is needed yet; the rule is the mechanism.
 
 ### The verdict is about the target, and only the target
 

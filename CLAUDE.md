@@ -926,9 +926,10 @@ about it.
     intelligence does not — the cross-run identity is the proposition
     (`subject + semantic + scope`). `FUSION_POLICY_VERSION` 1.0.0 is the first
     finalized policy; once a version has shipped or assessments are persisted
-    under it, any behavioural change to claim mapping, compatibility,
-    independence, verdict rules or confidence rules requires a bump, because the
-    version is what distinguishes the resulting assessment identity.
+    under it, any behavioural change to claim mapping, claim strength,
+    compatibility, independence, verdict rules or confidence rules requires an
+    explicit review and bump, because the version is what distinguishes the
+    resulting assessment identity.
     `FusionAssessment` is the authoritative
     assessment from Task 17 onward; Task 3's `Assessment` is legacy, retained for
     backward compatibility, and a boundary test asserts `claims/` and `fusion/`
