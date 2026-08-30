@@ -26,6 +26,7 @@ import pytest
 from fixtures.readiness import (
     assess,
     attempt,
+    bundled_call,
     coverage_item,
     file_object,
     scenario,
@@ -44,6 +45,7 @@ from ti_recon.reasoning.readiness import (
     CheckCompletion,
     ContinuationState,
     GapType,
+    InformationYield,
     ReadinessStatus,
     RequirementStatus,
     continuation_for,
@@ -427,3 +429,261 @@ def test_a_blocked_gap_survives_alongside_an_addressable_one() -> None:
     assert GapType.BUDGET_LIMITED in gap_types
     assert result.continuation_state is ContinuationState.MORE_DATA_AVAILABLE
     assert result.readiness_status is ReadinessStatus.NEEDS_MORE_DATA
+
+
+# --------------------------------------------------------------------------- #
+# Yield stays with the capability that produced it
+# --------------------------------------------------------------------------- #
+
+
+def test_a_secondary_bundled_capability_does_not_inherit_the_primary_yield() -> None:
+    """One envelope, two capabilities, and the information belongs to one of them.
+
+    The primary returned a directional claim. Letting that become the secondary
+    capability's yield would manufacture a finding about a question the response
+    may never have answered — and would let a context requirement report itself
+    as directionally informed.
+
+    Yield is derived only from attempts keyed to the capability, so a secondary
+    reports ``NONE``: honest about the fact that Task 13 records the outcome per
+    *call*, not per capability.
+    """
+    result = assess(_bundled(CoverageStatus.COVERED))
+
+    primary = _evaluation(result, REPUTATION)
+    secondary = _evaluation(result, INTELLIGENCE)
+
+    assert primary.information_yield is InformationYield.DIRECTIONAL
+    assert secondary.information_yield is not InformationYield.DIRECTIONAL
+    assert secondary.information_yield is InformationYield.NONE
+    # Completion is restored from coverage; yield is not invented alongside it.
+    assert secondary.completion is CheckCompletion.COMPLETE
+
+
+def test_completion_never_implies_a_yield() -> None:
+    """The two axes stay independent in both directions.
+
+    A covered capability may have returned anything or nothing, and a coverage
+    item carries no semantic information about which. Deriving ``DIRECTIONAL``
+    from ``COVERED`` would read a fact the record does not contain.
+    """
+    covered = _evaluation(assess(_bundled(CoverageStatus.COVERED)), INTELLIGENCE)
+    no_data = _evaluation(
+        assess(
+            _bundled(CoverageStatus.NOT_COVERED).with_attempt(
+                attempt(
+                    INTELLIGENCE,
+                    provider="beta",
+                    source_family="fam_b",
+                    status=ProviderRunStatus.NO_DATA,
+                )
+            )
+        ),
+        INTELLIGENCE,
+    )
+
+    assert covered.completion is CheckCompletion.COMPLETE
+    assert covered.information_yield is InformationYield.NONE
+
+    assert no_data.completion is CheckCompletion.COMPLETE
+    assert no_data.information_yield is InformationYield.NO_DATA
+
+
+def test_a_context_capability_never_inherits_a_directional_yield() -> None:
+    """Protects the challenge rules from a bundled directional result.
+
+    A bundle whose primary was a threat search and whose secondary was context
+    must leave the context requirement non-directional, or an adverse search
+    would appear to have happened wherever one was bundled alongside anything.
+    """
+    root = file_object(sha256="f" * 64)
+    result = assess(
+        scenario(root)
+        .with_claim("aggregated_reputation", provider="alpha", source_family="fam_a")
+        .with_attempt(attempt(REPUTATION, provider="alpha", source_family="fam_a"))
+        .with_coverage(coverage_item(REPUTATION, status=CoverageStatus.COVERED))
+        .with_coverage(
+            coverage_item(ProviderCapability.FALSE_POSITIVE_CONTEXT, status=CoverageStatus.COVERED)
+        )
+    )
+    context = _evaluation(result, ProviderCapability.FALSE_POSITIVE_CONTEXT)
+
+    assert context.information_yield is not InformationYield.DIRECTIONAL
+
+
+def test_separate_and_bundled_calls_agree_on_yield_per_requirement() -> None:
+    """Extends the equivalence property to the yield of every requirement.
+
+    Where the same per-capability results arrive as two executions or one, every
+    requirement must report the same completion *and* the same yield. Any
+    difference would mean readiness could tell how many requests were made.
+    """
+    root = file_object(sha256="c" * 64)
+
+    def scene(bundled: bool):
+        base = (
+            scenario(root)
+            .with_claim("aggregated_reputation", provider="alpha", source_family="fam_a")
+            .with_attempt(attempt(REPUTATION, provider="alpha", source_family="fam_a"))
+            .with_coverage(coverage_item(REPUTATION, status=CoverageStatus.COVERED))
+            .with_coverage(coverage_item(INTELLIGENCE, status=CoverageStatus.COVERED))
+        )
+        if not bundled:
+            # The secondary answered separately, with the same empty result the
+            # bundled response gave it.
+            base = base.with_attempt(
+                attempt(
+                    INTELLIGENCE,
+                    provider="alpha",
+                    source_family="fam_a",
+                    status=ProviderRunStatus.NO_DATA,
+                    sequence=2,
+                )
+            )
+        return base
+
+    separate = assess(scene(bundled=False))
+    together = assess(scene(bundled=True))
+
+    assert together.readiness_status is separate.readiness_status
+    assert together.coverage_adequacy is separate.coverage_adequacy
+    assert together.continuation_state is separate.continuation_state
+    assert {gap.gap_type for gap in together.gaps} == {gap.gap_type for gap in separate.gaps}
+    assert [
+        (item.requirement.capability, item.status, item.completion)
+        for item in together.requirement_evaluations
+    ] == [
+        (item.requirement.capability, item.status, item.completion)
+        for item in separate.requirement_evaluations
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# An adverse search bundled as the secondary half of a call
+# --------------------------------------------------------------------------- #
+
+
+def _benign_with_bundle(primary, secondary, *, provider: str, family: str):
+    """A single-source benign basis, plus one independent bundled call."""
+    root = file_object(sha256="d" * 64)
+    return (
+        scenario(root)
+        .with_claim(
+            semantic="benign_reputation",
+            provider="alpha",
+            source_family="fam_a",
+            effect=EvidenceEffect.SUPPORTS_BENIGN,
+        )
+        .with_attempt(attempt(REPUTATION, provider="alpha", source_family="fam_a"))
+        .with_attempt(attempt(INTELLIGENCE, provider="alpha_i", source_family="fam_a"))
+        .with_coverage(coverage_item(REPUTATION))
+        .with_coverage(coverage_item(INTELLIGENCE))
+        .with_attempt(
+            attempt(
+                primary,
+                provider=provider,
+                source_family=family,
+                status=ProviderRunStatus.NO_DATA,
+            )
+        )
+        .with_call(
+            bundled_call(primary, frozenset({secondary}), provider=provider, source_family=family)
+        )
+    )
+
+
+def test_an_adverse_search_bundled_as_a_secondary_still_challenges() -> None:
+    """The search happened; no attempt was keyed to it.
+
+    Task 13 records one attempt per call under the primary capability, so a
+    threat search bundled behind an infrastructure lookup leaves no attempt of
+    its own. Reading attempts alone reported the benign assessment as
+    unchallenged and would send a later orchestration to buy a lookup that had
+    already run.
+
+    The planner's own record supplies both halves the rule needs:
+    ``answered_capabilities`` says the search was answered, ``source_family``
+    says by whom.
+    """
+    result = assess(
+        _benign_with_bundle(
+            ProviderCapability.SCANNER_CONTEXT, THREAT, provider="gamma", family="fam_gamma"
+        )
+    )
+
+    assert result.verdict is Verdict.LIKELY_BENIGN
+    assert not _challenge_missing(result)
+    assert result.readiness_status is not ReadinessStatus.NEEDS_MORE_DATA
+
+
+def test_a_bundled_secondary_from_the_benign_family_challenges_nothing() -> None:
+    """Independence still decides, whichever half of a bundle the search was."""
+    result = assess(
+        _benign_with_bundle(
+            ProviderCapability.SCANNER_CONTEXT, THREAT, provider="alpha_two", family="fam_a"
+        )
+    )
+
+    assert _challenge_missing(result)
+
+
+def test_a_bundle_whose_secondary_is_context_challenges_nothing() -> None:
+    """Relevance still decides too: bundling does not make context adverse."""
+    result = assess(
+        _benign_with_bundle(
+            ProviderCapability.SCANNER_CONTEXT,
+            ProviderCapability.CERTIFICATE_CONTEXT,
+            provider="gamma",
+            family="fam_gamma",
+        )
+    )
+
+    assert _challenge_missing(result)
+
+
+def test_a_bundled_challenge_creates_no_benign_evidence() -> None:
+    """Coverage improved; the assessment did not move.
+
+    One investigation assessed twice — before the bundled call is recorded and
+    after — so the evidence, and therefore the run-scoped assessment id, is the
+    same object throughout.
+    """
+    root = file_object(sha256="d" * 64)
+    scene = (
+        scenario(root)
+        .with_claim(
+            semantic="benign_reputation",
+            provider="alpha",
+            source_family="fam_a",
+            effect=EvidenceEffect.SUPPORTS_BENIGN,
+        )
+        .with_attempt(attempt(REPUTATION, provider="alpha", source_family="fam_a"))
+        .with_attempt(attempt(INTELLIGENCE, provider="alpha_i", source_family="fam_a"))
+        .with_coverage(coverage_item(REPUTATION))
+        .with_coverage(coverage_item(INTELLIGENCE))
+    )
+    baseline = assess(scene)
+
+    challenged = assess(
+        scene.with_attempt(
+            attempt(
+                ProviderCapability.SCANNER_CONTEXT,
+                provider="gamma",
+                source_family="fam_gamma",
+                status=ProviderRunStatus.NO_DATA,
+            )
+        ).with_call(
+            bundled_call(
+                ProviderCapability.SCANNER_CONTEXT,
+                frozenset({THREAT}),
+                provider="gamma",
+                source_family="fam_gamma",
+            )
+        )
+    )
+
+    assert _challenge_missing(baseline)
+    assert not _challenge_missing(challenged)
+    assert challenged.verdict is baseline.verdict is Verdict.LIKELY_BENIGN
+    assert challenged.confidence is baseline.confidence
+    assert challenged.assessment_id == baseline.assessment_id

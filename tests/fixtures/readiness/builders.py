@@ -34,6 +34,7 @@ from ti_recon.planning.models import (
     CallCostClass,
     EnrichmentBudget,
     NoveltyClass,
+    PlannedProviderCall,
     PlanningDecision,
     ProviderAttempt,
     ProviderLocality,
@@ -110,6 +111,34 @@ def attempt(
         produced_evidence=produced_evidence
         and status in {ProviderRunStatus.SUCCESS, ProviderRunStatus.PARTIAL},
         recorded_at=AS_OF,
+    )
+
+
+def bundled_call(
+    primary: ProviderCapability,
+    answered: frozenset[ProviderCapability],
+    *,
+    provider: str = "alpha",
+    source_family: str | None = None,
+    depth: InvestigationDepth = InvestigationDepth.STANDARD,
+) -> PlannedProviderCall:
+    """One request the planner bundled to answer several goals at once.
+
+    The shape Task 13 produces when a provider declares that one read returns
+    its whole document: ``capability`` is the goal that won the decision and
+    ``answered_capabilities`` is everything the response covers.
+    """
+    return PlannedProviderCall(
+        provider_id=provider,
+        capability=primary,
+        capabilities=frozenset({primary}) | answered,
+        answered_capabilities=frozenset({primary}) | answered,
+        source_family=source_family or provider,
+        locality=ProviderLocality.REMOTE,
+        cost_class=CallCostClass.LOW,
+        depth=depth,
+        reason=SelectionReason.MISSING_CAPABILITY,
+        novelty=NoveltyClass.NEW_CAPABILITY,
     )
 
 
@@ -193,6 +222,7 @@ class ReadinessScenario:
     attempts: list[ProviderAttempt] = field(default_factory=list)
     skips: list[SkippedCandidate] = field(default_factory=list)
     coverage: list[CoverageItem] = field(default_factory=list)
+    calls: list[PlannedProviderCall] = field(default_factory=list)
     signals: list[ContextSignal] = field(default_factory=list)
     findings: list[ReasoningFinding] = field(default_factory=list)
     stop_reason: StopReason = StopReason.GOALS_SATISFIED
@@ -204,6 +234,11 @@ class ReadinessScenario:
 
     def with_attempt(self, item: ProviderAttempt) -> ReadinessScenario:
         self.attempts.append(item)
+        return self
+
+    def with_call(self, item: PlannedProviderCall) -> ReadinessScenario:
+        """Record a bundled call the way the planner would."""
+        self.calls.append(item)
         return self
 
     def with_skip(self, item: SkippedCandidate) -> ReadinessScenario:
@@ -245,10 +280,18 @@ class ReadinessScenario:
         return self
 
     def planning(self) -> AdaptiveEnrichmentResult:
-        # Skips ride on the terminating decision, which is where the planner
-        # records the candidates it declined when the run stopped.
+        # One decision per bundled call, then a terminating decision carrying
+        # the candidates the planner declined when the run stopped.
         decisions = (
-            PlanningDecision(sequence=1, stop=self.stop_reason, skipped=tuple(self.skips)),
+            *(
+                PlanningDecision(sequence=index + 1, call=call)
+                for index, call in enumerate(self.calls)
+            ),
+            PlanningDecision(
+                sequence=len(self.calls) + 1,
+                stop=self.stop_reason,
+                skipped=tuple(self.skips),
+            ),
         )
         return AdaptiveEnrichmentResult(
             target=self.root,

@@ -183,6 +183,26 @@ Evidence for capability A never establishes coverage for capability B. The
 crediting comes from Task 13's own per-capability statement, never from the
 presence of evidence in a shared envelope, and never from reading a claim type.
 
+**Yield does not travel with completion.** `InformationYield` is derived only
+from attempts keyed to the capability, so a secondary bundled capability reports
+`NONE` — never the primary's `DIRECTIONAL`. That matters most for the challenge
+rules: a context requirement that inherited a directional yield would look like a
+search that had happened.
+
+The honest limit: Task 13 records the outcome per *call*, not per capability, so
+where one response answered two capabilities the repository cannot say which of
+them returned data, context or nothing. `NONE` is the narrowest representation
+the existing vocabulary offers, and no yield is guessed from evidence sharing the
+envelope. Nothing decides on yield — it is reported and counted — so the
+imprecision costs a summary figure rather than an answer.
+
+An adverse search can also arrive as the *secondary* half of a bundle, leaving no
+attempt of its own. The benign challenge therefore reads `PlanningDecision.call`
+as well: `answered_capabilities` says the search was answered and `source_family`
+says by whom, which is exactly what independence is judged on. A `CoverageItem`
+would not do here — it records candidacy rather than who answered, so crediting a
+challenge from it could let the benign basis's own family challenge itself.
+
 ## 7. Aggregation is at the capability
 
 Three sources may serve one capability. If one is unconfigured, one is out of

@@ -1025,6 +1025,19 @@ about it.
      comes from Task 13's per-capability statement rather than from evidence
      sharing an envelope.
 
+102e. **Yield belongs to the capability that produced it.** `InformationYield`
+     comes only from attempts keyed to the capability, so a secondary bundled
+     capability reports `NONE` and never the primary's `DIRECTIONAL` — a context
+     requirement inheriting a directional yield would look like a search that
+     happened. Task 13 records outcomes per *call*, so where one response
+     answered two capabilities the repository cannot say which returned data,
+     context or nothing; `NONE` is the narrowest available representation and
+     nothing is guessed from evidence sharing an envelope. An adverse search
+     bundled as a secondary is still found, through
+     `PlanningDecision.call.answered_capabilities` plus its `source_family` —
+     never through a coverage item, which records candidacy rather than who
+     answered.
+
 102d. **The benign challenge must be independent *and* relevant.** Independence
      alone is not enough: the challenging check has to be an adverse search, from
      the small explicit set `REPUTATION` / `MALWARE_INTELLIGENCE` /
