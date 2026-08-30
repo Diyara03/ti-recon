@@ -22,6 +22,9 @@ dependencies = [
 # The analyst entry point (Task 20). Stdlib argparse only: the CLI adds no
 # dependency that every consumer of the library would then inherit.
 ti-recon = "ti_recon.cli.main:main"
+# The local MCP server (Task 21). A server process spoken to over stdio by a
+# host, not a command a person runs interactively.
+ti-recon-mcp = "ti_recon.mcp_server.main:main"
 
 [project.optional-dependencies]
 dev = [
