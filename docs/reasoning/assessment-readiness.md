@@ -51,6 +51,14 @@ other than `COMPLETE` requires at least one — so those pairings are unreachabl
 by construction rather than merely unused, and a test enumerates the reachable
 set to keep it that way.
 
+When material gaps disagree about what can be done next, precedence is
+**addressable, then blocked, then exhausted**. An orchestrator's question is "can
+anything still be attempted now?", so a run with one addressable gap and one
+blocker reports `MORE_DATA_AVAILABLE`. The blocker does not disappear — it stays
+in `gaps` — and once the addressable work is done a later evaluation surfaces it
+as the remaining obstacle. Reporting `BLOCKED` first would stop a run that still
+had useful work in front of it.
+
 `READY` means **no material gap remains**, not "nothing else could conceivably be
 queried". An optional capability that was never obtained is an execution fact in
 the trace, not a headline limitation; otherwise every investigation would be
@@ -150,6 +158,31 @@ so it is classified `BUDGET_LIMITED` rather than "no source exists". Reporting a
 budget stop as unanswerable would tell an operator to give up on a question a
 larger allowance would answer.
 
+### One call can answer several capabilities
+
+Task 13 bundles compatible goals into a single request wherever a provider
+declares that one read returns its whole document, and it records **one**
+`ProviderAttempt` carrying that call's *primary* capability. The capabilities the
+response actually answered are credited in the `CoverageItem`s instead.
+
+So the two records describe different things, and readiness reads both:
+
+| Record | Says |
+|---|---|
+| `ProviderAttempt` | what was executed, and why anything failed |
+| `CoverageItem` | which capabilities were **answered** |
+
+Completion takes the better of the two. A ledger built from attempts alone
+reports a bundled capability as never attempted and demands a second call the
+planner deliberately avoided — a gap no enrichment could close, because the
+information is already in hand. Reading the coverage record does not hide
+execution problems: a blocked attempt for a capability covered elsewhere stays in
+that requirement's check trace.
+
+Evidence for capability A never establishes coverage for capability B. The
+crediting comes from Task 13's own per-capability statement, never from the
+presence of evidence in a shared envelope, and never from reading a claim type.
+
 ## 7. Aggregation is at the capability
 
 Three sources may serve one capability. If one is unconfigured, one is out of
@@ -194,6 +227,19 @@ defensible test available, and it is *weaker* than Task 17's claim-level
 precision — two sources silently sharing an upstream feed are indistinguishable
 here. That is a limit of what the execution record contains, and it is not
 papered over by inventing an origin the data never had.
+
+**Independence is necessary and not sufficient.** The challenging check must also
+be an adverse search: a capability whose job is to look for what is known against
+the object. That is a small explicit set — `REPUTATION`, `MALWARE_INTELLIGENCE`,
+`THREAT_ASSOCIATIONS` — declared in policy and provider-neutral. A separate
+origin that only looked at infrastructure exposure, certificate context,
+scanner context or business-service membership has searched for nothing adverse,
+however independent it is, and leaves the challenge unmet.
+
+`FILE_BEHAVIOR` is deliberately outside the set: watching a sample run is a
+different question from searching for what is known about it, and letting one
+stand in for the other would satisfy the challenge without anybody having
+searched.
 
 The other benign route — every malicious claim specifically explained at exact
 scope — has already engaged with adverse evidence, and needs no separate

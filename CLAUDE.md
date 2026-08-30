@@ -1014,6 +1014,27 @@ about it.
      strongest available test and is documented as weaker than claim-level
      precision rather than presented as equivalent.
 
+102c. **One call can answer several capabilities, and coverage says which.**
+     Task 13 bundles compatible goals into one request and records a single
+     attempt carrying the call's *primary* capability, crediting everything the
+     response answered in the `CoverageItem`s. Readiness reads both — attempts
+     for what executed and why anything failed, coverage for what was answered —
+     and takes the better. An attempts-only ledger reports a bundled capability
+     as never attempted and demands a call the planner deliberately avoided.
+     Evidence for one capability never establishes another, and the crediting
+     comes from Task 13's per-capability statement rather than from evidence
+     sharing an envelope.
+
+102d. **The benign challenge must be independent *and* relevant.** Independence
+     alone is not enough: the challenging check has to be an adverse search, from
+     the small explicit set `REPUTATION` / `MALWARE_INTELLIGENCE` /
+     `THREAT_ASSOCIATIONS`. Infrastructure exposure, certificate, scanner and
+     business-service context searched for nothing adverse however independent
+     they are, and `FILE_BEHAVIOR` is excluded because watching a sample run is
+     a different question from searching what is known about it. Mixed material
+     gaps resolve addressable-first, so a blocker never stops a run that still
+     has useful work in front of it, and it stays reported in `gaps`.
+
 102b. **Capability absence is a catalogue fact; execution history outranks it.**
      `providers_considered` is built by walking the registry and asking each
      descriptor what it supports, before budget, credentials, activation or
