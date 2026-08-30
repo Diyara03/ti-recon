@@ -51,6 +51,7 @@ from ti_recon.enums import InvestigationDepth
 from ti_recon.execution.models import ExecutionContext
 from ti_recon.investigation.engine import InvestigationError
 from ti_recon.mcp_server.auth import RemoteAuthenticationError
+from ti_recon.mcp_server.limits import TenantBusyError
 from ti_recon.mcp_server.models import ProviderStatusReport
 from ti_recon.mcp_server.runtime import McpRuntime
 from ti_recon.reporting.models import AnalystInvestigationReport
@@ -65,6 +66,15 @@ _LOGGER = logging.getLogger("ti_recon.mcp_server")
 #: exception string this process did not write and cannot vouch for.
 _INTERNAL_FAILURE = (
     "The investigation could not be completed because of an internal application error."
+)
+
+#: What a caller is told when they already have one running.
+#:
+#: Says nothing about anybody else's load, how long the other call has been
+#: going, or how many the server is handling. Only remote deployments have a
+#: limiter at all — over stdio there is one conversation and nothing to collide.
+_ALREADY_RUNNING = (
+    "Another investigation is already running for this account. Try again after it completes."
 )
 
 
@@ -194,6 +204,26 @@ async def _investigate(
     # authenticated for *this* request, and a failure to establish one is an
     # authentication problem rather than an investigation that went wrong.
     context = _context(runtime)
+    limiter = runtime.investigations
+    if limiter is None:
+        return await _run(runtime, request, context)
+    try:
+        async with limiter.hold(context.authenticated_user_id):
+            return await _run(runtime, request, context)
+    except TenantBusyError:
+        # A refusal the caller can act on, so a plain message rather than the
+        # generic internal one. It names nothing about them or about anybody
+        # else's load.
+        raise ToolError(_ALREADY_RUNNING) from None
+
+
+async def _run(
+    runtime: McpRuntime,
+    request: AnalystInvestigationRequest,
+    context: ExecutionContext,
+) -> AnalystInvestigationReport:
+    """The investigation itself, with only the failures a model could not foresee
+    converted."""
     try:
         return await runtime.application.investigate(request, context)
     except InvalidObservableError as error:
