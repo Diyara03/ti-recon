@@ -127,6 +127,76 @@ recorded as a contribution, and it does **not** vote on the root's verdict —
 Task 17 admits only claims whose subject is the assessment's own target. That
 rule needs the claims to exist in order to have anything to decline.
 
+## 3a. The capability envelope is frozen at the first round
+
+Depth bounds the *questions*, not only the budget. Task 13 decides which
+capabilities a root of this type is worth investigating at this depth; the
+workflow records that set once, from the first round's own coverage items, and
+every later round is bounded by it.
+
+```
+round 1 coverage  ─►  admissible capabilities  ─┐
+                                                ├─►  directives ⊆ admissible
+Task 18 material information needs  ────────────┘
+```
+
+Read from Task 13's answer rather than from a second copy of the depth table,
+which would eventually disagree with the first.
+
+**Why this is not a detail.** `requested_capabilities` is not a filter: Task 13
+turns every member into a `REQUIRED`, `IMMEDIATE` goal *whatever the depth
+template said*, because a caller naming a capability has overridden the default
+judgement. A continuation that added its directives there would therefore do
+three things nobody asked for — create a goal the requested depth never
+admitted, activate a conditional goal whose trigger had not fired, and promote
+an optional goal to required — and a QUICK investigation would become a DEEP one
+a capability at a time. So the planning request is byte-identical every round,
+and narrowing happens entirely through the session's focus.
+
+Three categories, deliberately not collapsed into two:
+
+| Category | Continuation may target it? |
+| --- | --- |
+| admissible at this depth, and active | yes |
+| admissible, activation condition not met | no — Task 13's activation rule stays authoritative |
+| outside the requested depth | never |
+
+When no admissible capability can address a material need, the workflow stops
+with `NO_ACTIONABLE_CONTINUATION` and records the issue. Readiness is right that
+more data would help; deciding the investigation should have been deeper is the
+caller's decision, and starting one remains theirs to make.
+
+## 3b. Excluding a source family from one question
+
+Readiness can require an adverse search *independent* of whatever produced an
+assessment. Family is the only provenance knowable before a call, so the
+directive carries the families Task 17 has already grouped with that origin, and
+Task 13 receives them as `excluded_source_families` — a mapping, not a set:
+
+```
+ContinuationDirective(capability=X, avoid_source_families={A})
+        │
+        ▼
+CorrelationSession.excluded_families = {X: {A}}
+        │
+        ▼
+PlanningState.family_excluded(X, "A") -> SkipReason.SOURCE_FAMILY_EXCLUDED
+```
+
+Keyed per capability throughout. One set for the whole round would withdraw a
+family from every other question too, where independence was never what was
+being asked and the family's answer is worth exactly what it always was.
+
+Checked before cost and budget, because the point is that this source cannot
+answer *this* question at all. Letting it win the ranking would spend the
+remaining allowance on a source that could not satisfy the requirement the round
+was released for, leaving the genuinely independent candidate unaffordable — so
+the investigation would end further from an answer than it began.
+
+Still not a proof of independence. A family nobody has linked to the origin is
+*potentially* independent; only the returned provenance settles it, and Task 17
+regroups from that afterwards.
+
 ## 4. Continuation directives name capabilities
 
 A directive says `FILE_BEHAVIOR`, never a sandbox. Which source can serve a

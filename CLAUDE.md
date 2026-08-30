@@ -1180,6 +1180,23 @@ about it.
      assessed; that the claim then declines to vote on the root's verdict is
      Task 17's rule, and it needs the claim to exist in order to decline it.
 
+111c. **A continuation narrows the planning space and never widens it.** The
+     capabilities Task 13 admitted for this root at this depth are frozen from
+     the first round — read from its own coverage items rather than from a
+     second copy of the depth table — and a readiness need naming anything
+     outside them produces no directive. `requested_capabilities` is not a
+     filter: Task 13 turns every member into a `REQUIRED`, `IMMEDIATE` goal
+     whatever the template said, so a continuation adding its directives there
+     would create a goal the depth never admitted, activate a conditional goal
+     whose trigger had not fired, and promote an optional goal to required —
+     turning QUICK into DEEP one capability at a time. The planning request is
+     therefore identical every round and narrowing happens only through focus.
+     Three categories stay distinct: admissible and active may be targeted;
+     admissible but unactivated is left to Task 13's activation rule; outside
+     the requested depth is never planned. Where no admissible capability can
+     address a material need the run stops with `NO_ACTIONABLE_CONTINUATION`,
+     because deciding an investigation should have been deeper is the caller's.
+
 112. **Pre-call family separation is a planning hint, not proof of
      independence.** A benign-challenge directive carries the families already
      known to share the benign basis's origin so the planner can prefer another,
@@ -1190,7 +1207,14 @@ about it.
      need that asked for independence and to no other: whether a sandbox shares
      an origin with something that called the file benign has no bearing on what
      the sandbox watched it do, and attaching the families to every directive
-     would record a constraint nobody asked for.
+     would record a constraint nobody asked for. The hint is *enforced*, not
+     merely recorded: it reaches Task 13 as `excluded_source_families`, a
+     capability-to-families mapping checked before cost and budget, because a
+     dependent source that wins the ranking spends the allowance the requirement
+     was released for and leaves the independent candidate unaffordable. A
+     different provider id in the same family is not independent information,
+     and a family barred from one capability answers every other exactly as
+     before.
 
 113. **New evidence recomputes everything.** Tasks 15-18 re-run over the
      accumulated state rather than patching an old conclusion, using one instant
