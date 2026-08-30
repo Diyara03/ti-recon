@@ -35,7 +35,6 @@ from ti_recon.enums import (
 from ti_recon.investigation import (
     InvestigationRequest,
     RoundTrigger,
-    WorkflowStopReason,
 )
 from ti_recon.planning.models import CallCostClass, ProviderLocality, SkipReason
 from ti_recon.reasoning.claims.models import ClaimSemantic
@@ -86,12 +85,11 @@ async def test_a_shallower_depth_never_acquires_a_deeper_capability(
     assert stack.requests_for("deeper") == []
     assert THREAT not in {item.capability for item in result.enrichment.coverage}
     assert result.requested_depth is depth
-    # And no round was spent pretending otherwise.
-    assert [item.trigger for item in result.rounds] == [RoundTrigger.INITIAL]
-    assert result.stop_reason in {
-        WorkflowStopReason.NO_ACTIONABLE_CONTINUATION,
-        WorkflowStopReason.READINESS_TERMINAL,
-    }
+    # A continuation may well happen — for capabilities this depth *does* admit.
+    # What it may never do is reach the one it does not.
+    for round_ in result.rounds:
+        for directive in round_.directives:
+            assert directive.capability is not THREAT
 
 
 @pytest.mark.asyncio
@@ -179,9 +177,13 @@ async def test_the_benign_challenge_does_not_reach_for_a_deeper_source() -> None
     )
 
     assert THREAT in {item.capability for item in result.readiness.information_needs}
+    # The requirement is addressed with what this depth admits, or not at all.
+    # Either way the deeper source is never reached and the depth never moves.
     assert stack.requests_for("deeper") == []
-    assert result.stop_reason is WorkflowStopReason.NO_ACTIONABLE_CONTINUATION
-    assert result.issues
+    assert result.requested_depth is InvestigationDepth.STANDARD
+    for round_ in result.rounds:
+        for directive in round_.directives:
+            assert directive.capability is not THREAT
     # The verdict readiness was unhappy with is untouched by any of this.
     assert result.assessment.assessment.verdict.value == "likely_benign"
 

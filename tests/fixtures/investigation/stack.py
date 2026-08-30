@@ -100,6 +100,10 @@ class ScriptedEvidence:
     #: Relationships to publish alongside, as ``(type, value, raw name)``.
     relations: tuple[tuple[RelationshipType, str, str], ...] = ()
     status: ProviderRunStatus = ProviderRunStatus.SUCCESS
+    #: Who actually produced the finding, when it is not the provider relaying
+    #: it. This is what makes a cross-family relay scriptable: a different
+    #: transport, a different family, and the same origin underneath.
+    origin_provider: str | None = None
 
 
 def claim_evidence(
@@ -110,6 +114,7 @@ def claim_evidence(
     claim_type: str | None = None,
     relations: tuple[tuple[RelationshipType, str, str], ...] = (),
     status: ProviderRunStatus = ProviderRunStatus.SUCCESS,
+    origin_provider: str | None = None,
 ) -> ScriptedEvidence:
     """One scripted directional finding.
 
@@ -126,6 +131,7 @@ def claim_evidence(
         semantic=semantic,
         relations=relations,
         status=status,
+        origin_provider=origin_provider,
     )
 
 
@@ -178,7 +184,7 @@ class ScriptedProvider(FakePlanningAdapter):
             claim_type=scripted.claim_type,
             effect=scripted.effect,
             transport_provider=provider_id,
-            origin_provider=provider_id,
+            origin_provider=scripted.origin_provider or provider_id,
             source_family=self.descriptor.source_family,
             match_scope=scripted.match_scope,
         )

@@ -141,7 +141,7 @@ async def test_a_continuation_runs_only_when_readiness_asks() -> None:
     assert result.rounds[0].readiness_status == ReadinessStatus.NEEDS_MORE_DATA.value
     assert result.rounds[0].continuation_state == ContinuationState.MORE_DATA_AVAILABLE.value
     assert result.rounds[1].trigger is RoundTrigger.READINESS_CONTINUATION
-    assert [item.capability for item in result.rounds[1].directives] == [INTELLIGENCE]
+    assert INTELLIGENCE in {item.capability for item in result.rounds[1].directives}
 
 
 @pytest.mark.asyncio
@@ -150,10 +150,10 @@ async def test_readiness_cannot_buy_a_capability_the_depth_never_admitted() -> N
 
     At STANDARD, Task 13's own goal policy does not admit threat-association
     hunting for a file. Readiness still says an independent adverse search would
-    help — it would — but acting on that would make a STANDARD investigation
-    quietly cost what a DEEP one costs, one capability at a time. The depth a
-    caller asked for is the depth that runs, and the workflow records that the
-    remaining path named nothing it was allowed to ask for.
+    help — it would — but buying *that* capability would make a STANDARD
+    investigation quietly cost what a DEEP one costs. The requirement is pursued
+    with the adverse searches this depth does admit, and the one it does not is
+    never planned, never asked and never named in a directive.
     """
     stack, _, request = _benign_stack()
     await stack.add_credentials()
@@ -161,13 +161,13 @@ async def test_readiness_cannot_buy_a_capability_the_depth_never_admitted() -> N
     result = await stack.investigate(request)
 
     assert result.readiness.readiness_status is ReadinessStatus.NEEDS_MORE_DATA
-    assert result.readiness.continuation_state is ContinuationState.MORE_DATA_AVAILABLE
     assert THREAT in {item.capability for item in result.readiness.information_needs}
     # Never planned, never asked, and the depth is untouched.
     assert stack.requests_for("challenger") == []
     assert result.requested_depth is InvestigationDepth.STANDARD
-    assert result.stop_reason is WorkflowStopReason.NO_ACTIONABLE_CONTINUATION
-    assert len(result.rounds) == 1
+    for round_ in result.rounds:
+        for directive in round_.directives:
+            assert directive.capability is not THREAT
 
 
 @pytest.mark.asyncio

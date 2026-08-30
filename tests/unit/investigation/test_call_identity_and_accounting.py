@@ -50,7 +50,11 @@ from ti_recon.investigation import InvestigationRequest
 from ti_recon.investigation.continuation import directives_for
 from ti_recon.investigation.engine import _RunState
 from ti_recon.investigation.merge import MergeConflictError, merge_enrichment_results
-from ti_recon.investigation.models import WorkflowIssue, WorkflowIssueType
+from ti_recon.investigation.models import (
+    ContinuationNeed,
+    WorkflowIssue,
+    WorkflowIssueType,
+)
 from ti_recon.models.evidence import Evidence
 from ti_recon.planning.models import (
     AdaptiveEnrichmentResult,
@@ -365,7 +369,7 @@ async def test_the_first_rounds_coverage_survives_the_second() -> None:
     by_capability = {item.capability: item for item in result.enrichment.coverage}
     # Covered in round one, by a provider round two never asked again.
     assert by_capability[REPUTATION].status is not CoverageStatus.NOT_COVERED
-    assert [item.capability for item in result.rounds[1].directives] == [INTELLIGENCE]
+    assert INTELLIGENCE in {item.capability for item in result.rounds[1].directives}
 
 
 # --------------------------------------------------------------------------- #
@@ -667,7 +671,6 @@ def test_every_actionable_need_becomes_a_directive() -> None:
     """
     directives = directives_for(
         _readiness_wanting(
-            (THREAT, GapType.INDEPENDENT_CHALLENGE_MISSING),
             (ProviderCapability.FILE_BEHAVIOR, GapType.NOT_ATTEMPTED),
             (INTELLIGENCE, GapType.BUDGET_LIMITED),
         ),
@@ -675,8 +678,42 @@ def test_every_actionable_need_becomes_a_directive() -> None:
     )
 
     assert [item.capability for item in directives] == sorted(
-        (THREAT, ProviderCapability.FILE_BEHAVIOR, INTELLIGENCE), key=lambda item: item.value
+        (ProviderCapability.FILE_BEHAVIOR, INTELLIGENCE), key=lambda item: item.value
     )
+    assert {item.need for item in directives} == {ContinuationNeed.MISSING_COVERAGE}
+
+
+def test_a_breadth_need_is_expressed_as_the_searches_this_depth_admits() -> None:
+    """Task 18 names a representative capability; the depth names the real ones.
+
+    An independent-challenge requirement asks for an adverse search, and Task 18
+    publishes which capabilities count as one. So the need becomes directives
+    against the members of that set this investigation was already allowed to
+    ask about — never against the label, which may be a capability this depth
+    does not admit at all.
+    """
+    admissible = frozenset({REPUTATION, INTELLIGENCE})
+    directives = directives_for(
+        _readiness_wanting((THREAT, GapType.INDEPENDENT_CHALLENGE_MISSING)),
+        _benign_fusion(),
+        admissible=admissible,
+    )
+
+    assert {item.capability for item in directives} == admissible
+    assert {item.need for item in directives} == {ContinuationNeed.ADDITIONAL_COVERAGE}
+    # The families to avoid ride along, on exactly these.
+    assert all(item.avoid_source_families == frozenset({"fam_a"}) for item in directives)
+
+
+def test_a_breadth_need_the_depth_cannot_serve_produces_nothing() -> None:
+    """No adverse search is admissible, so there is no request to make."""
+    directives = directives_for(
+        _readiness_wanting((THREAT, GapType.INDEPENDENT_CHALLENGE_MISSING)),
+        _benign_fusion(),
+        admissible=frozenset({ProviderCapability.FILE_BEHAVIOR}),
+    )
+
+    assert directives == ()
 
 
 @pytest.mark.asyncio

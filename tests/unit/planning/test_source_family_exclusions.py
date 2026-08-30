@@ -193,3 +193,63 @@ def test_no_exclusion_leaves_every_family_eligible() -> None:
     assert decision.call is not None
     assert decision.call.provider_id == "dependent"
     assert not any(item.reason is SkipReason.SOURCE_FAMILY_EXCLUDED for item in decision.skipped)
+
+
+# --------------------------------------------------------------------------- #
+# Raising the coverage target for one capability
+# --------------------------------------------------------------------------- #
+
+
+def test_a_reopened_capability_still_refuses_a_call_already_made() -> None:
+    """Additional coverage means another source, never the same one again.
+
+    Raising the target changes what counts as enough; it does not forget what
+    was asked. ``asked`` has answered, and no amount of wanting more breadth
+    makes asking it a second time productive — the identity that carries is
+    ``(provider_id, capability)``, and it still carries.
+    """
+    plan = _planner(
+        _spec("asked", family="fam_a", capabilities=frozenset({REPUTATION}), priority=99),
+        _spec("fresh", family="fam_b", capabilities=frozenset({REPUTATION}), priority=1),
+    )
+    request = _request()
+    base = plan.initial_state(request)
+    base.covered_families[REPUTATION] = {"fam_a"}
+    base.attempted.add(("asked", REPUTATION))
+
+    state = plan.initial_state(
+        request,
+        carry_over=base,
+        focus=frozenset({REPUTATION}),
+        additional_coverage=frozenset({REPUTATION}),
+    )
+    decision = plan.next(request, state)
+
+    assert decision.call is not None
+    assert decision.call.provider_id == "fresh"
+    assert any(
+        item.provider_id == "asked" and item.reason is SkipReason.ALREADY_ATTEMPTED
+        for item in decision.skipped
+    )
+
+
+def test_without_the_request_a_satisfied_goal_stays_satisfied() -> None:
+    """The seam is opt-in, and Task 13's own sufficiency is otherwise untouched.
+
+    The same carried state, the same eligible unattempted provider, and no
+    additional-coverage request: the goal is met, so nothing more is bought. An
+    ordinary Task 13 caller must never start receiving extra calls because a
+    workflow above it grew a new argument.
+    """
+    plan = _planner(
+        _spec("asked", family="fam_a", capabilities=frozenset({REPUTATION}), priority=99),
+        _spec("fresh", family="fam_b", capabilities=frozenset({REPUTATION}), priority=1),
+    )
+    request = _request()
+    base = plan.initial_state(request)
+    base.covered_families[REPUTATION] = {"fam_a", "fam_b"}
+
+    state = plan.initial_state(request, carry_over=base, focus=frozenset({REPUTATION}))
+    decision = plan.next(request, state)
+
+    assert decision.call is None
