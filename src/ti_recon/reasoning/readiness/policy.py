@@ -49,7 +49,7 @@ from __future__ import annotations
 from typing import Final
 
 from ti_recon.enums import CoverageRelevance, InvestigationDepth, ProviderCapability, Verdict
-from ti_recon.reasoning.fusion.policy import VERDICT_RULES
+from ti_recon.reasoning.fusion.policy import FUSION_POLICY_VERSION, VERDICT_RULES
 from ti_recon.reasoning.readiness.models import (
     ContinuationState,
     CoverageAdequacy,
@@ -66,6 +66,7 @@ __all__ = [
     "DIRECTIONAL_SEARCH_CAPABILITIES",
     "READINESS_POLICY_VERSION",
     "STRONG_BASIS_RULES",
+    "SUPPORTED_FUSION_POLICY_VERSION",
     "SUPPORTED_PURPOSES",
     "TERMINAL_GAP_TYPES",
     "adequacy_for",
@@ -85,6 +86,18 @@ READINESS_POLICY_VERSION: Final[str] = "1.0.0"
 SUPPORTED_PURPOSES: Final[frozenset[ReadinessPurpose]] = frozenset(
     {ReadinessPurpose.ANALYST_TRIAGE}
 )
+
+#: The Task 17 fusion policy whose verdict-rule vocabulary :data:`STRONG_BASIS_RULES`
+#: was written against.
+#:
+#: Readiness interprets Task 17's rule ids, so it is bound to the policy that
+#: defines them. The mapping is by *exact identity* -- the ids are imported from
+#: ``VERDICT_RULES`` rather than matched, so a rename is a build error rather
+#: than a silent behaviour change. An id this table does not know is treated as
+#: a weak basis, which keeps relevant requirements material: assuming an unknown
+#: rule is strong would suppress requirements on the strength of a rule nobody
+#: here has reviewed.
+SUPPORTED_FUSION_POLICY_VERSION: Final[str] = FUSION_POLICY_VERSION
 
 #: Verdict rules whose basis is specific enough that optional coverage adds
 #: little. Two malicious routes -- a decisive exact claim, and independent
@@ -130,6 +143,7 @@ CONTINUABLE_GAP_TYPES: Final[frozenset[GapType]] = frozenset(
 BLOCKING_GAP_TYPES: Final[frozenset[GapType]] = frozenset(
     {
         GapType.NOT_CONFIGURED,
+        GapType.PLAN_LIMITED,
         GapType.QUOTA_EXCEEDED,
         GapType.TEMPORARILY_UNAVAILABLE,
     }

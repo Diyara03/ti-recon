@@ -219,6 +219,10 @@ class GapType(StrEnum):
     NOT_ATTEMPTED = "not_attempted"
     BUDGET_LIMITED = "budget_limited"
     NOT_CONFIGURED = "not_configured"
+    #: The credential is valid but the account's plan does not include this
+    #: data or endpoint. A different operator action from a missing credential,
+    #: so it gets its own category rather than being folded into one.
+    PLAN_LIMITED = "plan_limited"
     TEMPORARILY_UNAVAILABLE = "temporarily_unavailable"
     QUOTA_EXCEEDED = "quota_exceeded"
     PARTIAL_COVERAGE = "partial_coverage"

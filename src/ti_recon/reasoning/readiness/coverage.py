@@ -64,8 +64,16 @@ STATUS_COMPLETION: dict[ProviderRunStatus, CheckCompletion] = {
     ProviderRunStatus.SUCCESS: CheckCompletion.COMPLETE,
     ProviderRunStatus.NO_DATA: CheckCompletion.COMPLETE,
     # The source answered incompletely.
+    # Reduced evidence -- *if* any came back. Task 6 documents that an adapter
+    # may also raise ``PARTIAL_RESULT`` when it could not retrieve enough to
+    # build an envelope at all, so this entry is the optimistic case and
+    # `completion_for` refines it from what the attempt actually produced.
     ProviderRunStatus.PARTIAL: CheckCompletion.PARTIAL,
-    ProviderRunStatus.PLAN_LIMITED: CheckCompletion.PARTIAL,
+    # The credential is valid and the account's plan does not cover this data.
+    # It reaches an attempt only through the executor's error path, where the
+    # envelope is None -- so nothing was retrieved and no coverage was obtained.
+    # A source exists and cannot currently be used, which is BLOCKED.
+    ProviderRunStatus.PLAN_LIMITED: CheckCompletion.BLOCKED,
     # The source could not be used. Each stays distinguishable in `raw_status`
     # so the gap can name the real cause without a category per status.
     ProviderRunStatus.NOT_CONFIGURED: CheckCompletion.BLOCKED,
@@ -96,9 +104,24 @@ _YIELD_ORDER: dict[InformationYield, int] = {
 }
 
 
-def completion_for(status: ProviderRunStatus) -> CheckCompletion:
-    """How far one attempt got. Every status is in the table by construction."""
-    return STATUS_COMPLETION[status]
+def completion_for(attempt: ProviderAttempt) -> CheckCompletion:
+    """How far one attempt got, from the status *and* what it produced.
+
+    A single status-to-completion table is not enough for ``PARTIAL``. Task 6
+    records that a partial result is "usually an envelope carrying reduced
+    evidence, but an adapter may also raise ``PARTIAL_RESULT`` when it could not
+    retrieve enough to build one" -- and those are different facts. The first
+    partially covered the capability; the second covered none of it, and
+    crediting it as a partial check would report coverage that does not exist.
+
+    So the table gives the status's meaning and this refines it with the
+    execution record. Nothing else needs refining: every other status is
+    unambiguous about whether an answer came back.
+    """
+    completion = STATUS_COMPLETION[attempt.status]
+    if completion is CheckCompletion.PARTIAL and not attempt.produced_evidence:
+        return CheckCompletion.BLOCKED
+    return completion
 
 
 def yield_for(
@@ -140,7 +163,7 @@ def checks_for(
             source_family=attempt.source_family,
             capability=attempt.capability,
             raw_status=attempt.status.value,
-            completion=completion_for(attempt.status),
+            completion=completion_for(attempt),
             information_yield=yield_for(attempt, directional_providers=directional_providers),
             # A cache hit or a coalesced request is information that was
             # available; readiness asks whether it was, not whether a socket
