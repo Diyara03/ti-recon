@@ -235,6 +235,17 @@ async def test_cancellation_propagates_untouched() -> None:
     with pytest.raises(asyncio.CancelledError):
         await task
 
+    # Nothing escaped. A cancelled investigation produces no result, so no
+    # readiness verdict was emitted about a collection that never finished, and
+    # nothing is left running to emit one later. Python's guidance is to let
+    # CancelledError propagate after cleanup rather than convert it into a value,
+    # and a partial assessment is exactly the value that must not appear.
+    assert task.cancelled()
+    with pytest.raises(asyncio.CancelledError):
+        task.result()
+    assert stack.metrics.metrics == ()
+    assert [item for item in asyncio.all_tasks() if item is not asyncio.current_task()] == []
+
 
 @pytest.mark.asyncio
 async def test_a_stage_describing_another_observable_is_a_workflow_error() -> None:
