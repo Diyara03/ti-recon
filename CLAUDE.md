@@ -144,17 +144,19 @@ Implemented (Jira Tasks 1-19):
   resources. Capability only: no reasoning, no provider selection, no credential
   input, no active operation.
 
-- Task 22 (in progress) — remote authentication primitives (`mcp_server/auth.py`,
-  `mcp_server/principal.py`): the identity substrate an authenticated HTTP
-  deployment is built on. TI Recon is an OAuth **resource server**; a
-  deployment's own `TokenVerifier` proves a token and `StrictTokenVerifier`
-  enforces the invariants the SDK does not — non-empty subject, exact issuer,
-  and an audience naming this MCP resource. Identity below the boundary is one
-  pseudonymous `tenant-v1:` HMAC over the validated issuer and subject.
-  Request-scoped `ExecutionContext`, principal-scoped `provider_status`, and a
-  remote composition that never reads the process environment for provider
-  credentials. **There is no HTTP entry point yet**: no Streamable HTTP app, no
-  `AuthSettings` wiring, no health route, no remote console command.
+- Task 22 (in progress) — the authenticated remote MCP surface (`mcp_server/`).
+  TI Recon is an OAuth **resource server**: a deployment's own `TokenVerifier`
+  proves a token and `StrictTokenVerifier` enforces the invariants the SDK does
+  not — non-empty subject, exact issuer, and an audience naming this MCP
+  resource. Identity below the boundary is one pseudonymous `tenant-v1:` HMAC
+  over the validated issuer and subject; `ExecutionContext` is request-scoped and
+  `provider_status` principal-scoped, over one shared application.
+  `build_remote_http_app` produces an OAuth-protected Streamable HTTP ASGI app
+  with an explicit Host/Origin policy, `stateless_http`, a two-tool surface
+  without `investigate_file`, both schema resources, a public `/health`, and one
+  concurrent investigation per tenant. **Still a factory, not a service**: no
+  console entry point, no bundled ASGI server, no deployment, and no token
+  verifier — one needs an identity platform, which the next phase chooses.
 
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Task 13 chooses what
@@ -284,11 +286,15 @@ about it.
 - PostgreSQL, production secret vault, Kafka, Celery, Neo4j
 - Claude connector, web frontend
 - Active actions: URL/file submission, rescan, sandboxing, sample download
-- Any remote HTTP transport: `streamable_http_app`, `AuthSettings`,
-  `TransportSecuritySettings`, uvicorn, a health or startup route, a remote
-  console script, a per-principal request limiter. Task 22's first phase builds
-  the identity substrate only, so the transport can be proven against a
-  boundary that already exists rather than beside one that does not
+- A remote console entry point (`ti-recon-mcp-http`), a bundled ASGI server
+  (uvicorn, hypercorn), a `--workers` option, a `/ready` route, and any deployed
+  service. Running one needs a real token verifier, and the only ones
+  constructible without an identity platform are the three that must never
+  exist — a static-token verifier, an unsigned-JWT verifier, and a
+  "development" verifier reachable from production
+- A vendor-specific `TokenVerifier` (Entra, Auth0, Okta, Keycloak, Cognito), a
+  JWKS client or an introspection client. The delegate is injected; the next
+  phase chooses one for this repository's own deployment
 - Any authorization server inside TI Recon: a user/password database, a login
   page, password reset, MFA, client registration (DCR or CIMD), token issuance.
   TI Recon verifies tokens an external IdP issued and never becomes a login
@@ -1586,6 +1592,86 @@ about it.
      `NOT_CONFIGURED` coverage — a missing provider key is never an
      authorization failure.
 
+143. **The remote surface never exposes `investigate_file`, and absence is not
+     concealment.** A `path` names a file on the machine running the server:
+     over stdio the analyst's own, over HTTP somebody else's — where the tool
+     stops being file analysis and becomes an authenticated arbitrary-read
+     primitive. It is not *registered* by the remote profile, so it is missing
+     from `tools/list`, from the tool manager and from every callable name, and a
+     hand-written `tools/call` fails as an unknown tool before a path is touched.
+     Leaving it registered and undocumented would satisfy none of that. Stdio
+     keeps all three tools and the `anthropic/requiresUserInteraction` metadata
+     unchanged; a remote analyst hashes locally and submits the SHA-256. Both
+     profiles share one implementation — the deployment profile is an assembly
+     concern, never a second tool.
+
+144. **One canonical resource URL, or the app refuses to build.** The same exact
+     string is the audience `StrictTokenVerifier` requires, `AuthSettings`'
+     `resource_server_url`, the RFC 9728 metadata `resource` and the `resource`
+     a client sends; `build_remote_http_app` compares them rather than trusting
+     them, because advertising one resource while accepting tokens for another
+     is the confused-deputy shape and both halves look right alone. `/mcp` and
+     `/mcp/` stay two resources. Construction also refuses an empty issuer or
+     resource, a non-HTTPS resource, a path other than `/mcp`, an empty host
+     allowlist, a wildcard host or origin and a missing delegate: there are no
+     permissive production defaults.
+
+145. **Transport security is stated, never implied, and nothing is derived from a
+     request header.** `TransportSecuritySettings` is always passed with
+     rebinding protection on and exact hosts, because the SDK auto-enables it
+     only for a loopback host and otherwise falls back to protection *disabled* —
+     a production hostname with no settings is silently unprotected. A wildcard
+     host is refused outright: it disables the protection while appearing to
+     configure it. An absent `Origin` is allowed, which is the ordinary
+     non-browser client; a *present* unlisted one is `403`, and the allowlist is
+     empty by default. `Host`, `X-Forwarded-*`, `Forwarded` and `Origin` are
+     never read for the canonical resource, the issuer, the audience or the host
+     policy — all four are configuration, so no proxy header can move a security
+     decision and no proxy middleware is needed. TLS terminates at the ingress.
+
+146. **Authorization happens before tools, once, at the boundary.** One scope,
+     `ti-recon:investigate`, for the whole resource: `provider_status` is *less*
+     privileged than an investigation and reveals only the caller's own setup, so
+     a second scope buys no least privilege while costing a step-up flow. No tool
+     contains a scope check — a second policy is the one somebody forgets to add
+     to a new tool. TI Recon serves no `/authorize`, `/token`, `/register`,
+     `/revoke` or `/login`: `auth_server_provider` is never supplied, so they are
+     absent rather than unimplemented, and client registration (DCR or CIMD)
+     belongs to the external authorization server. An auth failure names no
+     received issuer, audience, subject, client id, bearer or tenant.
+
+147. **A remote investigation is one per tenant per process, refused rather than
+     queued.** An authenticated caller can open unlimited concurrent HTTP
+     requests, and Task 13 bounds only the work *inside* one investigation. A
+     caller told "try again" still has a working service; one behind an unbounded
+     backlog has a slow one and a server holding memory for requests nobody
+     awaits. The slot releases on completion, error **and cancellation** — a
+     client going away mid-investigation is ordinary, and a leaked slot locks an
+     analyst out for the process's life. `provider_status` never takes one: it
+     contacts nothing, and blocking it removes the diagnostic exactly when
+     somebody is working out why their investigation is stuck. The key is the
+     pseudonymous tenant id alone, entries drop when a tenant goes idle, and
+     Task 6's provider concurrency is untouched. Local stdio has no limiter.
+
+148. **Remote deployment is single-worker, as a correctness requirement.**
+     Task 6's cache, cooldown, quota and single-flight stores are process-local
+     and so is the tenant limiter, so four workers would enforce each of them
+     four times independently — four analysts' identical questions becoming four
+     calls against a metered API, and one analyst holding four investigation
+     slots. `stateless_http=True` removes the last server-side session so no
+     sticky routing is needed, but shared execution state is Task 24's and until
+     it exists a deployer runs exactly one worker.
+
+149. **`/health` is public and says one thing.** The SDK's custom routes are
+     unauthenticated by design, so this must be safe to serve to the internet: no
+     token verification, no credential lookup, no provider request, no dataset
+     enumeration, and no version, issuer, resource URL, provider count, tenant
+     count, uptime or cache state. It is not called *readiness* — Task 18 owns
+     that word for coverage adequacy, and one term meaning two things is how
+     somebody acts on the wrong one. A test enumerates the app's routing table so
+     `/mcp`, `/health` and the SDK's protected-resource metadata stay the only
+     paths and a future custom route cannot quietly join the public set.
+
 
 ## Security rules
 
@@ -1882,15 +1968,18 @@ src/ti_recon/
                      report, bounded sections), builder (projection, never
                      analysis), text (deterministic rendering, terminal-injection
                      safety), schema (generated, dialect read from Pydantic)
-  mcp_server/        Tasks 21-22: the MCP server and the remote identity
-                     boundary. models (the configuration diagnostic, the only
-                     contract this layer owns), runtime (one shared application,
-                     request-scoped identity, the stdio and remote composition
-                     roots), auth (the strict resource-server token check and
-                     the principal resolver), principal (RemotePrincipal and the
-                     keyed tenant derivation), tools (the three implementations
-                     and the error policy), server (the factory, annotations and
-                     resources), main (stdio process)
+  mcp_server/        Tasks 21-22: the MCP server, the remote identity boundary
+                     and the authenticated HTTP surface. models (the
+                     configuration diagnostic, the only contract this layer
+                     owns), runtime (one shared application, request-scoped
+                     identity, the stdio and remote composition roots), auth (the
+                     strict resource-server token check and the principal
+                     resolver), principal (RemotePrincipal and the keyed tenant
+                     derivation), limits (one investigation per tenant), tools
+                     (the three implementations and the error policy), server
+                     (the two deployment profiles, annotations and resources),
+                     http (the ASGI app, its fail-closed configuration and
+                     /health), main (stdio process)
   cli/               Task 20: the `ti-recon` command. parser (argparse; no
                      credential or provider flags), main (streams, exit codes),
                      runtime (the one composition root a local invocation uses)

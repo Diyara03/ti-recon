@@ -1,14 +1,21 @@
-# The remote identity boundary (Task 22)
+# The authenticated remote MCP surface (Task 22)
 
-TI Recon will eventually serve MCP over authenticated HTTPS as well as over local
-stdio. This page describes the part that exists now: **who a request belongs to,
-and what stops one analyst's work reaching another's**.
+TI Recon serves MCP over local stdio, and — through
+`build_remote_http_app` — over OAuth-protected Streamable HTTP as well. This page
+describes both halves of the remote work: **who a request belongs to**, and **the
+HTTP surface that identity protects**.
 
-> **There is no HTTP entry point yet.** No Streamable HTTP endpoint, no
-> `AuthSettings` wiring, no health route, no remote console command. Those are
-> built on this boundary rather than beside it, because an isolation model that
-> arrives after the transport is a model nobody can prove. Today the only running
+> **This is an application factory, not a running service.** There is no
+> `ti-recon-mcp-http` command, no bundled ASGI server and nothing deployed. A
+> runnable process needs a real token verifier, and that means choosing an
+> identity platform — the next phase does both together. Today the only *running*
 > server is `ti-recon-mcp` over stdio, documented in [mcp.md](mcp.md).
+
+```
+HTTPS ingress -> ASGI app -> Host/Origin check -> bearer auth
+              -> RemotePrincipal -> request-scoped ExecutionContext
+              -> Task 20 -> 19 -> 13 -> 6 -> providers
+```
 
 ## The role TI Recon plays
 
@@ -233,16 +240,237 @@ answer. "Your token's audience was X" tells an attacker what X should have been.
 Task 21's unexpected-exception sanitisation is unchanged: the type is logged, the
 message is not, and `CancelledError` propagates untouched.
 
+## The HTTP surface
+
+### Building one
+
+```python
+app = build_remote_http_app(
+    runtime,  # build_remote_runtime(auth=...)
+    config=RemoteHttpConfig(
+        resource_url="https://mcp.example.com/mcp",
+        issuer_url="https://idp.example.com",
+        allowed_hosts=("mcp.example.com",),
+    ),
+    auth=RemoteAuthConfig(...),  # issuer, resource, tenant key
+    delegate=your_token_verifier,  # required; there is no default
+)
+```
+
+`delegate` has no default on purpose. The only verifiers constructible without an
+identity platform are the three that must never exist — a static-token verifier,
+an unsigned-JWT verifier, and a "development" verifier reachable from
+production — so the factory refuses to invent one.
+
+### One canonical resource URL
+
+`https://mcp.example.com/mcp`, stated once, drives four things that must agree
+byte for byte: the audience the verifier requires, `AuthSettings`, the RFC 9728
+metadata, and the `resource` a client sends. `build_remote_http_app` refuses to
+build if the verifier's expected resource or issuer differs from the published
+one — advertising one resource while accepting tokens for another is the
+confused-deputy shape, and it is exactly the mistake that survives review because
+both halves look right on their own.
+
+Trailing-slash identity is exact. `/mcp` and `/mcp/` are two OAuth resources, and
+neither is normalized into the other.
+
+### Configuration fails closed
+
+Refused at construction: an empty issuer or resource, a resource that is not
+HTTPS, a resource whose path is not exactly `/mcp`, an empty host allowlist, a
+wildcard host, a wildcard origin, a zero concurrency limit, and a missing
+delegate. There are no permissive production defaults.
+
+### Scope
+
+One scope for the whole resource: **`ti-recon:investigate`**.
+
+`provider_status` is *less* privileged than an investigation and reveals only the
+caller's own configuration, so a second scope would buy no meaningful least
+privilege — nobody wants a token that can list their own setup but not use it —
+while costing a step-up flow and a second consent screen. The vocabulary is
+versioned in `REMOTE_SCOPES` so a later privilege boundary (a write surface, say)
+can be added beside it rather than by redefining this one.
+
+Scope is enforced by the SDK's middleware, before any handler runs. No tool
+contains a scope check; one policy, in one place.
+
+### The flow a client sees
+
+| Step | Result |
+| --- | --- |
+| `POST /mcp` with no token | `401` + `WWW-Authenticate: Bearer error="invalid_token", resource_metadata="…"` |
+| `GET /.well-known/oauth-protected-resource/mcp` | resource, `authorization_servers`, `scopes_supported`, `bearer_methods_supported` — no secret |
+| Valid token, wrong scope | `403` + `error="insufficient_scope"` + `scope=` |
+| Token for another resource, wrong issuer, no subject, expired | `401`, and no handler runs |
+| Valid token | `200`, MCP result |
+
+**One SDK behaviour worth knowing.** The spec says a server SHOULD include a
+`scope=` parameter in the `401` challenge; the installed SDK emits it only on the
+`403`. Clients have a defined fallback — the `scopes_supported` this server does
+publish in protected-resource metadata — so this is an interoperability note
+rather than a defect, and it is pinned by a test rather than patched. Revisit only
+if real Claude Code OAuth fails.
+
+**A second one.** Starlette's authentication middleware sits *outside* the route,
+so the bearer is verified before the Host check. A rebinding request with a stolen
+token can therefore cause one token verification before its `421`. Nothing else
+runs — no handler, no credential lookup, no provider call — so this is a
+rate-limiting consideration for the ingress rather than a disclosure. Also pinned
+by a test.
+
+### The remote tool surface
+
+| Profile | Tools |
+| --- | --- |
+| stdio | `investigate_observable`, `investigate_file`, `provider_status` |
+| remote HTTP | `investigate_observable`, `provider_status` |
+
+**`investigate_file` is absent remotely, not hidden.** Its `path` argument names a
+file on the machine running the server: over stdio that is the analyst's own
+workstation, over HTTP it is somebody else's server — so the tool would stop being
+file analysis and become an authenticated arbitrary-read primitive. Leaving it
+registered and merely undocumented would still list it and still let a
+hand-written `tools/call` reach a path. It is not registered, so the call fails as
+an unknown tool.
+
+A remote analyst with a file hashes it locally and submits the SHA-256, or uses
+the local stdio server. There is no upload, no multipart, no remote sample storage
+and no submission.
+
+Both schema resources — `ti-recon://schema/request` and
+`ti-recon://schema/report` — are served over the same authenticated endpoint. No
+credential state, provider payload, graph, execution state or token claim is
+exposed as a resource.
+
+### Transport security is explicit
+
+```python
+TransportSecuritySettings(
+    enable_dns_rebinding_protection=True,
+    allowed_hosts=["mcp.example.com"],
+    allowed_origins=[],  # or the exact browser origins you serve
+)
+```
+
+Always passed, never left to the default. The SDK auto-enables rebinding
+protection *only* for a loopback host and otherwise falls back to protection
+**disabled** for backwards compatibility — so a production hostname with no
+settings is silently unprotected.
+
+Host: exact configured authority, narrow by default. `*` and any leading-wildcard
+value are refused at construction, because a wildcard disables the protection
+while appearing to configure it. An unlisted Host is `421`.
+
+Origin: **absent is allowed**, which is the ordinary Claude Code shape — non-browser
+clients send none, and the transport permits that. A *present* origin must be in
+the allowlist, which is empty by default; an unlisted one is `403`. Never `*`.
+
+`Content-Type` must be `application/json` on POST. Body limit is the SDK's own
+4 MiB default, recorded rather than chosen — Task 24 tunes it together with the
+ingress.
+
+### Nothing is derived from a request header
+
+Not the canonical resource URL, not the issuer, not the audience, not the host
+policy. `Host`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `Forwarded` and `Origin`
+are never read for a security decision, so the app needs to trust no proxy header
+and there is no proxy middleware to configure. TLS terminates at the ingress; the
+internal bind may be plain HTTP, and the public scheme is configured rather than
+sniffed.
+
+### Sessions and protocol eras
+
+`stateless_http=True`, `json_response=True`.
+
+Every 2026-07-28 request is self-contained already — no `initialize`, no
+`Mcp-Session-Id`. The flag additionally stops a handshake-era client creating a
+server-side transport session, and both eras arrive on the same protected path.
+TI Recon needs no sampling, elicitation, resource subscription or resumable SSE,
+so a session would carry nothing — and would be process-local state a future
+second worker could not see.
+
+### One investigation per tenant
+
+An authenticated caller can open as many concurrent HTTP requests as they like,
+and a DEEP investigation with pivot enrichment is the most expensive thing this
+system does. `TenantInvestigationLimiter` allows **one active
+`investigate_observable` per tenant per process**.
+
+A refusal, not a queue: a caller told "try again" still has a working service,
+while a caller behind an unbounded backlog has a slow one and the server is
+holding memory for requests nobody is waiting on. The slot is released on
+completion, on error and on cancellation — cancellation most of all, because a
+client going away mid-investigation is ordinary, and a leaked slot would lock an
+analyst out for the life of the process.
+
+`provider_status` never takes a slot: it contacts nothing, and blocking it would
+remove the diagnostic exactly when somebody is working out why their investigation
+is stuck. The limiter key is the pseudonymous tenant id and nothing else, and
+entries are dropped when a tenant goes idle.
+
+This is not Task 6's provider concurrency, which bounds calls to one provider
+under one credential and is unchanged. Local stdio has no limiter at all — one
+process, one analyst, one conversation, nothing to collide.
+
+### `/health`
+
+`GET /health` -> `{"status": "ok"}`. Public, because the SDK's custom routes are
+documented as unauthenticated and a health check is the use it names.
+
+It performs zero token verification, zero credential lookup, zero provider
+request and zero dataset enumeration, and reveals nothing about the deployment:
+no version, issuer, resource URL, provider count, tenant count, uptime or cache
+state. Each of those is a small gift to somebody deciding whether this host is
+worth attacking, and none of them helps a load balancer.
+
+Deliberately **not** called readiness. Task 18 owns that word for whether the
+intelligence collected was adequate, and one term meaning two things in one system
+is how somebody eventually acts on the wrong one. A deployment readiness probe
+waits for Task 24, where there will be a credential backend whose reachability is
+worth reporting.
+
+A test enumerates the app's routing table and asserts the only paths are `/mcp`,
+`/health` and the SDK's protected-resource metadata — so a future custom route
+cannot quietly join the public set.
+
+### No authorization server
+
+`/authorize`, `/token`, `/register`, `/revoke`, `/login` and
+`/.well-known/oauth-authorization-server` all return `404`. `auth_server_provider`
+is never supplied, so they are absent rather than merely unimplemented. TI Recon
+verifies tokens an external authorization server issued and never becomes one; it
+builds no user database, no login page, no password reset, no MFA and no client
+registration. Client registration — DCR or CIMD — belongs to the external
+authorization server.
+
+The code names no identity provider. Auth0, Entra, Okta, Keycloak and Cognito are
+all *examples* a deployment may choose; none is a requirement, and none appears in
+`src`.
+
+## One process, for now
+
+Task 6's cache, cooldown, quota and single-flight stores are process-local, and so
+is the tenant limiter. **Remote deployment is single-worker.** This is a
+correctness requirement rather than a performance note: four workers would enforce
+every one of those four times independently, letting four analysts' identical
+questions become four provider calls against metered APIs and letting one analyst
+hold four investigation slots.
+
+No `--workers` option exists because no runnable entry point exists. A deployer
+running the ASGI app through their own server must run exactly one worker until
+Task 24 gives that state a shared backend.
+
 ## Still to come
 
-**Task 22, next phase** — the Streamable HTTP endpoint itself: `AuthSettings` and
-RFC 9728 protected-resource metadata, explicit `TransportSecuritySettings` with the
-deployment's real hostname, `stateless_http`, a deployment-specific tool surface
-without `investigate_file`, a health route, a scope, and the remote entry point.
+**Task 22, next phase** — a deployment token verifier and the process entry point,
+added together, plus real Claude Code OAuth interoperability against a chosen
+authorization server.
 
 **Task 23** — secure provider credential management: durable encrypted per-user
 storage, an authenticated out-of-band provisioning path, rotation, revocation and
 audit.
 
 **Task 24** — production packaging and operations: container, ingress, worker
-policy, rate limiting, timeouts, metrics and tracing.
+policy and shared execution state, rate limiting, timeouts, metrics and tracing.
