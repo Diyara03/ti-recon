@@ -88,6 +88,7 @@ def render_text(report: AnalystInvestigationReport) -> str:
     lines += _target(report)
     lines += _assessment(report)
     lines += _basis(report)
+    lines += _opposition(report)
     lines += _explanations(report)
     lines += _conflicts(report)
     lines += _coverage(report)
@@ -144,8 +145,28 @@ def _basis(report: AnalystInvestigationReport) -> list[str]:
     section = report.assessment_basis
     lines = _heading("Basis")
     if not section.items:
-        lines += _empty("No claim supported or opposed the assessment.")
+        lines += _empty("No claim supported the assessment.")
         return lines
+    for item in section.items:
+        lines.append(f"  - {safe_text(item.semantic, limit=64)} ({item.effect})")
+        lines.append(f"      role: {item.role} / {item.decision_role}")
+        lines.append(f"      scope: {item.scope}")
+        lines.append(f"      source: {safe_text(item.source_family, limit=64)}")
+    return lines + _omitted(section)
+
+
+def _opposition(report: AnalystInvestigationReport) -> list[str]:
+    """What pushed the other way, under a heading that says so.
+
+    Task 17 reached its verdict *despite* these, and an analyst needs to see
+    them — but listing them under "Basis" would put a benign assertion among
+    the reasons an object was called malicious. Same records, same roles,
+    different heading.
+    """
+    section = report.opposing_evidence
+    if not section.items:
+        return []
+    lines = _heading("Evidence against this assessment")
     for item in section.items:
         lines.append(f"  - {safe_text(item.semantic, limit=64)} ({item.effect})")
         lines.append(f"      role: {item.role} / {item.decision_role}")

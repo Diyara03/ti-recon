@@ -70,17 +70,16 @@ from ti_recon.reporting.models import (
 
 __all__ = ["build_analyst_report", "report_id_for"]
 
-#: Contribution roles that describe what the verdict rested on.
+#: The role that describes what the verdict rested on.
 #:
-#: The explained and dependent ones are real contributions and stay in the
-#: trace, but calling them "basis" would say the verdict rested on evidence
-#: Task 17 explicitly set aside.
-_BASIS_ROLES: frozenset[ContributionRole] = frozenset(
-    {
-        ContributionRole.SUPPORTS_VERDICT,
-        ContributionRole.OPPOSES_VERDICT,
-    }
-)
+#: Only this one. The explained and dependent contributions are real and stay
+#: in the trace, but calling them "basis" would say the verdict rested on
+#: evidence Task 17 explicitly set aside — and opposition is not basis either,
+#: which is why it gets its own section rather than a shared list.
+_SUPPORTING_ROLE: ContributionRole = ContributionRole.SUPPORTS_VERDICT
+
+#: The role that pushed against the verdict Task 17 nonetheless reached.
+_OPPOSING_ROLE: ContributionRole = ContributionRole.OPPOSES_VERDICT
 
 
 def report_id_for(*, schema_version: str, result_id: str) -> str:
@@ -149,7 +148,12 @@ def build_analyst_report(result: InvestigationResult) -> AnalystInvestigationRep
             requirements_satisfied=readiness.coverage_summary.requirements_satisfied,
             requirements_limited=readiness.coverage_summary.requirements_limited,
         ),
-        assessment_basis=_section(_basis(fusion.contributions, claims), MAX_BASIS_ITEMS),
+        assessment_basis=_section(
+            _contributions(fusion.contributions, claims, _SUPPORTING_ROLE), MAX_BASIS_ITEMS
+        ),
+        opposing_evidence=_section(
+            _contributions(fusion.contributions, claims, _OPPOSING_ROLE), MAX_BASIS_ITEMS
+        ),
         alternative_explanations=_section(_explanations(result), MAX_EXPLANATIONS),
         unexplained_evidence=_section(
             _unexplained(fusion.contributions, claims), MAX_UNEXPLAINED_EVIDENCE
@@ -180,35 +184,28 @@ def build_analyst_report(result: InvestigationResult) -> AnalystInvestigationRep
 # --------------------------------------------------------------------------- #
 
 
-def _basis(
-    contributions: Iterable[ClaimContribution], claims: dict[str, NormalizedClaim]
+def _contributions(
+    contributions: Iterable[ClaimContribution],
+    claims: dict[str, NormalizedClaim],
+    role: ContributionRole,
 ) -> list[BasisItem]:
-    """What the verdict rested on, as Task 17 assigned it.
+    """Task 17's contributions carrying one role, in a stable order.
 
     No ranking of our own. Not the provider with the most detections, not the
     newest evidence, not the source that appeared most often — the contributions
-    Task 17 recorded, with the roles it gave them. Provenance is joined from the
+    Task 17 recorded, with the role it gave them. Provenance is joined from the
     claim so a reader can see *who*, which is a different question from *how
     much it counted*.
     """
-    items = [item for item in contributions if item.role in _BASIS_ROLES]
+    items = [item for item in contributions if item.role is role]
     return [_basis_item(item, claims.get(item.claim_id)) for item in _ordered(items)]
 
 
 def _ordered(contributions: Sequence[ClaimContribution]) -> list[ClaimContribution]:
-    """Supporting before opposing, decisive before weak, then a stable id."""
-    role_order = {
-        ContributionRole.SUPPORTS_VERDICT: 0,
-        ContributionRole.OPPOSES_VERDICT: 1,
-    }
+    """Decisive before weak, then semantic, then a stable id."""
     return sorted(
         contributions,
-        key=lambda item: (
-            role_order.get(item.role, 9),
-            item.decision_role.value,
-            item.semantic.value,
-            item.claim_id,
-        ),
+        key=lambda item: (item.decision_role.value, item.semantic.value, item.claim_id),
     )
 
 

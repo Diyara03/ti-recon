@@ -174,7 +174,12 @@ class ReadinessSummary(FrozenTiReconModel):
 
 
 class BasisItem(FrozenTiReconModel):
-    """One claim the verdict actually rested on, as Task 17 recorded it.
+    """One claim Task 17 weighed, with the role it gave it.
+
+    Used for the supporting basis and for opposing evidence alike, because they
+    are the same kind of record and differ only in ``role`` — which every item
+    carries, so a consumer reading either section can always see the engine's
+    own disposition rather than inferring it from which list it arrived in.
 
     Not "the most important provider" and not the strongest-looking finding: the
     contributions Task 17 produced, with the role it assigned. Choosing here
@@ -401,6 +406,14 @@ class AnalystInvestigationReport(FrozenTiReconModel):
     readiness: ReadinessSummary
 
     assessment_basis: ReportSection[BasisItem] = ReportSection[BasisItem]()
+    #: Claims Task 17 recorded as pushing *against* the verdict it reached.
+    #:
+    #: Separate from the basis on purpose. Both are contributions and both
+    #: carry their Task 17 role, but presenting them in one list under a
+    #: heading meaning "why" would put a benign assertion among the reasons an
+    #: object was called malicious — which is the opposite of what the engine
+    #: said about it.
+    opposing_evidence: ReportSection[BasisItem] = ReportSection[BasisItem]()
     alternative_explanations: ReportSection[ExplanationItem] = ReportSection[ExplanationItem]()
     unexplained_evidence: ReportSection[UnexplainedEvidenceItem] = ReportSection[
         UnexplainedEvidenceItem
