@@ -24,6 +24,7 @@ from fixtures.investigation import (
 from fixtures.investigation.stack import ScriptedProvider
 from ti_recon.enums import (
     EvidenceEffect,
+    InvestigationDepth,
     ProviderCapability,
     ProviderRunStatus,
     Verdict,
@@ -49,8 +50,15 @@ def _benign_stack(
     challenger_locality: ProviderLocality = ProviderLocality.REMOTE,
     with_challenger: bool = True,
     max_remote: int | None = None,
+    depth: InvestigationDepth = InvestigationDepth.STANDARD,
 ) -> tuple[InvestigationStack, object, InvestigationRequest]:
-    """A single-source benign assessment, which readiness always challenges."""
+    """A single-source benign assessment, which readiness always challenges.
+
+    ``THREAT_ASSOCIATIONS`` is deliberate: Task 13 admits it for a file at DEEP
+    and not at STANDARD, so the same stack shows both sides of the depth
+    boundary — the challenge bought where the caller paid for that depth, and
+    declined where they did not.
+    """
     root = file_root(DIGEST)
     providers = [
         ScriptedProvider(
@@ -79,8 +87,42 @@ def _benign_stack(
                 {},
             )
         )
-    request = InvestigationRequest(root=root, max_remote_provider_runs=max_remote)
+    request = InvestigationRequest(root=root, max_remote_provider_runs=max_remote, depth=depth)
     return InvestigationStack(providers=providers), root, request
+
+
+def _budget_limited_stack() -> tuple[InvestigationStack, InvestigationRequest]:
+    """An admissible capability the first round could not afford to ask.
+
+    The one shape that genuinely continues. ``local_benign`` is local, so it
+    answers whatever the remote allowance is; ``gated`` is remote with no
+    allowance at all, so the capability it serves is admissible, material and
+    unattempted when readiness looks. Task 13 is asked again and reports that it
+    still cannot afford it — a real second round that acquires nothing, which is
+    the honest outcome rather than a silently granted budget.
+    """
+    providers = [
+        ScriptedProvider(
+            spec(
+                "local_benign",
+                family="fam_a",
+                capabilities=frozenset({REPUTATION}),
+                locality=ProviderLocality.LOCAL,
+                cost=CallCostClass.ZERO,
+            ),
+            {
+                DIGEST: claim_evidence(
+                    ClaimSemantic.BENIGN_REPUTATION, effect=EvidenceEffect.SUPPORTS_BENIGN
+                )
+            },
+        ),
+        ScriptedProvider(
+            spec("gated", family="fam_b", capabilities=frozenset({INTELLIGENCE})),
+            {},
+        ),
+    ]
+    request = InvestigationRequest(root=file_root(DIGEST), max_remote_provider_runs=0)
+    return InvestigationStack(providers=providers), request
 
 
 # --------------------------------------------------------------------------- #
@@ -91,7 +133,7 @@ def _benign_stack(
 @pytest.mark.asyncio
 async def test_a_continuation_runs_only_when_readiness_asks() -> None:
     """Both axes, and the directive names a capability rather than a source."""
-    stack, _, request = _benign_stack()
+    stack, request = _budget_limited_stack()
     await stack.add_credentials()
 
     result = await stack.investigate(request)
@@ -99,7 +141,51 @@ async def test_a_continuation_runs_only_when_readiness_asks() -> None:
     assert result.rounds[0].readiness_status == ReadinessStatus.NEEDS_MORE_DATA.value
     assert result.rounds[0].continuation_state == ContinuationState.MORE_DATA_AVAILABLE.value
     assert result.rounds[1].trigger is RoundTrigger.READINESS_CONTINUATION
-    assert [item.capability for item in result.rounds[1].directives] == [THREAT]
+    assert [item.capability for item in result.rounds[1].directives] == [INTELLIGENCE]
+
+
+@pytest.mark.asyncio
+async def test_readiness_cannot_buy_a_capability_the_depth_never_admitted() -> None:
+    """Readiness asks; the requested depth answers.
+
+    At STANDARD, Task 13's own goal policy does not admit threat-association
+    hunting for a file. Readiness still says an independent adverse search would
+    help — it would — but acting on that would make a STANDARD investigation
+    quietly cost what a DEEP one costs, one capability at a time. The depth a
+    caller asked for is the depth that runs, and the workflow records that the
+    remaining path named nothing it was allowed to ask for.
+    """
+    stack, _, request = _benign_stack()
+    await stack.add_credentials()
+
+    result = await stack.investigate(request)
+
+    assert result.readiness.readiness_status is ReadinessStatus.NEEDS_MORE_DATA
+    assert result.readiness.continuation_state is ContinuationState.MORE_DATA_AVAILABLE
+    assert THREAT in {item.capability for item in result.readiness.information_needs}
+    # Never planned, never asked, and the depth is untouched.
+    assert stack.requests_for("challenger") == []
+    assert result.requested_depth is InvestigationDepth.STANDARD
+    assert result.stop_reason is WorkflowStopReason.NO_ACTIONABLE_CONTINUATION
+    assert len(result.rounds) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_same_challenge_is_bought_at_the_depth_that_admits_it() -> None:
+    """The other side of the boundary, from the same stack.
+
+    Nothing about the requirement changed — only what the caller asked for. At
+    DEEP the capability is part of the investigation, so Task 13 plans it and
+    the challenge happens. This is what stops the depth rule being a way to
+    never look.
+    """
+    stack, _, request = _benign_stack(depth=InvestigationDepth.DEEP)
+    await stack.add_credentials()
+
+    result = await stack.investigate(request)
+
+    assert stack.requests_for("challenger")
+    assert THREAT in {item.capability for item in result.enrichment.coverage}
 
 
 @pytest.mark.asyncio
@@ -225,13 +311,13 @@ async def test_an_exhausted_budget_stops_without_escalation() -> None:
     quietly granting itself the budget to continue, and the distinction is what
     lets a caller decide to run a deeper one.
     """
-    stack, _, request = _benign_stack(max_remote=1)
+    stack, request = _budget_limited_stack()
     await stack.add_credentials()
 
     result = await stack.investigate(request)
 
-    assert result.enrichment.budget.remote_runs_used <= 1
-    assert len(stack.requests_for("challenger")) == 0
+    assert result.enrichment.budget.remote_runs_used == 0
+    assert len(stack.requests_for("gated")) == 0
     assert result.readiness.readiness_status is ReadinessStatus.NEEDS_MORE_DATA
     assert result.stop_reason in {
         WorkflowStopReason.CURRENT_BUDGET_EXHAUSTED,
@@ -247,7 +333,11 @@ async def test_a_local_source_can_still_work_with_no_remote_budget() -> None:
     credential-free local check that costs nothing — so the workflow hands the
     remaining state to Task 13 and lets its locality policy decide.
     """
-    stack, _, request = _benign_stack(challenger_locality=ProviderLocality.LOCAL, max_remote=1)
+    stack, _, request = _benign_stack(
+        challenger_locality=ProviderLocality.LOCAL,
+        max_remote=1,
+        depth=InvestigationDepth.DEEP,
+    )
     await stack.add_credentials()
 
     result = await stack.investigate(request)
@@ -274,7 +364,7 @@ async def test_a_continuation_that_adds_nothing_stops_once() -> None:
     has nothing left that could meet it. Asking a third time would produce this
     same round forever.
     """
-    stack, _, request = _benign_stack(with_challenger=False)
+    stack, request = _budget_limited_stack()
     await stack.add_credentials()
 
     result = await stack.investigate(request)
@@ -295,7 +385,7 @@ async def test_a_continuation_that_adds_nothing_stops_once() -> None:
 @pytest.mark.asyncio
 async def test_a_fruitless_continuation_is_recorded_as_an_issue() -> None:
     """Visible rather than silent: the round happened and achieved nothing."""
-    stack, _, request = _benign_stack(with_challenger=False)
+    stack, request = _budget_limited_stack()
     await stack.add_credentials()
 
     result = await stack.investigate(request)
@@ -322,7 +412,7 @@ async def test_the_same_logical_call_is_never_repeated() -> None:
     Not left to the cache: a cache is an optimisation, and correctness that
     depends on one breaks the first time it misses.
     """
-    stack, _, request = _benign_stack()
+    stack, _, request = _benign_stack(depth=InvestigationDepth.DEEP)
     await stack.add_credentials()
 
     await stack.investigate(request)
@@ -334,17 +424,23 @@ async def test_the_same_logical_call_is_never_repeated() -> None:
 
 @pytest.mark.asyncio
 async def test_a_recomputation_follows_every_continuation() -> None:
-    """New evidence produces new results, never a patched old one.
+    """Every round runs all four stages again, never a patched old result.
 
-    Each round has its own assessment and readiness identity, and the final
-    result carries the last pass's — not the first's with an amendment.
+    The final result carries the last pass's identities rather than the first's
+    with an amendment. Here the second round acquired nothing, so the second
+    pass reaches the identical conclusion — which is determinism rather than a
+    pass that was skipped: the same accumulated evidence at the same instant
+    must produce the same assessment, or a stored result would stop being
+    re-derivable.
     """
-    stack, _, request = _benign_stack()
+    stack, request = _budget_limited_stack()
     await stack.add_credentials()
 
     result = await stack.investigate(request)
 
     assert len(result.rounds) == 2
-    assert result.rounds[0].readiness_result_id != result.rounds[1].readiness_result_id
+    assert result.rounds[1].trigger is RoundTrigger.READINESS_CONTINUATION
+    # Each round recorded its own pass, and the result is the last one's.
     assert result.readiness.result_id == result.rounds[1].readiness_result_id
+    assert result.assessment.assessment.assessment_id == result.rounds[1].assessment_id
     assert result.rounds[0].evaluated_at <= result.rounds[1].evaluated_at

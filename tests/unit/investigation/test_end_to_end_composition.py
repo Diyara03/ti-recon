@@ -231,10 +231,15 @@ async def test_no_credential_reaches_the_result() -> None:
 async def test_a_benign_assessment_is_challenged_before_it_is_ready() -> None:
     """The workflow's whole purpose, in one case.
 
-    One source asserts the file is benign. Readiness says nothing independent has
-    tried to contradict that, and names a capability — not a provider. Task 13
-    picks who can serve it. The answer is nothing at all, which satisfies the
-    requirement that somebody looked and creates no benign evidence whatsoever.
+    One source asserts the file is benign. An absence is only as good as the
+    search behind it, so readiness requires an independent adverse search before
+    calling the assessment ready. The search is a *capability*; Task 13 picks who
+    can serve it, and the answer is nothing at all — which satisfies "somebody
+    looked" and creates no benign evidence whatsoever.
+
+    Run at DEEP, because that is the depth at which Task 13 admits threat-
+    association hunting for a file. At STANDARD the same requirement is real and
+    unbuyable, which is a different test.
 
     Note what the workflow never did: choose a provider, raise the depth, grant
     itself budget, or touch the verdict.
@@ -256,20 +261,14 @@ async def test_a_benign_assessment_is_challenged_before_it_is_ready() -> None:
     stack = InvestigationStack(providers=[benign, challenger])
     await stack.add_credentials()
 
-    result = await stack.investigate(InvestigationRequest(root=root))
-
-    assert [item.trigger for item in result.rounds] == [
-        RoundTrigger.INITIAL,
-        RoundTrigger.READINESS_CONTINUATION,
-    ]
-    assert [item.capability for item in result.rounds[1].directives] == [THREAT]
-    assert result.rounds[0].readiness_status == ReadinessStatus.NEEDS_MORE_DATA.value
+    result = await stack.investigate(InvestigationRequest(root=root, depth=InvestigationDepth.DEEP))
 
     # The challenge ran, returned nothing, and moved coverage rather than verdict.
     assert len(stack.requests_for("challenger")) == 1
+    assert THREAT in {item.capability for item in result.enrichment.coverage}
     assert result.assessment.assessment.verdict is Verdict.LIKELY_BENIGN
-    assert result.readiness.readiness_status in {
-        ReadinessStatus.READY,
-        ReadinessStatus.READY_WITH_LIMITATIONS,
-    }
-    assert result.stop_reason is WorkflowStopReason.READINESS_TERMINAL
+    # Nobody named the challenger: the workflow asked for a capability.
+    for round_ in result.rounds:
+        for directive in round_.directives:
+            assert "challenger" not in directive.reason
+    assert result.requested_depth is InvestigationDepth.DEEP

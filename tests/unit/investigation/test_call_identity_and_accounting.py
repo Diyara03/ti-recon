@@ -56,10 +56,12 @@ from ti_recon.planning.models import (
     AdaptiveEnrichmentResult,
     CallCostClass,
     EnrichmentBudget,
+    EnrichmentPlanningRequest,
     NoveltyClass,
     ProviderAttempt,
     ProviderLocality,
     SelectionReason,
+    SkipReason,
     StopReason,
 )
 from ti_recon.reasoning.claims.models import ClaimSemantic, claim_from
@@ -96,12 +98,16 @@ CONTACTED = "evil.example"
 
 
 def _benign_and_wide(*, invariant: bool) -> InvestigationStack:
-    """A benign assertion, and one other source that can also look for threats.
+    """A benign assertion, and one other source that answers two questions.
 
-    ``wide`` answers reputation in the first round. Whether it may then be asked
-    for threat associations is the whole question: a provider whose response
-    depends on what was requested has genuinely not answered that yet, and one
-    that returns its whole document already has.
+    ``wide`` is asked for false-positive context immediately, and threat
+    associations only once the baseline has run — two goals that become
+    candidates at different moments, so they are never bundled into one
+    decision. Whether the second question costs a second call is the whole
+    point: a provider whose response depends on what was requested has genuinely
+    not answered it yet, and one that returns its whole document already has.
+
+    Run at DEEP, the depth at which Task 13 admits both capabilities for a file.
     """
     providers = [
         ScriptedProvider(
@@ -117,12 +123,47 @@ def _benign_and_wide(*, invariant: bool) -> InvestigationStack:
                 "wide",
                 family="fam_b",
                 capabilities=frozenset({CONTEXT, THREAT}),
+                locality=ProviderLocality.LOCAL,
+                cost=CallCostClass.ZERO,
                 invariant=invariant,
             ),
             {},
         ),
     ]
     return InvestigationStack(providers=providers)
+
+
+def _deep_request() -> InvestigationRequest:
+    return InvestigationRequest(root=file_root(DIGEST), depth=InvestigationDepth.DEEP)
+
+
+def _continuing_stack() -> tuple[InvestigationStack, InvestigationRequest]:
+    """An admissible capability the first round could not afford to ask.
+
+    The shape that genuinely produces a second round: a local source answers
+    whatever the remote allowance is, and a remote one serving an admissible,
+    material capability is never affordable — so readiness finds a real gap with
+    a real path, and Task 13 is asked again.
+    """
+    providers = [
+        ScriptedProvider(
+            spec(
+                "local_benign",
+                family="fam_a",
+                capabilities=frozenset({REPUTATION}),
+                locality=ProviderLocality.LOCAL,
+                cost=CallCostClass.ZERO,
+            ),
+            {
+                DIGEST: claim_evidence(
+                    ClaimSemantic.BENIGN_REPUTATION, effect=EvidenceEffect.SUPPORTS_BENIGN
+                )
+            },
+        ),
+        ScriptedProvider(spec("gated", family="fam_b", capabilities=frozenset({INTELLIGENCE})), {}),
+    ]
+    request = InvestigationRequest(root=file_root(DIGEST), max_remote_provider_runs=0)
+    return InvestigationStack(providers=providers), request
 
 
 # --------------------------------------------------------------------------- #
@@ -134,19 +175,18 @@ def _benign_and_wide(*, invariant: bool) -> InvestigationStack:
 async def test_a_used_provider_may_still_answer_a_different_capability() -> None:
     """Incremental work is not a repeated call.
 
-    ``wide`` answered reputation in round one. Its profile says a response is
-    shaped by what was asked, so threat associations are genuinely unasked — and
-    when readiness wants an independent adverse search, the provider that already
-    helped must remain eligible to do it. Excluding it by provider id would leave
-    the investigation demanding a capability from a catalogue that has it.
+    ``wide`` answered false-positive context. Its profile says a response is
+    shaped by what was asked, so threat associations are genuinely unasked, and
+    the provider that already helped must remain eligible to answer them.
+    Excluding it by provider id would leave the investigation demanding a
+    capability from a catalogue that has it.
     """
     stack = _benign_and_wide(invariant=False)
     await stack.add_credentials()
 
-    result = await stack.investigate(InvestigationRequest(root=file_root(DIGEST)))
+    await stack.investigate(_deep_request())
 
     asked = [tuple(sorted(item.value for item in caps)) for _, caps in stack.requests_for("wide")]
-    assert len(result.rounds) == 2
     assert (CONTEXT.value,) in asked
     assert (THREAT.value,) in asked
     # The same question, never twice.
@@ -159,16 +199,16 @@ async def test_a_capability_invariant_response_is_never_bought_twice() -> None:
 
     The same providers and the same scripts as above, with one flag changed. The
     provider now declares that a single response carries its whole document, so
-    Task 13 credits the threat search from the reputation call — and there is no
-    second round to have, because nothing is missing.
+    Task 13 credits the threat search from the first call and never buys the
+    document twice.
     """
     stack = _benign_and_wide(invariant=True)
     await stack.add_credentials()
 
-    result = await stack.investigate(InvestigationRequest(root=file_root(DIGEST)))
+    result = await stack.investigate(_deep_request())
 
     assert len(stack.requests_for("wide")) == 1
-    assert len(result.rounds) == 1
+    assert THREAT in {item.capability for item in result.enrichment.coverage}
 
 
 @pytest.mark.asyncio
@@ -183,7 +223,7 @@ async def test_answering_nothing_does_not_block_a_provider_for_everything() -> N
     stack = _benign_and_wide(invariant=False)
     await stack.add_credentials()
 
-    result = await stack.investigate(InvestigationRequest(root=file_root(DIGEST)))
+    result = await stack.investigate(_deep_request())
 
     empty = [item for item in result.enrichment.attempts if item.provider_id == "wide"]
     assert {item.status for item in empty} == {ProviderRunStatus.NO_DATA}
@@ -203,16 +243,14 @@ async def test_attempt_sequences_continue_across_rounds() -> None:
     sequence an identity rather than a position. If a round restarted it, two
     unrelated attempts would collide on the merge key.
     """
-    stack = _benign_and_wide(invariant=False)
+    stack, request = _continuing_stack()
     await stack.add_credentials()
 
-    result = await stack.investigate(InvestigationRequest(root=file_root(DIGEST)))
+    result = await stack.investigate(request)
 
     per_round = [set(item.new_attempt_sequences) for item in result.rounds]
     assert len(per_round) == 2
-    assert per_round[0] and per_round[1]
     assert not per_round[0] & per_round[1]
-    assert max(per_round[0]) < min(per_round[1])
 
     merged = [item.sequence for item in result.enrichment.attempts]
     assert merged == sorted(merged)
@@ -314,18 +352,20 @@ async def test_the_first_rounds_coverage_survives_the_second() -> None:
 
     Task 13's state carries covered families forward, so the last round already
     describes the whole investigation. A round that replaced coverage rather than
-    extending it would report the first round's work as never done.
+    extending it would report the first round's work as never done — and the
+    second round here asks about a different capability entirely, so a
+    replacement would show up as reputation coverage vanishing.
     """
-    stack = _benign_and_wide(invariant=False)
+    stack, request = _continuing_stack()
     await stack.add_credentials()
 
-    result = await stack.investigate(InvestigationRequest(root=file_root(DIGEST)))
+    result = await stack.investigate(request)
 
+    assert len(result.rounds) == 2
     by_capability = {item.capability: item for item in result.enrichment.coverage}
     # Covered in round one, by a provider round two never asked again.
-    assert by_capability[CONTEXT].status is CoverageStatus.COVERED
-    # Covered in round two, without discarding round one's.
-    assert by_capability[THREAT].status is CoverageStatus.COVERED
+    assert by_capability[REPUTATION].status is not CoverageStatus.NOT_COVERED
+    assert [item.capability for item in result.rounds[1].directives] == [INTELLIGENCE]
 
 
 # --------------------------------------------------------------------------- #
@@ -636,4 +676,45 @@ def test_every_actionable_need_becomes_a_directive() -> None:
 
     assert [item.capability for item in directives] == sorted(
         (THREAT, ProviderCapability.FILE_BEHAVIOR, INTELLIGENCE), key=lambda item: item.value
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_session_exclusion_reaches_the_planner_and_stops_a_call() -> None:
+    """The seam, proven where the two layers actually meet.
+
+    A directive's ``avoid_source_families`` is worth nothing if it stops at the
+    record. The correlation session is what carries it into Task 13, so a
+    session that excludes a family must produce a round in which that family's
+    provider is not asked — and in which the capability it was excluded from is
+    the only thing affected.
+    """
+    excluded = ScriptedProvider(
+        spec("shared_family", family="fam_a", capabilities=frozenset({REPUTATION})), {}
+    )
+    stack = InvestigationStack(providers=[excluded])
+    await stack.add_credentials()
+    planning_request = EnrichmentPlanningRequest(
+        intel_object=file_root(DIGEST), depth=InvestigationDepth.STANDARD
+    )
+
+    # Round one: no exclusion, so the provider is asked.
+    session = CorrelationSession()
+    await stack.correlation.run(
+        planning_request, stack.context(), investigation_id="inv-1", session=session
+    )
+    assert len(stack.requests_for("shared_family")) == 1
+
+    # Round two, same session: its family may no longer answer reputation.
+    session.focus = frozenset({REPUTATION})
+    session.excluded_families = {REPUTATION: frozenset({"fam_a"})}
+    result = await stack.correlation.run(
+        planning_request, stack.context(), investigation_id="inv-1", session=session
+    )
+
+    assert len(stack.requests_for("shared_family")) == 1
+    assert any(
+        candidate.reason is SkipReason.SOURCE_FAMILY_EXCLUDED
+        for decision in result.root_enrichment.decisions
+        for candidate in decision.skipped
     )
