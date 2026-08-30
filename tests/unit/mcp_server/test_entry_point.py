@@ -16,11 +16,11 @@ import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
 from ti_recon.application.composition import CredentialLoadReport
-from ti_recon.execution.models import ExecutionContext
+from ti_recon.credentials import InMemoryConnectionRepository
 from ti_recon.mcp_server import main as entry_point
 from ti_recon.mcp_server import tools
 from ti_recon.mcp_server.models import ProviderStatusReport
-from ti_recon.mcp_server.runtime import STDIO_PRINCIPAL, McpRuntime
+from ti_recon.mcp_server.runtime import STDIO_PRINCIPAL, FixedPrincipal, McpRuntime
 
 
 @pytest.fixture
@@ -94,7 +94,8 @@ def _runtime(application: object) -> McpRuntime:
     return McpRuntime(
         application=application,  # type: ignore[arg-type]
         credentials=CredentialLoadReport(),
-        context=ExecutionContext(authenticated_user_id=STDIO_PRINCIPAL),
+        connections=InMemoryConnectionRepository(),
+        principals=FixedPrincipal(STDIO_PRINCIPAL),
     )
 
 
@@ -134,9 +135,10 @@ async def test_a_structural_workflow_failure_is_reported_as_a_failure() -> None:
     assert "internal/detail" not in message
 
 
-def test_provider_status_is_empty_and_honest_with_no_adapters() -> None:
+@pytest.mark.asyncio
+async def test_provider_status_is_empty_and_honest_with_no_adapters() -> None:
     """A runtime holding nothing reports nothing, rather than guessing."""
-    report = tools.provider_status(_runtime(object()))
+    report = await tools.provider_status(_runtime(object()))
 
     assert isinstance(report, ProviderStatusReport)
     assert report.providers == ()

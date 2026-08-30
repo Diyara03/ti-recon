@@ -155,11 +155,16 @@ class ScriptedProvider(FakePlanningAdapter):
         #: cancel an investigation while a call is genuinely in flight.
         self._gate = gate
         self.requests: list[tuple[str, frozenset[ProviderCapability]]] = []
+        #: The secret each call actually arrived with, in order. Recorded so a
+        #: test can prove *which* credential reached the wire — the only place
+        #: cross-tenant credential isolation is genuinely observable. Never
+        #: printed; asserted against.
+        self.credentials: list[str | None] = []
 
     async def lookup(
         self, request: ProviderRequest, credential: object | None = None
     ) -> ProviderResultEnvelope:
-        del credential
+        self.credentials.append(None if credential is None else credential.reveal())  # type: ignore[attr-defined]
         subject = request.intel_object
         self.requests.append((subject.canonical_value, request.requested_capabilities))
         if self._gate is not None:

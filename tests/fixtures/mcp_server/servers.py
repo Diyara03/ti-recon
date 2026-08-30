@@ -14,8 +14,7 @@ from __future__ import annotations
 from fixtures.investigation.stack import InvestigationStack, ScriptedProvider
 from ti_recon.application.composition import CredentialLoadReport
 from ti_recon.application.service import InvestigationApplication
-from ti_recon.execution.models import ExecutionContext
-from ti_recon.mcp_server.runtime import STDIO_PRINCIPAL, McpRuntime
+from ti_recon.mcp_server.runtime import STDIO_PRINCIPAL, FixedPrincipal, McpRuntime
 from ti_recon.mcp_server.server import build_mcp_server
 from ti_recon.providers.adapter import ProviderAdapter
 
@@ -34,13 +33,19 @@ async def scripted_runtime(
 
     The stack is returned too, so a test can ask what a provider was actually
     asked — the only way to prove that a pivot did or did not disclose anything.
+
+    ``configured_groups`` fills the startup credential report, which is
+    informational. What ``provider_status`` answers from is the shared connection
+    repository, scoped to the principal — so a group named here without a stored
+    connection is reported unconfigured, which is the honest answer.
     """
     stack = InvestigationStack(providers=providers)
     await stack.add_credentials(user_id=STDIO_PRINCIPAL)
     runtime = McpRuntime(
         application=InvestigationApplication(orchestrator=stack.orchestrator),
         credentials=CredentialLoadReport(configured_groups=configured_groups),
-        context=ExecutionContext(authenticated_user_id=STDIO_PRINCIPAL),
+        connections=stack.connections,
+        principals=FixedPrincipal(STDIO_PRINCIPAL),
         adapters=tuple(adapters or []),
     )
     return runtime, stack

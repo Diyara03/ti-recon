@@ -25,10 +25,15 @@ from fixtures.mcp_server import FAKE_ABUSE_KEY, FAKE_VT_KEY, scripted_server
 from ti_recon.application.composition import CredentialLoadReport
 from ti_recon.application.models import ObservableInputType
 from ti_recon.correlation.policy import PivotMode
+from ti_recon.credentials import InMemoryConnectionRepository
 from ti_recon.enums import InvestigationDepth, ProviderCapability
-from ti_recon.execution.models import ExecutionContext
 from ti_recon.mcp_server import tools
-from ti_recon.mcp_server.runtime import McpRuntime, build_stdio_runtime
+from ti_recon.mcp_server.runtime import (
+    STDIO_PRINCIPAL,
+    FixedPrincipal,
+    McpRuntime,
+    build_stdio_runtime,
+)
 from ti_recon.mcp_server.server import (
     REPORT_SCHEMA_URI,
     REQUEST_SCHEMA_URI,
@@ -110,7 +115,8 @@ async def test_an_unexpected_exception_leaks_neither_message_nor_traceback() -> 
     runtime = McpRuntime(
         application=_Exploding(),  # type: ignore[arg-type]
         credentials=CredentialLoadReport(),
-        context=ExecutionContext(authenticated_user_id="mcp-stdio-local"),
+        connections=InMemoryConnectionRepository(),
+        principals=FixedPrincipal(STDIO_PRINCIPAL),
     )
     captured = io.StringIO()
     handler = logging.StreamHandler(captured)
@@ -161,7 +167,8 @@ async def test_cancellation_does_not_become_a_result() -> None:
     runtime = McpRuntime(
         application=_Blocking(),  # type: ignore[arg-type]
         credentials=CredentialLoadReport(),
-        context=ExecutionContext(authenticated_user_id="mcp-stdio-local"),
+        connections=InMemoryConnectionRepository(),
+        principals=FixedPrincipal(STDIO_PRINCIPAL),
     )
     task = asyncio.ensure_future(
         tools.investigate_observable(
@@ -235,7 +242,7 @@ async def test_provider_status_describes_the_runtime_catalogue() -> None:
 async def test_provider_status_says_configured_and_never_validated() -> None:
     """The field is named for what it knows.
 
-    ``configured`` means the credential was present at startup. Calling it
+    ``configured`` means this principal has the credential stored. Calling it
     ``verified`` or ``healthy`` would claim something only a network call could
     establish — which this tool must never make.
     """
@@ -334,3 +341,139 @@ def test_the_reusable_factory_does_not_reconfigure_logging() -> None:
             continue
         assert "basicConfig" not in source, path.name
         assert ".handlers =" not in source, path.name
+
+
+# --------------------------------------------------------------------------- #
+# The access token stops at the MCP boundary
+# --------------------------------------------------------------------------- #
+
+#: Every package the engine is made of. None of them may learn that OAuth
+#: exists: the MCP layer converts a validated token into one opaque string, and
+#: that string is the whole vocabulary below it.
+_ENGINE_PACKAGES = (
+    "application",
+    "investigation",
+    "planning",
+    "correlation",
+    "execution",
+    "credentials",
+    "providers",
+    "reasoning",
+    "reporting",
+    "cli",
+)
+
+#: Symbols that only exist because a request was authenticated over HTTP.
+_AUTH_SYMBOLS = frozenset(
+    {
+        "AccessToken",
+        "AuthenticatedUser",
+        "AuthSettings",
+        "TokenVerifier",
+        "auth_context_var",
+        "get_access_token",
+        "principal_components",
+        "authorization_context",
+    }
+)
+
+
+def _engine_sources() -> list[tuple[Path, str]]:
+    root = MCP_PACKAGE.parent
+    return [
+        (path, path.read_text(encoding="utf-8"))
+        for package in _ENGINE_PACKAGES
+        for path in sorted((root / package).rglob("*.py"))
+    ]
+
+
+def test_the_engine_imports_nothing_from_the_mcp_sdk() -> None:
+    """The token that authorizes an analyst must never reach a provider.
+
+    Structural rather than procedural: a provider adapter can only forward an
+    MCP access token if something below this boundary can *reach* one, and the
+    only way to reach one is to import the SDK. Nothing below does, so a
+    passthrough would have to add an import first — and this test is what
+    notices.
+    """
+    for path, source in _engine_sources():
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert alias.name != "mcp" and not alias.name.startswith("mcp."), (
+                        f"{path} imports {alias.name}"
+                    )
+            if isinstance(node, ast.ImportFrom) and node.module:
+                assert node.module != "mcp" and not node.module.startswith("mcp."), (
+                    f"{path} imports from {node.module}"
+                )
+
+
+def test_no_engine_module_names_an_authentication_symbol() -> None:
+    """Not by import, and not by attribute either.
+
+    Catches the shape an import ban misses: reaching a contextvar through a
+    module object somebody passed in.
+    """
+    for path, source in _engine_sources():
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    assert alias.name not in _AUTH_SYMBOLS, f"{path} imports {alias.name}"
+            if isinstance(node, ast.Name):
+                assert node.id not in _AUTH_SYMBOLS, f"{path} names {node.id}"
+            if isinstance(node, ast.Attribute):
+                assert node.attr not in _AUTH_SYMBOLS, f"{path} reads .{node.attr}"
+
+
+def test_nothing_below_the_boundary_can_read_an_inbound_request_header() -> None:
+    """The two directions are different, and only one is forbidden.
+
+    A provider config naming ``Authorization`` is *TI Recon's* key going out to
+    a provider — expected, and where the outbound credential belongs. Reading an
+    *inbound* header is the direction that could reach the analyst's token, and
+    it needs the ASGI/HTTP server machinery to do it. Nothing below the MCP
+    layer imports any, so there is no inbound request to read a header from.
+    """
+    forbidden = ("starlette", "uvicorn", "fastapi", "asgiref")
+    for path, source in _engine_sources():
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            names = (
+                [alias.name for alias in node.names]
+                if isinstance(node, ast.Import)
+                else [node.module or ""]
+                if isinstance(node, ast.ImportFrom)
+                else []
+            )
+            for name in names:
+                assert not name.startswith(forbidden), f"{path} imports {name}"
+
+
+def test_the_remote_composition_never_loads_environment_credentials() -> None:
+    """A server's environment is global to the server.
+
+    Read from the module's AST rather than from a comment: the remote builder
+    must pass ``load_credentials=False``, and nothing here may call the
+    environment loader.
+    """
+    source = (MCP_PACKAGE / "runtime.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    remote = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "build_remote_runtime"
+    )
+    keywords = {
+        keyword.arg: keyword.value
+        for node in ast.walk(remote)
+        if isinstance(node, ast.Call)
+        for keyword in node.keywords
+    }
+    loaded = keywords.get("load_credentials")
+    assert isinstance(loaded, ast.Constant) and loaded.value is False
+
+    for path, text in _sources():
+        assert "load_environment_credentials" not in text, path.name

@@ -77,7 +77,9 @@ async def test_the_tool_returns_exactly_what_the_application_returns() -> None:
     request = AnalystInvestigationRequest(
         observable=DIGEST, observable_type=ObservableInputType.FILE_HASH
     )
-    direct = await direct_runtime.application.investigate(request, direct_runtime.context)
+    direct = await direct_runtime.application.investigate(
+        request, direct_runtime.execution_context()
+    )
 
     result = await _call(
         build_mcp_server(mcp_runtime),
@@ -261,7 +263,7 @@ async def test_report_bounds_are_task_20s_and_unchanged() -> None:
         AnalystInvestigationRequest(
             observable=DIGEST, observable_type=ObservableInputType.FILE_HASH
         ),
-        runtime.context,
+        runtime.execution_context(),
     )
 
     result = await _call(
