@@ -42,9 +42,22 @@ is derived from the pair, and exists for convenience only.
 | Adequacy | Continuation | Status |
 |---|---|---|
 | `ADEQUATE` | `COMPLETE`, no limitations | `READY` |
-| `ADEQUATE` / `LIMITED` | anything else | `READY_WITH_LIMITATIONS` |
+| `ADEQUATE` / `LIMITED` | `COMPLETE`, with limitations | `READY_WITH_LIMITATIONS` |
 | `INADEQUATE` | `MORE_DATA_AVAILABLE` | `NEEDS_MORE_DATA` |
 | `INADEQUATE` | `BLOCKED` / `EXHAUSTED` / `COMPLETE` | `UNRESOLVED` |
+
+`ADEQUATE` and `LIMITED` both require zero material gaps, and every continuation
+other than `COMPLETE` requires at least one — so those pairings are unreachable
+by construction rather than merely unused, and a test enumerates the reachable
+set to keep it that way.
+
+`READY` means **no material gap remains**, not "nothing else could conceivably be
+queried". An optional capability that was never obtained is an execution fact in
+the trace, not a headline limitation; otherwise every investigation would be
+limited by whatever the catalogue contains but did not run. A limitation reaches
+the headline only when it qualifies a check that *did* complete — a bounded
+search horizon, a partial answer, a sandbox that watched nothing, a stale
+supporting dataset.
 
 Collapsing the axes earlier would hide the difference between "we could learn
 more" and "there is nothing left to ask", which is exactly what an analyst
@@ -70,6 +83,22 @@ Every `ProviderRunStatus` is mapped explicitly in `STATUS_COMPLETION` with no
 default branch — a new status must be classified deliberately, because
 defaulting one to "complete" would report an unasked question as answered and
 defaulting it to "blocked" would invent a gap.
+
+Two statuses need more than the table:
+
+- **`PLAN_LIMITED` is a refusal, not a partial answer.** It reaches an attempt
+  only through Task 6's error path, where the envelope is `None` — the execution
+  model requires a result for `SUCCESS` alone. The credential is valid and the
+  account's plan does not cover the data, so *nothing was retrieved*. That is
+  `BLOCKED`, the same shape as a missing credential or a spent quota, and it
+  gets its own gap type because supplying an entitlement is a different operator
+  action from supplying a credential.
+- **`PARTIAL` has two shapes.** Task 6 documents that a partial result is
+  "usually an envelope carrying reduced evidence, but an adapter may also raise
+  `PARTIAL_RESULT` when it could not retrieve enough to build one". The first
+  partly covered the capability; the second covered none of it. A status table
+  cannot tell them apart, so `completion_for` refines the status with the
+  attempt's own record of whether anything came back.
 
 ## 5. Requirements come from Task 13
 
@@ -106,6 +135,21 @@ residual suspicion and a single unopposed benign assertion are not.
 So materiality never derives from provider identity. "Censys exists and did not
 run" is not a gap.
 
+### Capability availability is a catalogue fact
+
+`CAPABILITY_UNAVAILABLE` is inferred from an uncovered `CoverageItem` whose
+`providers_considered` is empty. That is safe because Task 13 builds that list by
+walking the registry and asking each descriptor whether it supports the
+capability for this object type — "candidacy, not success or configuration" —
+before budget, credentials, activation, depth or ranking touch anything. So an
+empty set is a statement about the catalogue, not about this particular run.
+
+Where the two kinds of fact disagree, **execution history outranks catalogue
+inference**: a recorded budget skip is direct evidence that a candidate existed,
+so it is classified `BUDGET_LIMITED` rather than "no source exists". Reporting a
+budget stop as unanswerable would tell an operator to give up on a question a
+larger allowance would answer.
+
 ## 7. Aggregation is at the capability
 
 Three sources may serve one capability. If one is unconfigured, one is out of
@@ -134,6 +178,22 @@ The challenge may return `NO_DATA`. That satisfies the requirement that somebody
 looked, and adds no benign evidence whatsoever. **This is not provider voting**;
 it is a requirement that a benign conclusion has been exposed to a search that
 could have contradicted it.
+
+**Independence is resolved through Task 17, not re-derived.** The benign basis's
+component comes from `independence_groups`, which unions over source family,
+origin provider *and* lineage group. A family comparison is not equivalent: a
+relaying transport carries a different family while everything it reports
+originates elsewhere, so comparing families alone would let one information
+origin appear to challenge itself — the precise inflation Task 17 abandoned a
+family-only model to fix.
+
+**One honest limit.** A check that returned `NO_DATA` produced no claim, so it
+has no origin or lineage to group on; the only provenance an attempt records is
+its provider id and source family. For those, family separation is the strongest
+defensible test available, and it is *weaker* than Task 17's claim-level
+precision — two sources silently sharing an upstream feed are indistinguishable
+here. That is a limit of what the execution record contains, and it is not
+papered over by inventing an origin the data never had.
 
 The other benign route — every malicious claim specifically explained at exact
 scope — has already engaged with adverse evidence, and needs no separate

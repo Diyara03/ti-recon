@@ -403,3 +403,131 @@ def test_context_capabilities_do_not_cover_directional_requirements(
     }
     assert REPUTATION in unmet
     assert result.readiness_status is not ReadinessStatus.READY
+
+
+# --------------------------------------------------------------------------- #
+# The challenge must use Task 17's provenance, not a family comparison
+# --------------------------------------------------------------------------- #
+
+
+def _relayed_benign(root):
+    """A benign basis, and another family that depends on the same origin.
+
+    The benign claim comes from origin ``alpha`` via family A. A second claim —
+    about a *pivot* object, so Task 17's target scoping keeps it out of the
+    verdict — arrives through transport family ``fam_relay`` while naming the
+    same origin. Task 17 unions the two into one independence component.
+
+    That shape is what separates a provenance-aware challenge test from a
+    family-only one. Comparing only the benign claims' own families leaves
+    ``fam_relay`` looking independent, when everything it says ultimately comes
+    from ``alpha``.
+    """
+    pivot = observable("203.0.113.55")
+    return (
+        scenario(root)
+        .with_claim(
+            semantic="benign_reputation",
+            provider="alpha",
+            source_family="fam_a",
+            effect=EvidenceEffect.SUPPORTS_BENIGN,
+        )
+        .with_claim(
+            semantic="c2_association",
+            provider="relay_transport",
+            source_family="fam_relay",
+            origin_provider="alpha",
+            subject=pivot,
+        )
+        .with_attempt(attempt(REPUTATION, provider="alpha", source_family="fam_a"))
+        .with_attempt(attempt(INTELLIGENCE, provider="alpha_intel", source_family="fam_a"))
+        .with_coverage(coverage_item(REPUTATION))
+        .with_coverage(coverage_item(INTELLIGENCE))
+    )
+
+
+def test_a_relayed_family_cannot_challenge_the_origin_it_relays() -> None:
+    """The cross-family relay hole, closed.
+
+    ``fam_relay`` carries a different source family while everything it reports
+    originates with ``alpha`` — the origin behind the benign claim. A family
+    comparison calls its adverse search independent, so one information origin
+    would appear to have contradicted itself, and readiness would report READY
+    over a benign assessment nothing had actually challenged.
+
+    Task 17 abandoned a family-only independence model to fix exactly this. The
+    challenge rule now resolves the benign basis's component through
+    :func:`independence_groups` rather than re-deriving a weaker approximation.
+    """
+    root = file_object(sha256="e" * 64)
+    result = assess(
+        _relayed_benign(root).with_attempt(
+            attempt(
+                THREAT,
+                provider="relay_transport",
+                source_family="fam_relay",
+                status=ProviderRunStatus.NO_DATA,
+            )
+        )
+    )
+
+    assert result.verdict is Verdict.LIKELY_BENIGN
+    assert GapType.INDEPENDENT_CHALLENGE_MISSING in {gap.gap_type for gap in result.gaps}
+    assert result.readiness_status is ReadinessStatus.NEEDS_MORE_DATA
+
+
+def test_a_genuinely_separate_family_still_challenges_a_relayed_basis() -> None:
+    """The counterpart, so the rule above is not merely conservative.
+
+    An origin with no known dependence on the benign claim satisfies the
+    challenge, and — as ever — its empty answer creates no benign evidence.
+    """
+    root = file_object(sha256="e" * 64)
+    unchallenged = assess(_relayed_benign(root))
+    challenged = assess(
+        _relayed_benign(root).with_attempt(
+            attempt(
+                THREAT,
+                provider="gamma",
+                source_family="fam_gamma",
+                status=ProviderRunStatus.NO_DATA,
+            )
+        )
+    )
+
+    assert GapType.INDEPENDENT_CHALLENGE_MISSING not in {gap.gap_type for gap in challenged.gaps}
+    assert challenged.verdict is unchallenged.verdict
+    assert challenged.confidence is unchallenged.confidence
+
+
+def test_dependent_copies_never_improve_readiness_through_the_challenge() -> None:
+    """Piling on relayed checks changes nothing.
+
+    Every added check belongs to the benign basis's own information origin, so
+    the challenge stays unmet however many of them run.
+    """
+    root = file_object(sha256="e" * 64)
+    baseline = assess(_relayed_benign(root))
+    piled = assess(
+        _relayed_benign(root)
+        .with_attempt(
+            attempt(
+                THREAT,
+                provider="relay_transport",
+                source_family="fam_relay",
+                status=ProviderRunStatus.NO_DATA,
+            )
+        )
+        .with_attempt(
+            attempt(
+                THREAT,
+                provider="alpha_two",
+                source_family="fam_a",
+                status=ProviderRunStatus.NO_DATA,
+            )
+        )
+    )
+
+    assert piled.readiness_status is baseline.readiness_status
+    assert piled.coverage_adequacy is baseline.coverage_adequacy
+    assert GapType.INDEPENDENT_CHALLENGE_MISSING in {gap.gap_type for gap in piled.gaps}

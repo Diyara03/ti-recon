@@ -104,7 +104,11 @@ def attempt(
         attempts=1,
         duration_ms=1.0,
         coverage_gained=status is ProviderRunStatus.SUCCESS,
-        produced_evidence=produced_evidence and status is ProviderRunStatus.SUCCESS,
+        # A partial result usually carries reduced evidence; Task 6 documents
+        # that an adapter may instead raise with nothing to show, which a test
+        # asks for by passing produced_evidence=False.
+        produced_evidence=produced_evidence
+        and status in {ProviderRunStatus.SUCCESS, ProviderRunStatus.PARTIAL},
         recorded_at=AS_OF,
     )
 

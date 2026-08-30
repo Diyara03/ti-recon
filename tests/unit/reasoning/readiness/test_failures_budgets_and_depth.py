@@ -13,6 +13,8 @@ requirement at all.
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from fixtures.readiness import (
@@ -342,3 +344,87 @@ def test_an_unresolved_claim_subject_prevents_full_readiness() -> None:
     assert result.verdict is Verdict.MALICIOUS
     assert GapType.UNRESOLVED_INPUT in {gap.gap_type for gap in result.gaps}
     assert result.readiness_status is not ReadinessStatus.READY
+
+
+# --------------------------------------------------------------------------- #
+# Capability availability: catalogue fact vs execution history
+# --------------------------------------------------------------------------- #
+
+
+def test_a_budget_skip_outranks_an_empty_considered_list() -> None:
+    """Observed execution beats catalogue inference when the two disagree.
+
+    An empty ``providers_considered`` is an *inference* that nothing could have
+    served the capability. A recorded budget skip is direct evidence that a
+    candidate existed and was declined for allowance. Letting the inference win
+    told an operator the question was unanswerable when a larger budget would
+    answer it — and closed the continuation state from MORE_DATA_AVAILABLE to
+    EXHAUSTED on the strength of the weaker fact.
+
+    Real planner output cannot produce this contradiction, because a candidate
+    it skipped for budget is a candidate it considered. The precedence still has
+    to be the right way round for a caller assembling a result by hand, and for
+    whatever the planner records next.
+    """
+    root = file_object(sha256="a" * 63 + "b")
+    result = assess(
+        scenario(root)
+        .with_claim("aggregated_reputation", provider="alpha", source_family="fam_a")
+        .with_attempt(attempt(REPUTATION, provider="alpha", source_family="fam_a"))
+        .with_coverage(coverage_item(REPUTATION))
+        .with_skip(skipped(INTELLIGENCE, SkipReason.BUDGET_EXHAUSTED))
+        .with_coverage(
+            coverage_item(INTELLIGENCE, status=CoverageStatus.NOT_COVERED, providers_considered=())
+        )
+    )
+
+    assert [gap.gap_type for gap in result.gaps if gap.capability is INTELLIGENCE] == [
+        GapType.BUDGET_LIMITED
+    ]
+    assert result.continuation_state is ContinuationState.MORE_DATA_AVAILABLE
+
+
+def test_capability_availability_comes_from_the_catalogue_not_the_run() -> None:
+    """``providers_considered`` records candidacy, not what was attempted.
+
+    Task 13 builds it by walking the registry and asking each descriptor whether
+    it supports the capability for this object type — before budget, credentials,
+    activation, depth or ranking touch anything. That is what makes an empty set
+    a statement about the catalogue rather than about this particular run, and it
+    is the only reason inferring CAPABILITY_UNAVAILABLE from it is defensible.
+    """
+    from ti_recon.planning.planner import AdaptiveEnrichmentPlanner
+
+    source = inspect.getsource(AdaptiveEnrichmentPlanner.providers_considered)
+
+    # Candidacy is decided by the descriptor, not by execution outcomes.
+    assert "descriptor.supports(object_type, capability)" in source
+    for execution_concept in ("budget", "credential", "attempt", "status"):
+        assert execution_concept not in source
+
+
+def test_a_never_activated_goal_is_not_unavailable_whatever_coverage_says() -> None:
+    """Activation is settled before availability is ever consulted."""
+    result = assess(
+        _covered_malicious_file(depth=InvestigationDepth.DEEP)
+        .with_skip(skipped(BEHAVIOUR, SkipReason.GOAL_NOT_ACTIVE))
+        .with_coverage(
+            coverage_item(BEHAVIOUR, status=CoverageStatus.NOT_COVERED, providers_considered=())
+        )
+    )
+    evaluation = _evaluation(result, BEHAVIOUR)
+
+    assert evaluation.status is RequirementStatus.NOT_APPLICABLE
+    assert not [gap for gap in result.gaps if gap.capability is BEHAVIOUR]
+
+
+def test_a_deeper_capability_is_absent_rather_than_unavailable() -> None:
+    """Out of scope for the requested depth, so never evaluated at all."""
+    result = assess(
+        _covered_malicious_file(depth=InvestigationDepth.QUICK).with_coverage(
+            coverage_item(BEHAVIOUR, status=CoverageStatus.NOT_COVERED, providers_considered=())
+        )
+    )
+
+    assert BEHAVIOUR not in {item.requirement.capability for item in result.requirement_evaluations}
+    assert not [gap for gap in result.gaps if gap.capability is BEHAVIOUR]

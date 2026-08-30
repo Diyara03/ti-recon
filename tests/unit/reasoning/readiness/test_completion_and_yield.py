@@ -21,6 +21,8 @@ from ti_recon.planning.models import ProviderLocality
 from ti_recon.reasoning.readiness import (
     STATUS_COMPLETION,
     CheckCompletion,
+    ContinuationState,
+    GapType,
     InformationYield,
     RequirementStatus,
     completion_for,
@@ -61,14 +63,15 @@ def test_every_provider_status_is_mapped_on_purpose() -> None:
     """
     assert set(STATUS_COMPLETION) == set(ProviderRunStatus)
     for status in ProviderRunStatus:
-        assert completion_for(status) in set(CheckCompletion)
+        assert completion_for(attempt(CAPABILITY, status=status)) in set(CheckCompletion)
 
 
 STATUS_EXPECTATIONS = {
     ProviderRunStatus.SUCCESS: CheckCompletion.COMPLETE,
     ProviderRunStatus.NO_DATA: CheckCompletion.COMPLETE,
     ProviderRunStatus.PARTIAL: CheckCompletion.PARTIAL,
-    ProviderRunStatus.PLAN_LIMITED: CheckCompletion.PARTIAL,
+    # An entitlement refusal, not a partial answer -- see the dedicated test.
+    ProviderRunStatus.PLAN_LIMITED: CheckCompletion.BLOCKED,
     ProviderRunStatus.NOT_CONFIGURED: CheckCompletion.BLOCKED,
     ProviderRunStatus.QUOTA_EXCEEDED: CheckCompletion.BLOCKED,
     ProviderRunStatus.TEMPORARILY_UNAVAILABLE: CheckCompletion.BLOCKED,
@@ -90,7 +93,7 @@ def test_each_status_reaches_its_intended_completion(
     Another source may serve the capability, and if none can, that is recorded
     as a catalogue fact instead.
     """
-    assert completion_for(status) is expected
+    assert completion_for(attempt(CAPABILITY, status=status)) is expected
 
 
 # --------------------------------------------------------------------------- #
@@ -292,3 +295,71 @@ def test_independent_families_are_counted_as_families_not_providers() -> None:
     evaluation = _evaluation(result, CAPABILITY)
 
     assert evaluation.independent_families == ("shared",)
+
+
+# --------------------------------------------------------------------------- #
+# Plan-limited is a refusal, not a partial answer
+# --------------------------------------------------------------------------- #
+
+
+def test_a_plan_limited_result_is_blocked_rather_than_partially_complete() -> None:
+    """The account's plan does not cover this data, so nothing was retrieved.
+
+    ``PLAN_LIMITED`` reaches an attempt only through the executor's error path,
+    where the envelope is ``None`` — Task 6's own model requires a result for
+    ``SUCCESS`` alone. So it means "a source exists and this account cannot use
+    it", which is the same shape as a missing credential or a spent quota, and
+    not "the capability was partly covered".
+
+    Crediting it as partial coverage reported a check that never produced
+    anything, and filed it under a continuable gap type so the run claimed more
+    data was merely *available* rather than blocked on an entitlement.
+    """
+    result = assess(_reputation_scenario(status=ProviderRunStatus.PLAN_LIMITED))
+    evaluation = _evaluation(result, CAPABILITY)
+
+    assert evaluation.completion is CheckCompletion.BLOCKED
+    assert evaluation.status is RequirementStatus.UNSATISFIED
+    assert evaluation.gap_type is GapType.PLAN_LIMITED
+
+
+def test_plan_limited_blocks_continuation_rather_than_promising_more_data() -> None:
+    """An entitlement is supplied by an operator, not by running the plan again."""
+    root = file_object(sha256="e" * 64)
+    result = assess(
+        scenario(root)
+        .with_attempt(attempt(CAPABILITY, provider="rep", status=ProviderRunStatus.PLAN_LIMITED))
+        .with_attempt(
+            attempt(
+                ProviderCapability.MALWARE_INTELLIGENCE,
+                provider="intel",
+                status=ProviderRunStatus.PLAN_LIMITED,
+            )
+        )
+    )
+
+    assert result.continuation_state is ContinuationState.BLOCKED
+    assert {gap.gap_type for gap in result.gaps} == {GapType.PLAN_LIMITED}
+
+
+def test_a_partial_result_that_retrieved_nothing_is_not_partial_coverage() -> None:
+    """Task 6 documents both shapes of PARTIAL, and they are different facts.
+
+    Usually a partial result carries reduced evidence, and that partly covers
+    the capability. But an adapter may also raise ``PARTIAL_RESULT`` when it
+    could not retrieve enough to build an envelope at all — and that covered
+    none of it. A single status-to-completion table cannot tell them apart, so
+    the execution record decides.
+    """
+    with_evidence = assess(
+        _reputation_scenario(status=ProviderRunStatus.PARTIAL, produced_evidence=True)
+    )
+    without_evidence = assess(
+        _reputation_scenario(status=ProviderRunStatus.PARTIAL, produced_evidence=False)
+    )
+
+    assert _evaluation(with_evidence, CAPABILITY).completion is CheckCompletion.PARTIAL
+    assert _evaluation(with_evidence, CAPABILITY).status is RequirementStatus.LIMITED
+
+    assert _evaluation(without_evidence, CAPABILITY).completion is CheckCompletion.BLOCKED
+    assert _evaluation(without_evidence, CAPABILITY).status is RequirementStatus.UNSATISFIED

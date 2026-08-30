@@ -1000,6 +1000,29 @@ about it.
      assessment less correct. This is the Task 17 partial-envelope lesson applied
      from outside: coverage states are surfaced here, never charged to confidence.
 
+102a. **A refusal is not a partial answer, and independence is Task 17's.**
+     `PLAN_LIMITED` reaches an attempt only through Task 6's error path, where
+     the envelope is `None`, so nothing was retrieved: it is `BLOCKED` with its
+     own gap type, not partial coverage. `PARTIAL` genuinely has two shapes —
+     reduced evidence, or an adapter that could not build an envelope at all —
+     so completion is refined by whether the attempt produced anything rather
+     than read from the status alone. And the benign challenge resolves the
+     basis's component through `independence_groups`, never a family comparison:
+     a relaying transport carries a different family while reporting the same
+     origin, so a family-only test lets one origin challenge itself. Where a
+     `NO_DATA` check has no claim to group on, family separation is the
+     strongest available test and is documented as weaker than claim-level
+     precision rather than presented as equivalent.
+
+102b. **Capability absence is a catalogue fact; execution history outranks it.**
+     `providers_considered` is built by walking the registry and asking each
+     descriptor what it supports, before budget, credentials, activation or
+     depth — so an empty set describes the catalogue, not the run. A recorded
+     budget skip proves a candidate existed, so it is `BUDGET_LIMITED` rather
+     than "no source exists". Materiality binds to Task 17's `VERDICT_RULES` by
+     imported identity, never by prefix or substring, and an unrecognised rule
+     is treated as a weak basis so relevant requirements stay material.
+
 103. **`NO_DATA` is checked-with-no-data, and is never benign evidence.** A source
      that answered "nothing known" completed its check; a source nobody configured
      did not. Collapsing the two lets an unattempted check masquerade as an

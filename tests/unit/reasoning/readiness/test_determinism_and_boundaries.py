@@ -27,12 +27,22 @@ from fixtures.readiness import (
     scenario,
     skipped,
 )
-from ti_recon.enums import InvestigationDepth, ProviderCapability, ProviderRunStatus
+from ti_recon.enums import (
+    CoverageRelevance,
+    InvestigationDepth,
+    ProviderCapability,
+    ProviderRunStatus,
+    Verdict,
+)
 from ti_recon.planning.models import SkipReason
+from ti_recon.reasoning.fusion.policy import FUSION_POLICY_VERSION, VERDICT_RULES
 from ti_recon.reasoning.readiness import (
     AssessmentReadinessEngine,
     AssessmentReadinessResult,
+    ContinuationState,
+    CoverageAdequacy,
     CoverageRequirement,
+    GapType,
     InformationNeed,
     InMemoryReadinessMetricsSink,
     ReadinessCoverageSummary,
@@ -43,6 +53,10 @@ from ti_recon.reasoning.readiness import (
     ReadinessStatus,
     RequirementEvaluation,
     SourceCheck,
+    adequacy_for,
+    continuation_for,
+    is_material,
+    status_for,
 )
 
 READINESS_PACKAGE = Path("src/ti_recon/reasoning/readiness")
@@ -429,3 +443,196 @@ def test_metrics_carry_no_observable_or_investigation_label() -> None:
     banned = ("target", "observable", "hash", "url", "user", "investigation", "provider")
     offenders = [name for name in ReadinessMetric.model_fields if any(t in name for t in banned)]
     assert offenders == []
+
+
+# --------------------------------------------------------------------------- #
+# Materiality is bound to Task 17's vocabulary by identity, not by shape
+# --------------------------------------------------------------------------- #
+
+
+def test_strong_basis_rules_are_imported_identities_not_parsed_strings() -> None:
+    """A rename must be a build error, not a silent behaviour change.
+
+    Every member of ``STRONG_BASIS_RULES`` comes from Task 17's own
+    ``VERDICT_RULES``, so the two cannot drift. Matching on "decisive" appearing
+    in a rule id, or on a prefix, would keep working after a rename while
+    quietly meaning something else.
+    """
+    from ti_recon.reasoning.fusion.policy import VERDICT_RULES
+    from ti_recon.reasoning.readiness.policy import (
+        STRONG_BASIS_RULES,
+        SUPPORTED_FUSION_POLICY_VERSION,
+    )
+
+    assert STRONG_BASIS_RULES <= set(VERDICT_RULES.values())
+    assert STRONG_BASIS_RULES == {
+        VERDICT_RULES["malicious_decisive"],
+        VERDICT_RULES["malicious_corroborated"],
+        VERDICT_RULES["likely_benign_explained"],
+    }
+    assert SUPPORTED_FUSION_POLICY_VERSION == FUSION_POLICY_VERSION
+
+    # No substring or prefix matching anywhere in the policy module.
+    source = Path("src/ti_recon/reasoning/readiness/policy.py").read_text(encoding="utf-8")
+    for pattern in ("startswith", "endswith", "re.match", "re.search", "in verdict_rule_id"):
+        assert pattern not in source
+
+
+MATERIALITY_CASES = {
+    "decisive_malicious": (VERDICT_RULES["malicious_decisive"], False),
+    "corroborated_malicious": (VERDICT_RULES["malicious_corroborated"], False),
+    "explained_benign": (VERDICT_RULES["likely_benign_explained"], False),
+    "residual_suspicious": (VERDICT_RULES["suspicious_residual"], True),
+    "single_source_benign": (VERDICT_RULES["likely_benign_directional"], True),
+    "unknown_future_rule": ("malicious.some_future_rule.v9", True),
+    "decisive_looking_unknown": ("decisive.but.not.a.real.rule", True),
+}
+
+
+@pytest.mark.parametrize("case", sorted(MATERIALITY_CASES))
+def test_relevant_requirements_stay_material_unless_the_basis_is_known_strong(
+    case: str,
+) -> None:
+    """Unknown rules fail conservatively.
+
+    The last two rows matter most. A rule id this table has never seen — because
+    Task 17 gained one, or because something malformed arrived — must not
+    suppress relevant requirements. Assuming an unknown rule is strong would
+    quietly declare an investigation adequately covered on the authority of a
+    rule nobody here has reviewed, and the second row shows a substring test
+    would have done exactly that.
+    """
+    rule_id, expected = MATERIALITY_CASES[case]
+
+    assert (
+        is_material(
+            criticality=CoverageRelevance.RELEVANT,
+            verdict=Verdict.SUSPICIOUS,
+            verdict_rule_id=rule_id,
+        )
+        is expected
+    )
+
+
+@pytest.mark.parametrize(
+    "criticality,expected",
+    [(CoverageRelevance.REQUIRED, True), (CoverageRelevance.OPTIONAL, False)],
+)
+def test_required_always_matters_and_optional_never_does(
+    criticality: CoverageRelevance, expected: bool
+) -> None:
+    """Neither depends on the basis, so neither consults the rule id."""
+    for rule_id in (VERDICT_RULES["malicious_decisive"], VERDICT_RULES["suspicious_residual"]):
+        assert (
+            is_material(
+                criticality=criticality, verdict=Verdict.SUSPICIOUS, verdict_rule_id=rule_id
+            )
+            is expected
+        )
+
+
+# --------------------------------------------------------------------------- #
+# The two-axis algebra
+# --------------------------------------------------------------------------- #
+
+
+def test_only_certain_axis_pairings_are_reachable() -> None:
+    """The impossible combinations, enumerated rather than left to a fallback.
+
+    ``ADEQUATE`` and ``LIMITED`` both require zero material gaps, and every
+    continuation other than ``COMPLETE`` requires at least one. So the two
+    functions can never jointly produce a non-complete continuation alongside
+    either of those adequacies, and the headline such a pairing would take is
+    unreachable too.
+
+    Derived by driving both policy functions over every input shape rather than
+    asserted from reading them, so a change that makes one of the pairings
+    reachable fails here instead of quietly picking a branch.
+    """
+    reachable: set[tuple[CoverageAdequacy, ContinuationState]] = set()
+    gap_shapes = [
+        frozenset(),
+        frozenset({GapType.NOT_ATTEMPTED}),
+        frozenset({GapType.NOT_CONFIGURED}),
+        frozenset({GapType.CAPABILITY_UNAVAILABLE}),
+    ]
+    for verdict in Verdict:
+        for gaps in gap_shapes:
+            for limitations in (0, 1):
+                for unresolved in (0, 1):
+                    adequacy = adequacy_for(
+                        verdict=verdict,
+                        material_gaps=len(gaps),
+                        limitations=limitations,
+                        unresolved_inputs=unresolved,
+                    )
+                    reachable.add((adequacy, continuation_for(material_gap_types=gaps)))
+
+    impossible = {
+        (adequacy, continuation)
+        for adequacy in (CoverageAdequacy.ADEQUATE, CoverageAdequacy.LIMITED)
+        for continuation in ContinuationState
+        if continuation is not ContinuationState.COMPLETE
+    }
+    assert reachable & impossible == set()
+    # And the pairings that do occur are the ones the status table describes.
+    assert (CoverageAdequacy.ADEQUATE, ContinuationState.COMPLETE) in reachable
+    assert (CoverageAdequacy.INADEQUATE, ContinuationState.COMPLETE) in reachable
+    assert (CoverageAdequacy.INADEQUATE, ContinuationState.MORE_DATA_AVAILABLE) in reachable
+    assert (CoverageAdequacy.INADEQUATE, ContinuationState.BLOCKED) in reachable
+    assert (CoverageAdequacy.INADEQUATE, ContinuationState.EXHAUSTED) in reachable
+
+
+def test_inadequate_with_a_complete_continuation_is_unresolved() -> None:
+    """Reachable, and deliberately not READY.
+
+    An INCONCLUSIVE verdict with every applicable source already asked has no
+    material gap left — nothing more to do — and still has not resolved the
+    observable. That is the one place the two axes genuinely disagree, and
+    ``EXHAUSTED`` must not read as ``ADEQUATE``.
+    """
+    adequacy = adequacy_for(
+        verdict=Verdict.INCONCLUSIVE, material_gaps=0, limitations=0, unresolved_inputs=0
+    )
+    continuation = continuation_for(material_gap_types=frozenset())
+
+    assert adequacy is CoverageAdequacy.INADEQUATE
+    assert continuation is ContinuationState.COMPLETE
+    assert (
+        status_for(adequacy=adequacy, continuation=continuation, limitations=0)
+        is ReadinessStatus.UNRESOLVED
+    )
+
+
+def test_ready_means_no_material_gap_not_nothing_left_to_query() -> None:
+    """READY is about materiality, not exhaustion.
+
+    A decisive identification with an optional capability never obtained is
+    READY. The unobtained capability is an execution fact in the trace, not a
+    headline limitation — otherwise every investigation would be limited by
+    whatever the catalogue happens to contain but did not run.
+    """
+    root = file_object(sha256="a" * 64)
+    result = assess(
+        scenario(root)
+        .with_claim("malware_sample_identity", provider="alpha", source_family="fam_a")
+        .with_attempt(attempt(REPUTATION, provider="rep", source_family="fam_rep"))
+        .with_attempt(attempt(INTELLIGENCE, provider="alpha", source_family="fam_a"))
+        .with_attempt(
+            attempt(
+                ProviderCapability.FILE_BEHAVIOR,
+                provider="sandbox",
+                status=ProviderRunStatus.NOT_CONFIGURED,
+            )
+        )
+    )
+
+    assert result.readiness_status is ReadinessStatus.READY
+    assert result.limitations == ()
+    # The failure is not hidden: it is in the requirement's own check trace.
+    behaviour = next(
+        item
+        for item in result.requirement_evaluations
+        if item.requirement.capability is ProviderCapability.FILE_BEHAVIOR
+    )
+    assert "not_configured" in {check.raw_status for check in behaviour.checks}
