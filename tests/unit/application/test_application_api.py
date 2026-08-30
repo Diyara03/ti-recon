@@ -331,10 +331,14 @@ def test_no_interface_module_names_a_provider() -> None:
     ``runtime.py`` is the one composition root, exactly as every other layer in
     this repository keeps one.
     """
+    # ``composition.py`` is this layer's composition root, and ``runtime.py``
+    # names the local identity — the same exemption ``planning/catalog.py``
+    # already carries, for the same reason: a catalogue that could not name a
+    # provider would be an empty list.
     offenders = [
         path.name
         for path, source in _sources(APPLICATION_PACKAGE, REPORTING_PACKAGE, CLI_PACKAGE)
-        if path.name != "runtime.py"
+        if path.name not in {"runtime.py", "composition.py"}
         and any(
             name in source.lower()
             for name in (
@@ -385,3 +389,82 @@ def test_building_a_report_and_a_schema_never_touches_the_network() -> None:
 
     assert schema["properties"]["assessment"]
     assert "socket" not in json.dumps(schema)
+
+
+def test_hashing_refuses_anything_but_a_regular_file(tmp_path: Path) -> None:
+    """A FIFO would block the command forever with no output and no reason.
+
+    Opening a pipe waits for a writer, and a character device can be endless.
+    Either would hang ``ti-recon investigate --file`` in a way an analyst could
+    only diagnose with a debugger, so the shape is checked before the open.
+    """
+    import os
+
+    fifo = tmp_path / "pipe"
+    os.mkfifo(fifo)
+
+    with pytest.raises(InvalidObservableError, match="not a regular file"):
+        hash_local_file(fifo)
+
+    with pytest.raises(InvalidObservableError, match="not a regular file"):
+        hash_local_file(tmp_path)
+
+    with pytest.raises(InvalidObservableError, match="cannot read"):
+        hash_local_file(tmp_path / "absent.bin")
+
+
+def test_a_symlink_to_a_real_file_is_followed_and_one_to_a_pipe_is_not(
+    tmp_path: Path,
+) -> None:
+    """Deliberate, and stated: the check is against the resolved target.
+
+    An analyst pointing at a symlink means the file it names. A symlink to a
+    pipe is refused like the pipe it is, so the indirection cannot be used to
+    get past the check.
+    """
+    import os
+
+    real = tmp_path / "sample.bin"
+    real.write_bytes(b"payload")
+    good = tmp_path / "good.lnk"
+    good.symlink_to(real)
+    fifo = tmp_path / "pipe"
+    os.mkfifo(fifo)
+    bad = tmp_path / "bad.lnk"
+    bad.symlink_to(fifo)
+
+    assert hash_local_file(good) == hash_local_file(real)
+    with pytest.raises(InvalidObservableError, match="not a regular file"):
+        hash_local_file(bad)
+
+
+def test_hashing_streams_rather_than_reading_the_whole_file(tmp_path: Path) -> None:
+    """Constant memory, so a large sample is hashable rather than fatal."""
+    import hashlib as _hashlib
+
+    from ti_recon.application.service import _READ_CHUNK
+
+    sample = tmp_path / "big.bin"
+    payload = b"\xde\xad\xbe\xef" * (_READ_CHUNK // 2)
+    sample.write_bytes(payload)
+
+    assert len(payload) > _READ_CHUNK
+    assert hash_local_file(sample) == _hashlib.sha256(payload).hexdigest()
+
+
+def test_a_non_regular_file_never_reaches_an_investigation() -> None:
+    """The CLI reports it as input, not as an analytical outcome."""
+    import io
+    import os
+    import tempfile
+
+    directory = Path(tempfile.mkdtemp())
+    fifo = directory / "pipe"
+    os.mkfifo(fifo)
+    out, err = io.StringIO(), io.StringIO()
+
+    code = run(["investigate", "--file", str(fifo), "--format", "json"], stdout=out, stderr=err)
+
+    assert code == 2
+    assert out.getvalue() == ""
+    assert "not a regular file" in err.getvalue()

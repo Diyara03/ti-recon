@@ -243,11 +243,17 @@ def test_the_providers_command_names_no_credential() -> None:
         assert set(row) == {
             "provider_id",
             "source_family",
+            "credential_group",
             "requires_credentials",
+            "configured",
+            "locality",
             "capabilities",
             "object_types",
             "dataset_version",
         }
+        # ``configured`` is a boolean and nothing more: no value, no prefix, no
+        # length, nothing an attacker could narrow a guess with.
+        assert isinstance(row["configured"], bool)
 
 
 def test_a_closed_pipe_is_not_a_traceback() -> None:
@@ -279,3 +285,62 @@ def test_a_closed_pipe_is_not_a_traceback() -> None:
         logger.handlers, logger.propagate, logger.level = saved
 
     assert code == EXIT_OK
+
+
+# --------------------------------------------------------------------------- #
+# Diagnostics never leave the machine
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--help"],
+        ["--version"],
+        ["schema", "report"],
+        ["schema", "request"],
+        ["providers"],
+    ],
+)
+def test_a_diagnostic_command_opens_nothing(argv, monkeypatch) -> None:
+    """Under the hardened guard: no resolution, no socket, no provider call.
+
+    These commands exist to be safe to run — in a CI job, on a laptop with no
+    keys, before anybody has decided to investigate anything. Now that the
+    runtime registers nine real providers, "building the catalogue is offline"
+    is a claim worth enforcing rather than assuming.
+    """
+    from fixtures.network import install_network_guard
+
+    install_network_guard(monkeypatch)
+    out, err = io.StringIO(), io.StringIO()
+
+    try:
+        code = run(argv, stdout=out, stderr=err)
+    except SystemExit as exit_signal:  # --help and --version exit through argparse
+        code = int(exit_signal.code or 0)
+
+    assert code in {EXIT_OK, EXIT_USAGE_ERROR}
+
+
+def test_the_providers_diagnostic_never_reports_a_secret(monkeypatch) -> None:
+    """Configured is a boolean. It is never a value, a prefix or a length."""
+    from fixtures.network import install_network_guard
+
+    install_network_guard(monkeypatch)
+    monkeypatch.setenv("ABUSECH_AUTH_KEY", "SUPER_SECRET_ABUSE_KEY_456")
+    monkeypatch.setenv("VIRUSTOTAL_API_KEY", "SUPER_SECRET_VT_KEY_123")
+    out, err = io.StringIO(), io.StringIO()
+
+    assert run(["providers"], stdout=out, stderr=err) == EXIT_OK
+
+    document = out.getvalue()
+    assert "SUPER_SECRET_ABUSE_KEY_456" not in document
+    assert "SUPER_SECRET_VT_KEY_123" not in document
+    rows = {row["provider_id"]: row for row in json.loads(document)["providers"]}
+    # The shared group is reported for every member, from one stored secret.
+    assert rows["threatfox"]["configured"] is True
+    assert rows["urlhaus"]["configured"] is True
+    assert rows["malwarebazaar"]["configured"] is True
+    assert rows["urlscan"]["configured"] is False
+    assert err.getvalue() == ""

@@ -98,7 +98,9 @@ async def test_an_inconclusive_report_invents_no_cause() -> None:
     assert report.assessment_basis.items == ()
     assert report.unexplained_evidence.items == ()
     rendered = render_text(report)
-    assert "No claim supported or opposed" in rendered
+    assert "No claim supported the assessment" in rendered
+    # And no opposition section was invented to fill the space.
+    assert "Evidence against this assessment" not in rendered
 
 
 @pytest.mark.asyncio

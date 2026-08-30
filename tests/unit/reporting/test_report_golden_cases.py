@@ -195,16 +195,22 @@ async def test_an_explanation_is_not_generalised_to_every_finding() -> None:
 
 @pytest.mark.asyncio
 async def test_the_local_runtime_investigates_with_no_credential_at_all() -> None:
-    """The shipped composition, end to end, offline.
+    """The shipped composition, end to end, with no credentials at all.
 
-    A fresh install has no keys. It must still produce an honest report rather
-    than failing — and must disclose nothing while doing it, which is why the
-    only registered adapter is the one that answers from a packaged snapshot.
+    A fresh install has no keys. Every remote provider is still *registered* —
+    so Task 18 can tell "not configured" from "no such source" — and every one
+    of them reports ``NOT_CONFIGURED`` rather than contacting anything. The
+    credential-free local provider still answers, and the report is honest
+    about what was and was not consulted.
     """
-    from ti_recon.application import AnalystInvestigationRequest, InvestigationApplication
-    from ti_recon.cli.runtime import build_local_context, build_local_runtime
+    from ti_recon.application import AnalystInvestigationRequest
+    from ti_recon.application.composition import build_default_application
+    from ti_recon.cli.runtime import LOCAL_CLI_USER, build_local_context
 
-    application = InvestigationApplication(orchestrator=build_local_runtime())
+    application, credentials = await build_default_application(
+        user_id=LOCAL_CLI_USER, environment={}
+    )
+    assert credentials.configured_groups == frozenset()
 
     report = await application.investigate(
         AnalystInvestigationRequest(observable="example.com"), build_local_context()
@@ -217,6 +223,18 @@ async def test_the_local_runtime_investigates_with_no_credential_at_all() -> Non
     assert report.assessment.verdict is Verdict.INCONCLUSIVE
     assert report.gaps.items
     assert render_text(report)
+
+    checks = {item.provider_id: item for item in report.source_checks.items}
+    assert checks, "a registered provider that was planned should appear as a check"
+    # Registered and unconfigured, never silently missing from the catalogue.
+    unconfigured = [item for item in checks.values() if item.status == "not_configured"]
+    assert unconfigured
+    # None of them was contacted: an unconfigured provider stops at the
+    # credential lookup, and `called_provider` stays false. The local one did
+    # run, which is what `called_provider` means — it executed, at no remote
+    # cost and with nothing disclosed.
+    assert all(not item.called_provider for item in unconfigured)
+    assert checks["misp_warninglists"].called_provider
 
 
 @pytest.mark.asyncio
@@ -262,3 +280,90 @@ async def test_a_disagreement_is_shown_as_a_disagreement() -> None:
     assert "Unresolved disagreement" in rendered
     assert "malicious: 1 / benign: 1" in rendered
     assert "Confidence limited by:" in rendered
+
+
+@pytest.mark.asyncio
+async def test_opposing_evidence_is_never_presented_as_the_reason() -> None:
+    """A benign claim is not why something was called malicious.
+
+    Task 17 can reach MALICIOUS while recording a claim that pushed the other
+    way. Both are contributions and both belong in the report — but under one
+    heading meaning "why", the opposing one reads as part of the argument for
+    the verdict, which is the opposite of what the engine said about it.
+    """
+    from fixtures.investigation import InvestigationStack, file_root
+    from ti_recon.enums import EvidenceEffect
+
+    identifying = ScriptedProvider(
+        spec("repo", family="fam_repo", capabilities=frozenset({INTELLIGENCE})),
+        {EICAR: claim_evidence(ClaimSemantic.MALWARE_SAMPLE_IDENTITY)},
+    )
+    disagreeing = ScriptedProvider(
+        spec("clearing", family="fam_b", capabilities=frozenset({REPUTATION})),
+        {
+            EICAR: claim_evidence(
+                ClaimSemantic.BENIGN_REPUTATION, effect=EvidenceEffect.SUPPORTS_BENIGN
+            )
+        },
+    )
+    stack = InvestigationStack(providers=[identifying, disagreeing])
+    await stack.add_credentials()
+    result = await stack.orchestrator.investigate(
+        InvestigationRequest(root=file_root(EICAR)), stack.context()
+    )
+
+    report = build_analyst_report(result)
+    roles = {item.role for item in result.assessment.contributions}
+    if "opposes_verdict" not in {item.value for item in roles}:
+        pytest.skip("this fixture produced no opposing contribution to check")
+
+    # JSON keeps Task 17's disposition on every item, in either section.
+    assert report.assessment_basis.items
+    assert all(item.role == "supports_verdict" for item in report.assessment_basis.items)
+    assert all(item.role == "opposes_verdict" for item in report.opposing_evidence.items)
+
+    rendered = render_text(report)
+    basis_block = rendered.split("Basis")[1].split("Evidence against")[0]
+    assert "opposes_verdict" not in basis_block
+    assert "Evidence against this assessment" in rendered
+
+
+@pytest.mark.asyncio
+async def test_an_inconclusive_conflict_invents_no_primary_cause() -> None:
+    """Sources contradict each other and nothing is promoted to "the reason".
+
+    Filling a "why" section here would manufacture an argument out of a
+    disagreement the engine explicitly declined to resolve.
+    """
+    from fixtures.investigation import InvestigationStack, file_root
+    from ti_recon.enums import EvidenceEffect
+
+    # Two claims too weak for either direction to carry, pointing opposite ways:
+    # Task 17's rule for "sources contradict and neither is decisive".
+    accusing = ScriptedProvider(
+        spec("accusing", family="fam_a", capabilities=frozenset({REPUTATION})),
+        {EICAR: claim_evidence(ClaimSemantic.UNCLASSIFIED_DIRECTIONAL)},
+    )
+    clearing = ScriptedProvider(
+        spec("clearing", family="fam_b", capabilities=frozenset({REPUTATION})),
+        {
+            EICAR: claim_evidence(
+                ClaimSemantic.UNCLASSIFIED_DIRECTIONAL, effect=EvidenceEffect.SUPPORTS_BENIGN
+            )
+        },
+    )
+    stack = InvestigationStack(providers=[accusing, clearing])
+    await stack.add_credentials()
+    result = await stack.orchestrator.investigate(
+        InvestigationRequest(root=file_root(EICAR)), stack.context()
+    )
+
+    report = build_analyst_report(result)
+
+    assert report.assessment.verdict is Verdict.INCONCLUSIVE
+    # No basis was invented in either direction, and the disagreement survives.
+    assert report.assessment_basis.items == ()
+    assert report.conflicts.items
+    rendered = render_text(report)
+    assert "No claim supported the assessment" in rendered
+    assert "Unresolved disagreement" in rendered
