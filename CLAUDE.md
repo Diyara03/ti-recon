@@ -20,7 +20,7 @@ Analyst -> Claude + TI Analyst Skill -> MCP -> TI Recon backend
 
 ## Current implementation boundary
 
-Implemented (Jira Tasks 1-17):
+Implemented (Jira Tasks 1-18):
 
 - Task 1 — product scope + investigation workflow foundation (docs, enums)
 - Task 2 — architecture foundation (docs, module boundaries)
@@ -110,6 +110,15 @@ Implemented (Jira Tasks 1-17):
   seven confidence rules. No score, no weight, no probability, no risk number, no
   provider votes, no action recommendation, no network.
 
+- Task 18 — assessment readiness and coverage adequacy (`reasoning/readiness/`):
+  asks whether the *collection* behind Task 17's assessment was adequate for
+  external-TI analyst triage, and what is still missing. Two orthogonal axes
+  (`CoverageAdequacy`, `ContinuationState`) with a derived `ReadinessStatus`;
+  completion separated from informational yield so `NO_DATA` can never be
+  confused with `NOT_RUN`; requirements taken from Task 13's own capability
+  goals; materiality judged from Task 17's verdict rule. No verdict change, no
+  confidence change, no enrichment, no score, no severity, no action.
+
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Task 13 chooses what
 to ask, Task 14 assembles what came back, Task 15 says what each finding means in
@@ -166,9 +175,12 @@ about it.
   sandbox report do not share a lifetime, and MISP itself maintains separate
   decay models per use case. Task 15 preserves exact ages and source-managed
   lifecycle; numerical weighting is deferred
-- Decision readiness and coverage adequacy (Task 18). Task 17 says what
-  assessment is justified; whether it is *sufficient* for a particular
-  operational decision is a separate question that depends on the environment
+- Organisational readiness profiles beyond external-TI analyst triage. Task 18
+  answers for one purpose only; readiness for containment, alert closure or
+  incident declaration depends on asset criticality, business impact, user
+  context, internal telemetry and incident policy that TI Recon has no access to
+- Task 19 end-to-end orchestration connecting planning, correlation, reasoning,
+  fusion and readiness into one investigation run
 - Any remediation or containment action: blocking, quarantine, isolation, alert
   suppression, ticket closure, allowlisting. A MALICIOUS verdict on shared or
   compromised infrastructure can make blocking actively harmful, and Task 17
@@ -979,6 +991,124 @@ about it.
      that genuinely difficult, and it belongs to a layer that knows the
      environment.
 
+102. **Readiness never changes the assessment.** Task 18 may say
+     READY_WITH_LIMITATIONS about a MALICIOUS/HIGH result whose sandbox coverage
+     was unavailable, and the verdict, confidence, rules, claims, contributions
+     and conflicts stay byte-identical — a test serializes the `FusionResult`
+     before and after and compares. Confidence in *correctness* is not collection
+     completeness, and an incomplete investigation does not make a correct
+     assessment less correct. This is the Task 17 partial-envelope lesson applied
+     from outside: coverage states are surfaced here, never charged to confidence.
+
+102a. **A refusal is not a partial answer, and independence is Task 17's.**
+     `PLAN_LIMITED` reaches an attempt only through Task 6's error path, where
+     the envelope is `None`, so nothing was retrieved: it is `BLOCKED` with its
+     own gap type, not partial coverage. `PARTIAL` genuinely has two shapes —
+     reduced evidence, or an adapter that could not build an envelope at all —
+     so completion is refined by whether the attempt produced anything rather
+     than read from the status alone. And the benign challenge resolves the
+     basis's component through `independence_groups`, never a family comparison:
+     a relaying transport carries a different family while reporting the same
+     origin, so a family-only test lets one origin challenge itself. Where a
+     `NO_DATA` check has no claim to group on, family separation is the
+     strongest available test and is documented as weaker than claim-level
+     precision rather than presented as equivalent.
+
+102c. **One call can answer several capabilities, and coverage says which.**
+     Task 13 bundles compatible goals into one request and records a single
+     attempt carrying the call's *primary* capability, crediting everything the
+     response answered in the `CoverageItem`s. Readiness reads both — attempts
+     for what executed and why anything failed, coverage for what was answered —
+     and takes the better. An attempts-only ledger reports a bundled capability
+     as never attempted and demands a call the planner deliberately avoided.
+     Evidence for one capability never establishes another, and the crediting
+     comes from Task 13's per-capability statement rather than from evidence
+     sharing an envelope.
+
+102e. **Yield belongs to the capability that produced it.** `InformationYield`
+     comes only from attempts keyed to the capability, so a secondary bundled
+     capability never inherits the primary's `DIRECTIONAL` — a context
+     requirement that did would look like a search that happened. Task 13 records outcomes per *call*, so where one response
+     answered two capabilities the repository cannot say which returned data,
+     context or nothing; that state is named `UNATTRIBUTED` rather than reported
+     as `NONE`, which would assert nothing came back, or `NO_DATA`, which would
+     assert the source held nothing — both claims about content the record
+     cannot support. It is a retention limit, never satisfies a need for
+     directional information, creates no evidence, and is counted as itself
+     rather than folded into `checks_no_data`. An adverse search
+     bundled as a secondary is still found, through
+     `PlanningDecision.call.answered_capabilities` plus its `source_family` —
+     never through a coverage item, which records candidacy rather than who
+     answered.
+
+102d. **The benign challenge must be independent *and* relevant.** Independence
+     alone is not enough: the challenging check has to be an adverse search, from
+     the small explicit set `REPUTATION` / `MALWARE_INTELLIGENCE` /
+     `THREAT_ASSOCIATIONS`. Infrastructure exposure, certificate, scanner and
+     business-service context searched for nothing adverse however independent
+     they are, and `FILE_BEHAVIOR` is excluded because watching a sample run is
+     a different question from searching what is known about it. Mixed material
+     gaps resolve addressable-first, so a blocker never stops a run that still
+     has useful work in front of it, and it stays reported in `gaps`.
+
+102b. **Capability absence is a catalogue fact; execution history outranks it.**
+     `providers_considered` is built by walking the registry and asking each
+     descriptor what it supports, before budget, credentials, activation or
+     depth — so an empty set describes the catalogue, not the run. A recorded
+     budget skip proves a candidate existed, so it is `BUDGET_LIMITED` rather
+     than "no source exists". Materiality binds to Task 17's `VERDICT_RULES` by
+     imported identity, never by prefix or substring, and an unrecognised rule
+     is treated as a weak basis so relevant requirements stay material.
+
+103. **`NO_DATA` is checked-with-no-data, and is never benign evidence.** A source
+     that answered "nothing known" completed its check; a source nobody configured
+     did not. Collapsing the two lets an unattempted check masquerade as an
+     exhausted one. Neither is evidence of safety, so adding a completed `NO_DATA`
+     improves coverage and moves no verdict. Every `ProviderRunStatus` is mapped
+     in `STATUS_COMPLETION` with no default branch.
+
+104. **A provider failure matters only when it blocks a material requirement.**
+     Readiness aggregates at the capability, never the provider: if one source is
+     unconfigured, one is out of quota and a third answered, the requirement is
+     satisfied and both failures stay in the trace. There is no provider
+     percentage, success ratio or vote count anywhere — a static test asserts it.
+     Cache hits and coalesced results are valid coverage, and a credential-free
+     local source covers without any remote cost.
+
+105. **Requested depth bounds expectation, and an inactive goal is not a gap.**
+     Requirements come from Task 13's `goals_for`, so a DEEP-only capability is
+     simply absent from a QUICK run rather than missing from it, and a conditional
+     goal whose trigger never fired is read from the planner's recorded skip
+     reason rather than re-derived. Planner budget exhaustion is an operational
+     fact, never proof that coverage was adequate — and `EXHAUSTED` is not
+     `ADEQUATE`: asking everything available and learning nothing is a finished
+     search with an open question, which is why INCONCLUSIVE can never be READY.
+
+106. **`LIKELY_BENIGN` readiness is deliberately asymmetric.** A malicious
+     finding is self-limiting; a benign finding is an absence, and an absence is
+     only as good as the search behind it. A benign verdict resting on one
+     unopposed assertion needs an *independent* adverse search — independence by
+     Task 17's provenance grouping, never a provider count — before it is fully
+     ready. That search may return `NO_DATA`: somebody looked, and no benign
+     evidence was created. The explained-benign route needs no separate
+     challenge, having already accounted for adverse evidence individually.
+
+107. **Stale context and sandbox quality stay scoped.** A stale dataset limits
+     only the requirement whose supporting data was stale, never an unrelated
+     exact malware-sample identification; a completed sandbox run that observed no
+     execution is limited behavioural *coverage* and says nothing about direction.
+     An unresolved claim subject prevents a silent full READY, because evidence
+     nobody can attribute may still be relevant.
+
+108. **Task 18 performs no enrichment and recommends no action.** No HTTP, DNS,
+     socket, provider call, planner run or clock — `evaluated_at` comes from
+     Task 15, and identical inputs answer identically forever. No score,
+     percentage, risk number, severity, priority, incident declaration or
+     remediation. v1 answers one purpose, external-TI analyst triage, because
+     readiness for containment or alert closure depends on organisational context
+     this engine does not have. `READINESS_POLICY_VERSION` is versioned and
+     travels with the Task 15/16/17 versions on every result.
+
 ## Security rules
 
 - **No secrets in the repo.** `.env` is git-ignored; `.env.example` holds
@@ -1248,6 +1378,13 @@ src/ti_recon/
                      policy (decisive/weak semantics, verdict and confidence rule
                      ids, caps), confidence (bands and caps, decided separately
                      from the verdict), engine, results, metrics
+  reasoning/readiness/  Task 18: assessment readiness and coverage adequacy.
+                     models (two axes, completion vs yield, requirements, gaps,
+                     information needs), policy (versioned materiality, basis
+                     strength, status derivation), coverage (the capability
+                     ledger; every ProviderRunStatus mapped on purpose),
+                     requirements (derived from Task 13 goals, never restated),
+                     gaps, engine, results, metrics
   reasoning/false_positive/
                      Task 16: alternative-explanation reasoning. models (roles,
                      dimensions, reason codes, typed links, does-not-establish
