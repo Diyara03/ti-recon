@@ -385,3 +385,90 @@ def test_the_workflow_produces_no_action_or_severity() -> None:
 
     for reason in WorkflowStopReason:
         assert not (set(reason.value.split("_")) & banned), reason
+
+
+# --------------------------------------------------------------------------- #
+# The default composition uses the catalogues everything else uses
+# --------------------------------------------------------------------------- #
+
+
+def test_the_default_composition_reuses_the_shipped_catalogues() -> None:
+    """One source of truth per catalogue, not a hand-written second list.
+
+    A parallel list is the kind of mistake that never fails: a provider added to
+    the real catalogue keeps working everywhere except inside a full
+    investigation, and the run is quietly narrower than every suite believes.
+    """
+    from ti_recon.investigation.composition import build_default_reasoning_engines
+    from ti_recon.planning.catalog import build_default_planning_registry
+    from ti_recon.reasoning.catalog import default_qualifiers
+    from ti_recon.reasoning.claims.registry import default_translators
+
+    engines = build_default_reasoning_engines()
+
+    assert engines.fusion.translators == default_translators()
+    assert engines.temporal.qualifiers == default_qualifiers()
+    # Every planning profile the catalogue offers, none invented here.
+    assert len(build_default_planning_registry().all()) >= 9
+
+
+def test_the_composition_module_is_the_only_place_naming_a_provider() -> None:
+    """Provider imports are isolated to the composition root.
+
+    The generic workflow reaches the catalogues through that one module and
+    otherwise operates entirely on registries and interfaces.
+    """
+    import ast
+
+    generic = [
+        path for path in sorted(WORKFLOW_PACKAGE.rglob("*.py")) if path.name != "composition.py"
+    ]
+    for path in generic:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                assert "catalog" not in node.module, f"{path.name} reaches a catalogue"
+                assert "claims.registry" not in node.module, path.name
+
+
+@pytest.mark.asyncio
+async def test_the_same_investigation_answers_identically() -> None:
+    """Deterministic given the same scripted answers and the same clock.
+
+    Evidence ids are minted per collection, so the two runs' record identities
+    differ by design — what must not differ is anything the workflow decided.
+    """
+    first_stack, root = _pivot_stack()
+    await first_stack.add_credentials()
+    second_stack, _ = _pivot_stack()
+    await second_stack.add_credentials()
+
+    first = await first_stack.investigate(InvestigationRequest(root=root))
+    second = await second_stack.investigate(InvestigationRequest(root=root))
+
+    assert first.assessment.assessment.verdict is second.assessment.assessment.verdict
+    assert first.assessment.assessment.confidence is second.assessment.assessment.confidence
+    assert first.readiness.readiness_status is second.readiness.readiness_status
+    assert first.readiness.continuation_state is second.readiness.continuation_state
+    assert first.stop_reason is second.stop_reason
+    assert len(first.rounds) == len(second.rounds)
+    assert [item.node_key for item in first.correlation.graph_nodes] == [
+        item.node_key for item in second.correlation.graph_nodes
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_workflow_reads_no_clock_of_its_own() -> None:
+    """The injected clock supplies every analysis instant.
+
+    A wall-clock read inside the workflow would make an investigation
+    unreproducible for a reason nothing in the result could explain.
+    """
+    stack, root = _pivot_stack()
+    await stack.add_credentials()
+
+    result = await stack.investigate(InvestigationRequest(root=root))
+
+    assert result.evaluated_at == stack.clock.now()
+    for item in result.rounds:
+        assert item.evaluated_at == stack.clock.now()

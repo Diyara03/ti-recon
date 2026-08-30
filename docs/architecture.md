@@ -81,11 +81,23 @@
      Assessment + Confidence       IMPLEMENTED — Task 17D. verdict and confidence
            |                                      decided separately; no score
            |
-     Decision Readiness            FUTURE — Task 18. is the assessment sufficient
-           |                                for a particular decision?
+     Assessment Readiness          IMPLEMENTED — Task 18. was the collection
+           |                                      adequate for analyst triage?
+           |                                      two axes; never touches verdict
+           |
+     Investigation Orchestration   IMPLEMENTED — Task 19. one bounded run over
+           |                                      Tasks 13-18; readiness-driven
+           |                                      continuation within one budget
            |
      Interface / MCP / Skill       FUTURE
 ```
+
+Task 19 composes the layers above into one investigation and decides only when to
+stop asking. It continues exactly when Task 18 reports inadequate coverage *and*
+a remaining path, never when a verdict merely feels unfinished; and it asks by
+naming a capability, leaving Task 13 to choose the provider. Depth, pivot mode and
+budget are ceilings the caller set, and a continuation works within all three —
+see `docs/investigation-workflow.md`.
 
 Task 17 is the first layer allowed to conclude, and the last one that concludes
 anything about the *observable* alone. It produces a verdict and a confidence

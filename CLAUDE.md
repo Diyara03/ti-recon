@@ -20,7 +20,7 @@ Analyst -> Claude + TI Analyst Skill -> MCP -> TI Recon backend
 
 ## Current implementation boundary
 
-Implemented (Jira Tasks 1-18):
+Implemented (Jira Tasks 1-19):
 
 - Task 1 — product scope + investigation workflow foundation (docs, enums)
 - Task 2 — architecture foundation (docs, module boundaries)
@@ -119,6 +119,14 @@ Implemented (Jira Tasks 1-18):
   goals; materiality judged from Task 17's verdict rule. No verdict change, no
   confidence change, no enrichment, no score, no severity, no action.
 
+- Task 19 — end-to-end investigation orchestration (`investigation/`): composes
+  Tasks 13-18 into one bounded, reproducible workflow. Collect through Task 13
+  and Task 14, analyse through Tasks 15-18, and continue only when Task 18 says
+  coverage is inadequate *and* a path remains. Budgets, depth, pivot mode and the
+  set of calls already made are investigation-wide; continuation directives name
+  capabilities and Task 13 chooses the provider. No transport, no persistence, no
+  action.
+
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Task 13 chooses what
 to ask, Task 14 assembles what came back, Task 15 says what each finding means in
@@ -179,8 +187,11 @@ about it.
   answers for one purpose only; readiness for containment, alert closure or
   incident declaration depends on asset criticality, business impact, user
   context, internal telemetry and incident policy that TI Recon has no access to
-- Task 19 end-to-end orchestration connecting planning, correlation, reasoning,
-  fusion and readiness into one investigation run
+- Any transport or interface layer: REST API, CLI, MCP server, Claude Skill,
+  analyst prose rendering, streaming progress. Task 19 is callable Python and
+  stops there
+- Persistence, cross-process resume, job queues and durable idempotency. Task 19
+  continues *within one invocation* and claims nothing beyond it
 - Any remediation or containment action: blocking, quarantine, isolation, alert
   suppression, ticket closure, allowlisting. A MALICIOUS verdict on shared or
   compromised infrastructure can make blocking actively harmful, and Task 17
@@ -1109,6 +1120,66 @@ about it.
      this engine does not have. `READINESS_POLICY_VERSION` is versioned and
      travels with the Task 15/16/17 versions on every result.
 
+109. **Task 19 composes Tasks 13-18 and reimplements none of them.** No
+     maliciousness rule, no coverage judgement, no provider selection. Every
+     provider call goes through Task 13 to Task 6, which is where the cache,
+     cooldown, quota, retry, execution scope and budget accounting live; a direct
+     adapter call would bypass all six, and an AST test asserts none exists. The
+     generic workflow names no provider in an import or a string literal —
+     `composition.py` is the only exception, and it reuses the existing planning,
+     qualifier and claim-translator catalogues rather than assembling a second
+     list that would silently drift.
+
+110. **Task 18 is the only automatic continuation trigger.** Readiness must say
+     both `NEEDS_MORE_DATA` and `MORE_DATA_AVAILABLE`. A suspicious verdict, an
+     inconclusive one, a failed provider and a missing sandbox are none of them
+     reasons to keep querying — readiness has already weighed each against what
+     the assessment rests on. `READY` and `READY_WITH_LIMITATIONS` are terminal
+     even with optional provider failures recorded, and `BLOCKED` and `EXHAUSTED`
+     are terminal for the current run.
+
+111. **Ceilings are the caller's and never rise.** Depth never escalates, pivot
+     mode never escalates, and budgets never reset: Task 13's state carries the
+     spend and the calls already made, so a continuation sees only what remains.
+     Cache hits, coalesced results and local credential-free sources are valid
+     coverage at zero remote cost, so the workflow does not stop when the remote
+     allowance empties — it hands the remaining state to Task 13 and lets its
+     locality policy decide. Task 14's pivot budget and one-hop limit are
+     investigation-wide, and a target enriched in one round is not enriched again
+     in the next.
+
+112. **Pre-call family separation is a planning hint, not proof of
+     independence.** A benign-challenge directive carries the families already
+     known to share the benign basis's origin so the planner can prefer another,
+     but a source that looks unrelated may relay the very origin it was meant to
+     challenge. Task 17 regroups from the returned provenance and Task 18 reports
+     the challenge still missing; the workflow never declares the answer
+     independent because it picked a different family.
+
+113. **New evidence recomputes everything.** Tasks 15-18 re-run over the
+     accumulated state rather than patching an old conclusion, using one instant
+     per pass so the four results are internally consistent. Readiness may get
+     *worse* after genuinely conflicting evidence, and that outcome is preserved:
+     Task 18's monotonicity concerns a fixed requirement with no new adverse
+     information, not a promise that investigations only improve.
+
+114. **Provider failures are analytical inputs; structural faults are errors.**
+     An unconfigured, rate-limited, unavailable or erroring source continues the
+     run and reaches Task 18 as coverage. Stages describing different observables
+     or a merge conflict between rounds raise, because returning INCONCLUSIVE
+     would dress a software fault as a conclusion. Cancellation propagates
+     untouched rather than becoming a provider failure.
+
+115. **Run state never outlives its run, and nothing is persisted.** The graph,
+     outcomes, planner memory, pivot set and round history live in a per-run
+     object, so two investigations through one orchestrator share nothing and a
+     long-lived service cannot accumulate one enormous investigation. The
+     execution scope reaches every call in every round unchanged. Task 19 writes
+     nothing, resumes nothing across invocations, and claims no durable
+     idempotency. It produces no risk, severity, priority, incident declaration or
+     remediation, and `INVESTIGATION_WORKFLOW_VERSION` versions its composition
+     semantics.
+
 ## Security rules
 
 - **No secrets in the repo.** `.env` is git-ignored; `.env.example` holds
@@ -1378,6 +1449,12 @@ src/ti_recon/
                      policy (decisive/weak semantics, verdict and confidence rule
                      ids, caps), confidence (bands and caps, decided separately
                      from the verdict), engine, results, metrics
+  investigation/     Task 19: end-to-end orchestration. models (request, round,
+                     stop reasons, directives, workflow version), analysis (the
+                     one Task 15-18 pass), continuation (readiness -> capability
+                     directives), merge (deterministic multi-round enrichment
+                     view), engine (the loop), results, metrics, composition (the
+                     only module here that may name a provider)
   reasoning/readiness/  Task 18: assessment readiness and coverage adequacy.
                      models (two axes, completion vs yield, requirements, gaps,
                      information needs), policy (versioned materiality, basis
