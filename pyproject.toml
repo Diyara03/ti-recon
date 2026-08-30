@@ -13,6 +13,11 @@ dependencies = [
     "vt-py>=0.22.0",
 ]
 
+[project.scripts]
+# The analyst entry point (Task 20). Stdlib argparse only: the CLI adds no
+# dependency that every consumer of the library would then inherit.
+ti-recon = "ti_recon.cli.main:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.3",
