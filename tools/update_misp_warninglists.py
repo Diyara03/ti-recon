@@ -13,7 +13,7 @@ Usage
     git clone --depth 1 https://github.com/MISP/misp-warninglists /tmp/mwl
     uv run python tools/update_misp_warninglists.py \\
         --source-dir /tmp/mwl \\
-        --output-dir data/misp_warninglists
+        --output-dir src/ti_recon/data/misp_warninglists
 
 Acquisition is yours, parsing is this tool's. That split is the security boundary:
 this script takes a directory, never a URL, so there is no origin to point
@@ -53,6 +53,9 @@ from pathlib import Path
 from typing import Any, Final
 
 _REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[1]
+#: The snapshot inside this checkout's ``src`` tree -- the development copy, and
+#: the one that becomes the packaged baseline when a distribution is built.
+_SOURCE_SNAPSHOT_ROOT: Final[Path] = _REPO_ROOT / "src" / "ti_recon" / "data" / "misp_warninglists"
 if str(_REPO_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT / "src"))
 
@@ -92,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=_REPO_ROOT / "data" / "misp_warninglists",
+        default=_SOURCE_SNAPSHOT_ROOT,
         help="where the snapshot is written (replaced atomically)",
     )
     parser.add_argument(
@@ -102,6 +105,17 @@ def main(argv: list[str] | None = None) -> int:
         help="omit lists larger than this; 0 for no bound",
     )
     args = parser.parse_args(argv)
+
+    output = args.output_dir.expanduser().resolve()
+    if _is_installed_location(output):
+        print(
+            f"error: refusing to write into an installed package at {output}. "
+            "The packaged snapshot is an immutable baseline; build a new snapshot "
+            "into a source checkout or an external directory and point "
+            "MispWarningListsConfig.snapshot_root at it instead.",
+            file=sys.stderr,
+        )
+        return 2
 
     source = args.source_dir.expanduser().resolve()
     lists_dir = source / "lists"
@@ -189,9 +203,9 @@ def main(argv: list[str] | None = None) -> int:
         diagnostics=diagnostics,
     )
 
-    _write_atomically(args.output_dir, manifest, payloads)
+    _write_atomically(output, manifest, payloads)
     print(
-        f"wrote {len(records)} lists / {total_entries:,} entries to {args.output_dir}\n"
+        f"wrote {len(records)} lists / {total_entries:,} entries to {output}\n"
         f"  upstream commit    : {commit}\n"
         f"  dataset fingerprint: {manifest.dataset_fingerprint}\n"
         f"  omitted at build   : {len(omitted)} lists"
@@ -229,6 +243,21 @@ def _dataset_fingerprint(records: list[SnapshotListRecord]) -> str:
     for record in sorted(records, key=lambda item: item.slug):
         digest.update(f"{record.slug}:{record.sha256}\n".encode())
     return digest.hexdigest()
+
+
+def _is_installed_location(path: Path) -> bool:
+    """Whether this path lives inside an installed distribution.
+
+    The packaged snapshot is read-only application data. Rewriting it in place
+    would edit an installed distribution behind pip's back, leave the wheel's
+    RECORD hashes wrong, and be silently discarded on the next reinstall -- while
+    looking, to whoever ran it, exactly like a successful refresh.
+
+    The development copy under a source checkout's ``src`` tree is a different
+    thing and stays writable: that is where a new pinned baseline is prepared.
+    """
+    parts = set(path.parts)
+    return bool(parts & {"site-packages", "dist-packages"})
 
 
 def _describe_checkout(source: Path) -> tuple[str, datetime | None]:

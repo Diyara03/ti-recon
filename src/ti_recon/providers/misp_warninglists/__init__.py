@@ -24,7 +24,8 @@ from a pinned local snapshot at construction time. That is what keeps the
 capability available during offline triage, and it is enforced structurally: this
 package contains no client and no transport.
 
-**The dataset is pinned and its provenance is recorded.** ``data/misp_warninglists``
+**The dataset is pinned and its provenance is recorded.**
+``ti_recon/data/misp_warninglists``
 carries the upstream commit, a schema fingerprint, a dataset fingerprint, per-list
 checksums and every list the build omitted. Refreshing it is an operator running
 ``tools/update_misp_warninglists.py`` against a local checkout — never something

@@ -82,7 +82,7 @@ would reclassify a list the day upstream reworded it, and would classify
 `automated-malware-analysis` as scanning infrastructure because of a word.
 
 **Validated against the shipped snapshot.** A test asserts every mapped slug
-exists in `data/misp_warninglists/manifest.json`, so a dataset refresh that
+exists in `src/ti_recon/data/misp_warninglists/manifest.json`, so a dataset refresh that
 renames or drops a list fails loudly rather than silently downgrading a
 categorized signal to a generic one.
 
