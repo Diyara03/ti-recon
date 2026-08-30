@@ -33,6 +33,7 @@ from ti_recon.reasoning.fusion.results import FusionResult
 from ti_recon.reasoning.readiness.models import (
     ContinuationState,
     GapOutlook,
+    GapType,
     ReadinessStatus,
 )
 from ti_recon.reasoning.readiness.results import AssessmentReadinessResult
@@ -112,19 +113,28 @@ def directives_for(
             continue
         if need.capability.value in already:
             continue
-        requirement_id = next(
-            (gap.requirement_id for gap in readiness.gaps if gap.capability is need.capability),
-            "",
+        gap = next(
+            (item for item in readiness.gaps if item.capability is need.capability),
+            None,
         )
-        if not requirement_id:
+        if gap is None:
             continue
         found.append(
             ContinuationDirective(
-                requirement_id=requirement_id,
+                requirement_id=gap.requirement_id,
                 capability=need.capability,
                 criticality=need.criticality,
                 reason=need.reason,
-                avoid_source_families=avoid,
+                # Only the need that asked for independence carries the hint.
+                # Every other material need wants the *information*, and whether
+                # its source shares an origin with something that called the
+                # object benign has no bearing on that: a sandbox report is worth
+                # the same whoever else has spoken. Attaching the families to
+                # every directive would record a constraint nobody asked for, and
+                # would be the first thing a future planner seam read as one.
+                avoid_source_families=(
+                    avoid if gap.gap_type is GapType.INDEPENDENT_CHALLENGE_MISSING else frozenset()
+                ),
             )
         )
     return tuple(sorted(found, key=lambda item: item.capability.value))
