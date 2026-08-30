@@ -390,7 +390,14 @@ about it.
     `string` list can never match a canonical domain and is counted
     `unmatchable` rather than rewritten. Malformed CIDRs and blank entries are
     skipped and diagnosed. One bad list costs one list, never the dataset.
-32. **A local dataset is pinned, provenanced and refreshed only by an operator.**
+32. **A local dataset is pinned, provenanced, packaged, and refreshed only by an
+    operator.** The snapshot lives inside the package at
+    `src/ti_recon/data/misp_warninglists` and is resolved with
+    `importlib.resources`, never from repository layout — a default derived from
+    `parents[N]` gave a checkout and an installed wheel different behaviour, and
+    the wheel's default pointed at a directory that never existed. The packaged
+    copy is an immutable baseline; `update_misp_warninglists.py` refuses to write
+    into `site-packages`, and an operator's explicit `snapshot_root` always wins.
     No lookup may fetch, clone, resolve or update anything; refresh is
     `tools/update_misp_warninglists.py` against a *local checkout*, never a URL,
     and it swaps atomically. Coverage carries the upstream commit, the dataset
@@ -1271,8 +1278,12 @@ src/ti_recon/
   versions.py        ENGINE_VERSION / POLICY_VERSION audit stamps
 tests/unit/          unit + contract tests
 tests/fixtures/      model-only and fake-adapter fixtures (no network)
-data/                Task 11: the pinned MISP warninglist snapshot (manifest +
-                     per-list files). Refreshed only by tools/, never at runtime
+src/ti_recon/data/   Task 11: the pinned MISP warninglist snapshot (manifest +
+                     per-list files), packaged as application data and resolved
+                     with importlib.resources so a checkout, an editable install
+                     and an installed wheel all find it. Refreshed only by
+                     tools/, never at runtime; the packaged copy is an immutable
+                     baseline and `snapshot_root` overrides it
 tools/               Task 11: operator scripts. update_misp_warninglists.py
                      (build a snapshot from a local checkout; the only code that
                      runs git), measure_misp_warninglists.py (footprint report)

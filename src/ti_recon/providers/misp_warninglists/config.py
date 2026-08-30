@@ -12,6 +12,7 @@ exactly when an analyst most wants it — during triage, offline, on a laptop.
 from __future__ import annotations
 
 from datetime import timedelta
+from importlib import resources
 from pathlib import Path
 from typing import Final
 
@@ -26,14 +27,35 @@ __all__ = [
 ]
 
 
-def _default_snapshot_root() -> Path:
-    """The snapshot shipped with the repository.
+#: Where the pinned snapshot lives inside the ``ti_recon`` package.
+_PACKAGED_SNAPSHOT_SUBPATH: Final[tuple[str, ...]] = ("data", "misp_warninglists")
 
-    Resolved from this module's own location rather than from the working
-    directory, so a lookup finds the dataset regardless of where the process was
-    started.
+
+def _default_snapshot_root() -> Path:
+    """The pinned snapshot shipped inside the installed package.
+
+    Resolved as a **package resource**, not from the repository layout. An
+    earlier version walked ``Path(__file__).parents[3].parent``, which found
+    ``<repo>/data/misp_warninglists`` in a checkout and, once installed, pointed
+    at ``<venv>/lib/python3.12/data/misp_warninglists`` — a directory that has
+    never existed. The source tree and the wheel therefore had different default
+    behaviour, which is the one thing a default must not have.
+
+    ``importlib.resources`` asks the import system where the package actually is,
+    so a checkout, an editable install and an installed wheel all answer
+    correctly without anyone counting directory levels.
+
+    The loader needs a real directory: it resolves paths, checks containment,
+    stats sizes and reads individual lists rather than holding 9 MB in memory. A
+    wheel installs unpacked, so that holds. A zip-imported deployment cannot
+    offer one, and rather than silently materialising the dataset to a temporary
+    directory this returns the traversable's path so the loader reports a
+    missing snapshot in its own vocabulary.
     """
-    return Path(__file__).resolve().parents[3].parent / "data" / "misp_warninglists"
+    resource = resources.files("ti_recon").joinpath(*_PACKAGED_SNAPSHOT_SUBPATH)
+    if isinstance(resource, Path):
+        return resource
+    return Path(str(resource))
 
 
 DEFAULT_SNAPSHOT_ROOT: Final[Path] = _default_snapshot_root()
@@ -47,6 +69,10 @@ DEFAULT_STALE_AFTER_DAYS: Final[int] = 30
 class MispWarningListsConfig(FrozenTiReconModel):
     """Where the dataset is, how old is too old, and how much detail to keep."""
 
+    #: Defaults to the snapshot packaged inside ``ti_recon``. An operator may
+    #: point this at a newer external snapshot; an explicit path always wins, and
+    #: a bad one is reported rather than quietly replaced by the packaged
+    #: baseline. The packaged copy is immutable read-only application data.
     snapshot_root: Path = DEFAULT_SNAPSHOT_ROOT
 
     #: Operator-configurable. Exceeding it marks coverage stale; it never fails a

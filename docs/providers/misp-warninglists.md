@@ -75,13 +75,32 @@ The authoritative source is [MISP/misp-warninglists](https://github.com/MISP/mis
 licensed **CC0-1.0** (individual lists may carry their own terms; the manifest
 records the dataset license rather than flattening that away).
 
-The repository ships a pinned snapshot at `data/misp_warninglists`:
+TI Recon ships a pinned snapshot **inside the package**, at
+`src/ti_recon/data/misp_warninglists`:
 
 ```
-data/misp_warninglists/
+src/ti_recon/data/misp_warninglists/
   manifest.json        provenance, per-list metadata, omissions, diagnostics
   lists/<slug>.json    one upstream list, compact, exactly the raw schema
 ```
+
+`DEFAULT_SNAPSHOT_ROOT` resolves it with `importlib.resources.files("ti_recon")`,
+so a source checkout, an editable install and an installed wheel all find the same
+dataset without anyone counting directory levels.
+
+> **A packaging bug worth recording.** The default used to be
+> `Path(__file__).parents[3].parent / "data" / "misp_warninglists"`, which found
+> the snapshot in a checkout and, once installed, resolved to
+> `<venv>/lib/python3.12/data/misp_warninglists` — a directory that never
+> existed, because the wheel shipped `src/ti_recon` only. The source tree and the
+> distribution had different default behaviour, which is the one thing a default
+> must not have. Moving the dataset into the package made it a resource the
+> import system can locate rather than a path derived from repository layout.
+
+The packaged copy is an **immutable baseline**: read-only application data that a
+deployment can rely on offline. `MispWarningListsConfig.snapshot_root` overrides
+it with a newer external snapshot, and an explicit path always wins — a bad one is
+reported rather than quietly replaced by the baseline.
 
 The manifest records the upstream repository, the exact commit, when the snapshot
 was built and by what, a schema fingerprint, a dataset fingerprint, per-list
@@ -130,7 +149,7 @@ An explicit operator action, and the only code in the repository that runs
 git clone --depth 1 https://github.com/MISP/misp-warninglists /tmp/mwl
 uv run python tools/update_misp_warninglists.py \
     --source-dir /tmp/mwl \
-    --output-dir data/misp_warninglists
+    --output-dir src/ti_recon/data/misp_warninglists
 ```
 
 The tool takes a **directory, never a URL**. That split is the security boundary:
@@ -143,6 +162,12 @@ schema, bounds the snapshot by entry count, writes compact per-list files plus
 the manifest, and **swaps atomically** — an interrupted build leaves the previous
 snapshot exactly as it was. Nothing updates a snapshot on application startup and
 nothing can trigger a refresh from a lookup.
+
+The tool refuses an `--output-dir` inside `site-packages` or `dist-packages`:
+rewriting an installed distribution in place would leave the wheel's `RECORD`
+hashes wrong and be discarded on the next reinstall, while looking exactly like a
+successful refresh. Build a new snapshot into a checkout or an external directory
+and point `snapshot_root` at it.
 
 `--max-list-entries` (default 100,000) keeps the shipped dataset small enough to
 live in a repository. Pass `0` for an unbounded snapshot.
