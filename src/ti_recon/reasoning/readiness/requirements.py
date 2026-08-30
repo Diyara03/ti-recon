@@ -92,9 +92,13 @@ _BUDGET_SKIPS: frozenset[SkipReason] = frozenset(
 #: cannot currently be used. Mapped to the gap category that names the cause.
 _BLOCKED_STATUS_GAPS: dict[str, GapType] = {
     "not_configured": GapType.NOT_CONFIGURED,
+    "plan_limited": GapType.PLAN_LIMITED,
     "quota_exceeded": GapType.QUOTA_EXCEEDED,
     "temporarily_unavailable": GapType.TEMPORARILY_UNAVAILABLE,
     "error": GapType.TEMPORARILY_UNAVAILABLE,
+    # A partial result that carried no evidence: the adapter could not retrieve
+    # enough to build an envelope, so nothing about this capability was learned.
+    "partial": GapType.PARTIAL_COVERAGE,
 }
 
 #: Context signals saying a behavioural check ran but watched nothing happen.
@@ -235,14 +239,21 @@ def _gap_type(
 ) -> GapType:
     """Why an unmet requirement went unmet, in generic terms."""
     capability = requirement.capability
-    if has_no_eligible_source(inputs.coverage_by_capability.get(capability)):
-        return GapType.CAPABILITY_UNAVAILABLE
 
+    # Execution history outranks catalogue inference. A recorded budget skip is
+    # direct evidence that a candidate existed and was declined for allowance,
+    # whereas an empty `providers_considered` is an *inference* that nothing
+    # could have served the capability. When the two disagree the observed fact
+    # wins: reporting a budget stop as "no source exists" would tell an operator
+    # the question is unanswerable when a larger budget would answer it.
     budget_skipped = any(
         item.capability is capability and item.reason in _BUDGET_SKIPS for item in inputs.skipped
     )
     if budget_skipped:
         return GapType.BUDGET_LIMITED
+
+    if has_no_eligible_source(inputs.coverage_by_capability.get(capability)):
+        return GapType.CAPABILITY_UNAVAILABLE
 
     blocked = [check for check in checks if check.completion is CheckCompletion.BLOCKED]
     if blocked:
