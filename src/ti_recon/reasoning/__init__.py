@@ -3,8 +3,22 @@
 Takes what Tasks 5-14 collected and answers **"what does this piece of evidence
 actually mean in time and context?"** — never "what is the verdict?". There is no
 verdict, no confidence, no risk score, no evidence weight, no decay curve and no
-false-positive flag anywhere in this package, and structural tests keep it that
-way. Weighing what any of it is worth is the future fusion layer's job.
+false-positive flag in these modules, and structural tests keep it that way.
+
+Three later layers sit in subpackages of their own and are imported from there
+rather than re-exported here, so the names below are Task 15's alone:
+
+* :mod:`ti_recon.reasoning.false_positive` (Task 16) asks which findings context
+  explains and which it leaves standing;
+* :mod:`ti_recon.reasoning.claims` (Task 17A) restates provider evidence in a
+  provider-neutral vocabulary;
+* :mod:`ti_recon.reasoning.fusion` (Task 17B-D) is the only layer that weighs
+  anything, and the one that produces what later tasks consume. See
+  ``docs/reasoning/evidence-fusion.md``.
+
+Nothing in *these* modules may even name that vocabulary: a boundary test reads
+the text of every module here and fails on the conclusion-layer class names, so
+the pointer above is deliberately by module path.
 
 Six rules do most of the work:
 
