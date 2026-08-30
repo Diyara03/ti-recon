@@ -334,10 +334,12 @@ ti-recon providers
 
 Provider credentials are configured through the credential layer, per user —
 never as command-line arguments, which would land in shell history and the
-process list. A fresh install composes only the credential-free local dataset
-provider, so it works offline and discloses nothing; remote providers are
-deployment configuration, and coverage reports exactly which capabilities
-nobody could serve.
+process list. `ti-recon providers` shows which credential groups are configured.
+
+Every shipped provider is registered whether or not it has a credential: one
+without stays visible and reports `NOT_CONFIGURED` if the planner selects it, so
+a fresh install with no keys still investigates using the credential-free local
+dataset provider and says exactly which capabilities nobody could serve.
 
 Exit status describes whether the command ran, never what it found: a completed
 investigation exits `0` whether the verdict is `MALICIOUS` or `INCONCLUSIVE`.

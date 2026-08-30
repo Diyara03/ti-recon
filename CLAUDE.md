@@ -1339,11 +1339,46 @@ about it.
      diagnostic reports only whether one is *required*.
 
 125. **The interface layer never selects a provider and never assesses.** No
-     provider flag, no provider name outside the one composition root, no
-     adapter call, no socket. Ranking is Task 13's and stays reproducible only
-     while it is. The application service is transport-neutral, so the CLI is
-     one caller among several and a future MCP layer consumes the same contract
-     rather than parsing text.
+     provider flag, no provider name outside the two composition roots
+     (`providers/catalog.py` and `application/composition.py`), no adapter
+     call, no socket. Ranking is Task 13's and stays reproducible only while it
+     is. The application service is transport-neutral, so the CLI is one caller
+     among several and a future MCP layer consumes the same contract rather
+     than parsing text.
+
+125a. **One catalogue, registered whole, contacting nothing.**
+     `providers/catalog.py` is the authoritative adapter list and a test
+     asserts it names exactly the providers `planning/catalog.py` can plan, so
+     neither can drift. `build_default_application` wires it once for every
+     interface: a second assembly point would eventually investigate
+     differently. Adapters build with no arguments and create their clients
+     lazily, so composing the catalogue, listing it and generating a schema are
+     all offline — the first packet leaves when Task 13 selects a provider and
+     Task 6 executes it.
+
+125b. **A missing credential removes nothing.** Every shipped provider is
+     registered whether or not a key exists, and reports `NOT_CONFIGURED` when
+     selected. Dropping it from the catalogue instead would report "the analyst
+     has not set this up" as "no source implements this", and Task 18 decides
+     materiality from exactly that difference. Secrets load from the variable
+     names `.env.example` documents into the ordinary per-user store, one
+     connection per credential *group* — which is what keeps one abuse.ch key
+     serving three adapters and stores it once. `configured` is a boolean:
+     never a value, a prefix, a length or a digest.
+
+125c. **Opposition is not basis.** Task 17 can reach a verdict while recording
+     claims that pushed the other way. They appear in their own section under
+     their own heading, because under one heading meaning "why" a benign
+     assertion reads as a reason the object was called malicious. Every item
+     carries its Task 17 role in either section, and Task 17's contributions
+     and dispositions are never altered.
+
+125d. **A local file is hashed, and only if it is a file.** Regular files only,
+     checked against the resolved target before the open: a FIFO blocks until
+     somebody writes to it and a character device can be endless, so either
+     would hang the command with no output. A symlink to a real file is
+     followed deliberately; a symlink to a pipe is refused. Hashing is
+     streamed, and the only thing that leaves the machine is a digest.
 
 126. **Task 20 recommends no action.** The report states an assessment; it never
      says to block, quarantine, isolate, allowlist, suppress, close an alert or
@@ -1622,7 +1657,12 @@ src/ti_recon/
                      from the verdict), engine, results, metrics
   application/       Task 20: the transport-neutral public boundary. models
                      (AnalystInvestigationRequest, observable input types),
-                     service (input -> Task 19 -> report; local file hashing)
+                     service (input -> Task 19 -> report; local file hashing),
+                     composition (the default application: every shipped
+                     provider, the execution stores, credential loading)
+  providers/catalog.py
+                     Task 20: the authoritative shipped-adapter list, the
+                     counterpart to planning/catalog.py
   reporting/         Task 20: the analyst output contract. models (versioned
                      report, bounded sections), builder (projection, never
                      analysis), text (deterministic rendering, terminal-injection

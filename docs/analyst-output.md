@@ -50,7 +50,8 @@ second opinion formed here would eventually disagree with the first.
 | Section | Comes from | Never |
 | --- | --- | --- |
 | `assessment` | Task 17 verdict, band, rule ids | recomputed, scored, or turned into a probability |
-| `assessment_basis` | Task 17 contributions | a "most important provider" chosen here |
+| `assessment_basis` | Task 17 contributions marked `SUPPORTS_VERDICT` | a "most important provider" chosen here |
+| `opposing_evidence` | Task 17 contributions marked `OPPOSES_VERDICT` | mixed into the basis, where it would read as part of the argument |
 | `alternative_explanations` | Task 16 `ALTERNATIVE_EXPLANATION` findings with an `EXPLAINS` link | any other finding role |
 | `unexplained_evidence` | Task 17 dispositions | re-derived by inspecting findings |
 | `conflicts` | Task 17 conflicts | resolved, balanced, or given a winner |
@@ -87,6 +88,12 @@ source held nothing.
 alternative explanation with an `EXPLAINS` link appears, and the evidence ids
 travel with it. One explanation never becomes "the investigation was a false
 positive".
+
+**Opposition is not basis.** Task 17 can reach a verdict while recording claims
+that pushed the other way. Both are contributions and both appear, but in
+separate sections: under one heading meaning "why", a benign assertion would
+read as a reason the object was called malicious. Every item carries its Task 17
+role in either section, so the machine contract is unambiguous regardless.
 
 **Historical is not current.** Task 15's lifecycle states travel unchanged. A URL
 that distributed malware in March and went offline in April did distribute
