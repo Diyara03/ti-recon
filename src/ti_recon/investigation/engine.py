@@ -57,6 +57,7 @@ from ti_recon.correlation.orchestrator import CorrelatedInvestigationOrchestrato
 from ti_recon.correlation.policy import PivotPolicy
 from ti_recon.correlation.results import CorrelatedEnrichmentResult
 from ti_recon.correlation.session import CorrelationSession
+from ti_recon.enums import ProviderCapability
 from ti_recon.execution.clock import Clock, SystemClock
 from ti_recon.execution.models import ExecutionContext
 from ti_recon.investigation.analysis import AnalysisPass, ReasoningEngines, run_analysis_pass
@@ -130,6 +131,17 @@ class _RunState:
     correlation: CorrelatedEnrichmentResult | None = None
     attempted_capabilities: set[str] = field(default_factory=set)
 
+    #: The capabilities Task 13 admitted for this root at this depth, frozen
+    #: from the first round.
+    #:
+    #: Taken from Task 13's own coverage items, which are built from its goal
+    #: set, so this is the planner's answer rather than a second copy of the
+    #: depth table kept here to drift from it. A continuation may narrow this
+    #: set and may never widen it: a capability the requested depth did not
+    #: admit is not missing from the investigation, it was never part of it,
+    #: and planning it would make QUICK quietly cost STANDARD.
+    admissible: frozenset[ProviderCapability] = frozenset()
+
     def progress_key(self) -> tuple[int, int, int]:
         """A stable view of how much has actually been collected.
 
@@ -195,7 +207,7 @@ class InvestigationOrchestrator:
             directives = directives_for(
                 analysis.readiness,
                 analysis.fusion,
-                attempted_capabilities=sorted(state.attempted_capabilities),
+                admissible=state.admissible,
             )
             if not directives:
                 state.issues.append(
@@ -203,7 +215,7 @@ class InvestigationOrchestrator:
                         issue_type=WorkflowIssueType.UNACTIONABLE_INFORMATION_NEED,
                         detail=(
                             "readiness reported a remaining path, and no need named a "
-                            "capability that could be requested"
+                            "capability admissible at the requested depth"
                         ),
                         round_index=len(state.rounds),
                     )
@@ -260,6 +272,13 @@ class InvestigationOrchestrator:
         answer first.
         """
         state.session.focus = frozenset(item.capability for item in directives)
+        # Per capability, never per round: a family barred from supplying an
+        # independent challenge answers every other question exactly as before.
+        state.session.excluded_families = {
+            item.capability: item.avoid_source_families
+            for item in directives
+            if item.avoid_source_families
+        }
         correlated = await self.correlation.run(
             self._planning_request(request, directives),
             context,
@@ -269,6 +288,13 @@ class InvestigationOrchestrator:
         )
         state.correlation = correlated
         state.enrichments.append(correlated.root_enrichment)
+        if trigger is RoundTrigger.INITIAL:
+            # Frozen once, from the round that ran under the caller's request
+            # alone. Recomputing it later would let each round's own directives
+            # widen the envelope they are supposed to be bounded by.
+            state.admissible = frozenset(
+                item.capability for item in correlated.root_enrichment.coverage
+            )
         before_envelopes = len(state.envelopes)
         state.envelopes = list(state.session.envelopes())
         for attempt in correlated.root_enrichment.attempts:
@@ -323,19 +349,23 @@ class InvestigationOrchestrator:
     ) -> EnrichmentPlanningRequest:
         """The Task 13 request for this round.
 
-        Depth and the caller's constraints are identical every round: a
-        continuation narrows *what is pursued* through the session's focus, and
-        never widens what was permitted. Directives never become provider names
-        here — they reach the planner as capabilities and it decides who serves
-        them.
+        Identical every round, deliberately. A continuation narrows *what is
+        pursued* through the session's focus and exclusions; it never touches
+        this request, because ``requested_capabilities`` is not a filter — Task
+        13 turns every member into a ``REQUIRED``, ``IMMEDIATE`` goal whatever
+        the depth template said. Adding a directive here would therefore do
+        three things nobody asked for: create a goal the requested depth never
+        admitted, activate a conditional goal whose trigger had not fired, and
+        promote an optional goal to required. A continuation would then be able
+        to turn QUICK into STANDARD one capability at a time.
+
+        Directives never become provider names here either — they reach the
+        planner as capabilities, and it decides who serves them.
         """
-        requested = request.requested_capabilities
-        if directives:
-            requested = requested | frozenset(item.capability for item in directives)
         return EnrichmentPlanningRequest(
             intel_object=request.root,
             depth=request.depth,
-            requested_capabilities=requested,
+            requested_capabilities=request.requested_capabilities,
             operation=request.operation,
             activity_mode=request.activity_mode,
             constraints=PlanningConstraints(

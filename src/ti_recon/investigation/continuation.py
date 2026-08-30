@@ -25,8 +25,7 @@ planner with a worse view, and the first thing it would break is the budget.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
+from ti_recon.enums import ProviderCapability
 from ti_recon.investigation.models import ContinuationDirective
 from ti_recon.reasoning.fusion.independence import independence_groups
 from ti_recon.reasoning.fusion.results import FusionResult
@@ -91,7 +90,7 @@ def directives_for(
     readiness: AssessmentReadinessResult,
     fusion: FusionResult,
     *,
-    attempted_capabilities: Sequence[str] = (),
+    admissible: frozenset[ProviderCapability] | None = None,
 ) -> tuple[ContinuationDirective, ...]:
     """What to ask Task 13 for next, or nothing.
 
@@ -101,17 +100,32 @@ def directives_for(
     implements, evidence nobody could attribute — produce no directive, because
     there is no request that would address them.
 
+    ``admissible`` is the capability envelope Task 13 admitted for this root at
+    the requested depth, frozen before any directive existed. A need naming
+    something outside it produces no directive: readiness describes what would
+    help, and it does not get to decide that a QUICK investigation should have
+    been a DEEP one. Filtering here rather than in the planner keeps the reason
+    visible — the workflow records that a remaining path named nothing it was
+    allowed to ask for, instead of issuing a directive that plans nothing.
+
+    A capability some provider already answered is *not* filtered here. Whether
+    another source could add anything is Task 13's question: it holds the
+    per-provider record of what has been asked, the ranking and the remaining
+    budget, and a capability answered by one family may still be exactly what a
+    second, independent one should be asked for. Pre-empting that here would
+    make the requirement unmeetable by deciding, without the catalogue, that
+    nobody else could help.
+
     Returning empty when readiness asked for more is a real outcome, not a
     failure to try: the workflow records it and stops rather than inventing a
     capability to go and fetch.
     """
     avoid = benign_basis_families(fusion)
-    already = set(attempted_capabilities)
     found: list[ContinuationDirective] = []
     for need in readiness.information_needs:
         if need.outlook is not GapOutlook.MAY_ADDRESS_MATERIAL_GAP:
             continue
-        if need.capability.value in already:
+        if admissible is not None and need.capability not in admissible:
             continue
         gap = next(
             (item for item in readiness.gaps if item.capability is need.capability),
