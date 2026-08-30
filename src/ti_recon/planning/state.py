@@ -119,6 +119,130 @@ class PlanningState:
     attempts: list[ProviderAttempt] = field(default_factory=list)
     sequence: int = 0
 
+    #: Capabilities this round may spend budget pursuing, or empty for all.
+    #:
+    #: The seam a later planning round needs (Task 19). A continuation asks for
+    #: specific missing information, and without this the planner would happily
+    #: spend the remaining allowance on whatever else was still uncovered —
+    #: which is not what was asked for and not what the budget is left for.
+    #:
+    #: Goals themselves are *not* filtered: the full set stays so coverage still
+    #: reports every goal's accumulated status. Only what may be newly pursued
+    #: narrows. Empty means no restriction, which is what every first round uses,
+    #: so default planning behaviour is unchanged.
+    focus_capabilities: frozenset[ProviderCapability] = frozenset()
+
+    #: capability -> source families that may not answer *that* capability.
+    #:
+    #: The second seam a later planning round needs (Task 19). Readiness can ask
+    #: for a search independent of the origin behind an assessment, and a family
+    #: already known to share that origin cannot supply one however well it
+    #: ranks. Without this the planner would spend the remaining allowance on a
+    #: source that could not satisfy the requirement it was released for, and the
+    #: genuinely independent candidate would be unreachable behind an empty
+    #: budget.
+    #:
+    #: Keyed per capability on purpose. One set for the whole round would block a
+    #: family from every other question too, where independence was never what
+    #: was being asked and the family's answer is worth exactly what it always
+    #: was.
+    #:
+    #: Conservative, never a proof: a family nobody has linked to the origin is
+    #: *potentially* independent, and only the returned provenance settles it.
+    excluded_source_families: dict[ProviderCapability, frozenset[str]] = field(default_factory=dict)
+
+    #: Capabilities whose *base* family target is not enough this round.
+    #:
+    #: The third seam a later planning round needs (Task 19). Task 13's goal
+    #: says how much coverage is worth buying by default; a higher layer can
+    #: have a requirement the default satisfies numerically and not in
+    #: substance — readiness wanting an adverse search from an origin
+    #: independent of the one that already answered. The base goal is met, so
+    #: the goal would be skipped before any other rule was consulted, and the
+    #: eligible unattempted source that could meet the requirement would never
+    #: be considered.
+    #:
+    #: This raises the *target* for one capability, reusing the family-breadth
+    #: concept the goal already has, rather than adding a parallel notion of
+    #: sufficiency. It never adds a capability, never activates a goal, never
+    #: clears coverage and never names a provider: Task 13 still ranks, still
+    #: refuses an attempted call, still honours a blocked provider and an
+    #: excluded family, and still has to afford it.
+    #:
+    #: Fresh each round, like the focus and the exclusions.
+    additional_coverage_capabilities: frozenset[ProviderCapability] = frozenset()
+
+    def effective_target(self, capability: ProviderCapability, base: int) -> int:
+        """The family target for ``capability`` this round.
+
+        ``base`` unless a higher layer asked for more breadth, in which case it
+        is one family beyond what is already covered — "somebody else as well",
+        expressed in the units the goal already uses. Never a reset: what has
+        been covered stays covered, and stays true.
+        """
+        if capability not in self.additional_coverage_capabilities:
+            return base
+        return max(base, len(self.covered_families.get(capability, set())) + 1)
+
+    def in_focus(self, capability: ProviderCapability) -> bool:
+        """Whether this round may pursue ``capability``."""
+        return not self.focus_capabilities or capability in self.focus_capabilities
+
+    def family_excluded(self, capability: ProviderCapability, source_family: str) -> bool:
+        """Whether ``source_family`` is barred from answering ``capability`` here."""
+        return source_family in self.excluded_source_families.get(capability, frozenset())
+
+    def continuation(
+        self,
+        *,
+        goals: tuple[CapabilityGoal, ...] | None = None,
+        requested: frozenset[ProviderCapability] | None = None,
+        focus: frozenset[ProviderCapability] = frozenset(),
+        excluded_families: dict[ProviderCapability, frozenset[str]] | None = None,
+        additional_coverage: frozenset[ProviderCapability] = frozenset(),
+    ) -> PlanningState:
+        """A state for a later round of the same investigation.
+
+        Everything accumulated carries: the budget with what it has already
+        spent, the calls already made, the providers found unusable, the coverage
+        reached and the attempt sequence. A fresh state would hand a continuation
+        a new allowance and let it repeat calls it has already made, which is
+        exactly what an investigation-wide budget exists to prevent.
+
+        Attempts are deliberately *not* carried into the new state's list: each
+        round reports what it did, and the caller composes the rounds. Carrying
+        them would make every round's result contain the previous one's work.
+
+        ``goals`` is recomputed by the caller rather than carried, because a
+        continuation may ask for a capability the first round's goal set never
+        contained -- readiness can require a check the depth template does not
+        include. Carrying the old goals would silently drop that request, and the
+        round would plan nothing while appearing to have tried.
+        """
+        return PlanningState(
+            budget=self.budget,
+            goals=self.goals if goals is None else goals,
+            requested_capabilities=(
+                self.requested_capabilities if requested is None else requested
+            ),
+            attempted=set(self.attempted),
+            blocked=set(self.blocked),
+            covered_families={key: set(value) for key, value in self.covered_families.items()},
+            partial_families={key: set(value) for key, value in self.partial_families.items()},
+            malicious_families=set(self.malicious_families),
+            benign_families=set(self.benign_families),
+            context_families=set(self.context_families),
+            false_positive_context_families=set(self.false_positive_context_families),
+            sequence=self.sequence,
+            focus_capabilities=focus,
+            # Fresh each round, like the focus: an exclusion belongs to the
+            # requirement that asked for it, and carrying it forward would keep
+            # barring a family long after the question that needed independence
+            # had been answered.
+            excluded_source_families=dict(excluded_families or {}),
+            additional_coverage_capabilities=additional_coverage,
+        )
+
     # ------------------------------------------------------------------ #
     # Questions the planner asks
     # ------------------------------------------------------------------ #

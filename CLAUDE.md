@@ -20,7 +20,7 @@ Analyst -> Claude + TI Analyst Skill -> MCP -> TI Recon backend
 
 ## Current implementation boundary
 
-Implemented (Jira Tasks 1-18):
+Implemented (Jira Tasks 1-19):
 
 - Task 1 — product scope + investigation workflow foundation (docs, enums)
 - Task 2 — architecture foundation (docs, module boundaries)
@@ -119,6 +119,14 @@ Implemented (Jira Tasks 1-18):
   goals; materiality judged from Task 17's verdict rule. No verdict change, no
   confidence change, no enrichment, no score, no severity, no action.
 
+- Task 19 — end-to-end investigation orchestration (`investigation/`): composes
+  Tasks 13-18 into one bounded, reproducible workflow. Collect through Task 13
+  and Task 14, analyse through Tasks 15-18, and continue only when Task 18 says
+  coverage is inadequate *and* a path remains. Budgets, depth, pivot mode and the
+  set of calls already made are investigation-wide; continuation directives name
+  capabilities and Task 13 chooses the provider. No transport, no persistence, no
+  action.
+
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Task 13 chooses what
 to ask, Task 14 assembles what came back, Task 15 says what each finding means in
@@ -179,8 +187,11 @@ about it.
   answers for one purpose only; readiness for containment, alert closure or
   incident declaration depends on asset criticality, business impact, user
   context, internal telemetry and incident policy that TI Recon has no access to
-- Task 19 end-to-end orchestration connecting planning, correlation, reasoning,
-  fusion and readiness into one investigation run
+- Any transport or interface layer: REST API, CLI, MCP server, Claude Skill,
+  analyst prose rendering, streaming progress. Task 19 is callable Python and
+  stops there
+- Persistence, cross-process resume, job queues and durable idempotency. Task 19
+  continues *within one invocation* and claims nothing beyond it
 - Any remediation or containment action: blocking, quarantine, isolation, alert
   suppression, ticket closure, allowlisting. A MALICIOUS verdict on shared or
   compromised infrastructure can make blocking actively harmful, and Task 17
@@ -1109,6 +1120,149 @@ about it.
      this engine does not have. `READINESS_POLICY_VERSION` is versioned and
      travels with the Task 15/16/17 versions on every result.
 
+109. **Task 19 composes Tasks 13-18 and reimplements none of them.** No
+     maliciousness rule, no coverage judgement, no provider selection. Every
+     provider call goes through Task 13 to Task 6, which is where the cache,
+     cooldown, quota, retry, execution scope and budget accounting live; a direct
+     adapter call would bypass all six, and an AST test asserts none exists. The
+     generic workflow names no provider in an import or a string literal —
+     `composition.py` is the only exception, and it reuses the existing planning,
+     qualifier and claim-translator catalogues rather than assembling a second
+     list that would silently drift.
+
+110. **Task 18 is the only automatic continuation trigger.** Readiness must say
+     both `NEEDS_MORE_DATA` and `MORE_DATA_AVAILABLE`. A suspicious verdict, an
+     inconclusive one, a failed provider and a missing sandbox are none of them
+     reasons to keep querying — readiness has already weighed each against what
+     the assessment rests on. `READY` and `READY_WITH_LIMITATIONS` are terminal
+     even with optional provider failures recorded, and `BLOCKED` and `EXHAUSTED`
+     are terminal for the current run.
+
+111. **Ceilings are the caller's and never rise.** Depth never escalates, pivot
+     mode never escalates, and budgets never reset: Task 13's state carries the
+     spend and the calls already made, so a continuation sees only what remains.
+     Cache hits, coalesced results and local credential-free sources are valid
+     coverage at zero remote cost, so the workflow does not stop when the remote
+     allowance empties — it hands the remaining state to Task 13 and lets its
+     locality policy decide. Task 14's pivot budget and one-hop limit are
+     investigation-wide, and a target enriched in one round is not enriched again
+     in the next.
+
+111a. **A logical call is a provider *and* a question.** What carries between
+     rounds is `(provider_id, capability)`, so a source that answered a
+     reputation lookup stays eligible for the behaviour lookup it has genuinely
+     not answered — excluding it by provider id would turn one answered question
+     into a permanently unanswerable one. Where a provider declares
+     `capability_invariant_response`, Task 13 credits everything the one document
+     answered and the second call never happens; where it does not, the second
+     call is real incremental work. A whole provider is set aside only for the
+     failures Task 13 already treats as provider-wide — a refused credential, a
+     spent quota, an unreachable endpoint — and never because it answered
+     `NO_DATA`. The planner's attempt `sequence` continues across rounds, which
+     is what makes it an identity rather than a position: the round merge is
+     keyed on it, an identical record deduplicates, and two different records
+     sharing one sequence raise rather than overwrite.
+
+111b. **Root and pivot spend two allowances, and each call is charged once.**
+     `EnrichmentBudget` bounds provider runs about the submitted observable and
+     carries in the planning state; `PivotBudget` bounds targets and runs about
+     things the root merely touched and carries in the `CorrelationSession`. A
+     pivot receives the remaining pivot allowance as a Task 13 reduction and
+     plans from its own state — carrying the root's spend into it would charge
+     one call to two budgets, and carrying the root's focus would let readiness
+     decide what a pivot may ask. Both are charged on `called_provider`, so a
+     cached, coalesced or local pivot is free, and neither can rise: the
+     investigation's maximum remote disclosure is the sum of two reduction-only
+     limits. Every outcome either produces — root and pivot alike — is recorded
+     on the session and reaches Tasks 15-18. A pivot result that reached the
+     graph but not the reasoning stages would leave the picture looking complete
+     while the evidence behind half of it had never been qualified, explained or
+     assessed; that the claim then declines to vote on the root's verdict is
+     Task 17's rule, and it needs the claim to exist in order to decline it.
+
+111c. **A continuation narrows the planning space and never widens it.** The
+     capabilities Task 13 admitted for this root at this depth are frozen from
+     the first round — read from its own coverage items rather than from a
+     second copy of the depth table — and a readiness need naming anything
+     outside them produces no directive. `requested_capabilities` is not a
+     filter: Task 13 turns every member into a `REQUIRED`, `IMMEDIATE` goal
+     whatever the template said, so a continuation adding its directives there
+     would create a goal the depth never admitted, activate a conditional goal
+     whose trigger had not fired, and promote an optional goal to required —
+     turning QUICK into DEEP one capability at a time. The planning request is
+     therefore identical every round and narrowing happens only through focus.
+     Three categories stay distinct: admissible and active may be targeted;
+     admissible but unactivated is left to Task 13's activation rule; outside
+     the requested depth is never planned. Where no admissible capability can
+     address a material need the run stops with `NO_ACTIONABLE_CONTINUATION`,
+     because deciding an investigation should have been deeper is the caller's.
+
+111d. **The envelope freezes which capabilities, never how much coverage.**
+     Task 13's goal states the family target worth buying by default; Task 18
+     can hold a requirement that target satisfies numerically and not in
+     substance — a benign assessment on one origin needs an *independent* look,
+     and one family answering is exactly what met the base goal. A directive
+     therefore carries a typed `ContinuationNeed`: `MISSING_COVERAGE` is
+     ordinary planning, and `ADDITIONAL_COVERAGE` raises that capability's
+     family target to `covered + 1` for one round, reusing the breadth concept
+     the goal already has rather than adding a second notion of sufficiency. It
+     adds no capability, activates no goal, clears no coverage and names no
+     provider; Task 13 still ranks, still refuses an attempted call, still
+     honours a blocked provider and an excluded family, and still has to afford
+     it. Without the request the effective target is the goal's own, so an
+     ordinary Task 13 caller is unaffected. So
+     `continuation capabilities ⊆ initial admissible capabilities` holds while
+     `continuation source coverage ⊇ first-round source coverage` is allowed —
+     and a breadth need is expressed against the adverse-search capabilities
+     *this depth admits*, taken from Task 18's own published set, never against
+     the representative capability it happened to name. This is not provider
+     voting: Task 18 said a check was missing, Task 17 still decides what the
+     answer means, and the second source may return nothing, context, agreement,
+     contradiction or a relay of the first one's origin.
+
+112. **Pre-call family separation is a planning hint, not proof of
+     independence.** A benign-challenge directive carries the families already
+     known to share the benign basis's origin so the planner can prefer another,
+     but a source that looks unrelated may relay the very origin it was meant to
+     challenge. Task 17 regroups from the returned provenance and Task 18 reports
+     the challenge still missing; the workflow never declares the answer
+     independent because it picked a different family. The hint belongs to the
+     need that asked for independence and to no other: whether a sandbox shares
+     an origin with something that called the file benign has no bearing on what
+     the sandbox watched it do, and attaching the families to every directive
+     would record a constraint nobody asked for. The hint is *enforced*, not
+     merely recorded: it reaches Task 13 as `excluded_source_families`, a
+     capability-to-families mapping checked before cost and budget, because a
+     dependent source that wins the ranking spends the allowance the requirement
+     was released for and leaves the independent candidate unaffordable. A
+     different provider id in the same family is not independent information,
+     and a family barred from one capability answers every other exactly as
+     before.
+
+113. **New evidence recomputes everything.** Tasks 15-18 re-run over the
+     accumulated state rather than patching an old conclusion, using one instant
+     per pass so the four results are internally consistent. Readiness may get
+     *worse* after genuinely conflicting evidence, and that outcome is preserved:
+     Task 18's monotonicity concerns a fixed requirement with no new adverse
+     information, not a promise that investigations only improve.
+
+114. **Provider failures are analytical inputs; structural faults are errors.**
+     An unconfigured, rate-limited, unavailable or erroring source continues the
+     run and reaches Task 18 as coverage. Stages describing different observables
+     or a merge conflict between rounds raise, because returning INCONCLUSIVE
+     would dress a software fault as a conclusion. Cancellation propagates
+     untouched rather than becoming a provider failure.
+
+115. **Run state never outlives its run, and nothing is persisted.** The graph,
+     outcomes, planner memory, pivot set and round history live in a per-run
+     object, so two investigations through one orchestrator share nothing and a
+     long-lived service cannot accumulate one enormous investigation. The
+     execution scope reaches every call in every round unchanged. Task 19 writes
+     nothing, resumes nothing across invocations, and claims no durable
+     idempotency. It produces no risk, severity, priority, incident declaration or
+     remediation, and `INVESTIGATION_WORKFLOW_VERSION` versions its composition
+     semantics.
+
 ## Security rules
 
 - **No secrets in the repo.** `.env` is git-ignored; `.env.example` holds
@@ -1378,6 +1532,12 @@ src/ti_recon/
                      policy (decisive/weak semantics, verdict and confidence rule
                      ids, caps), confidence (bands and caps, decided separately
                      from the verdict), engine, results, metrics
+  investigation/     Task 19: end-to-end orchestration. models (request, round,
+                     stop reasons, directives, workflow version), analysis (the
+                     one Task 15-18 pass), continuation (readiness -> capability
+                     directives), merge (deterministic multi-round enrichment
+                     view), engine (the loop), results, metrics, composition (the
+                     only module here that may name a provider)
   reasoning/readiness/  Task 18: assessment readiness and coverage adequacy.
                      models (two axes, completion vs yield, requirements, gaps,
                      information needs), policy (versioned materiality, basis

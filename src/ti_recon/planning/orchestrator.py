@@ -48,6 +48,7 @@ from ti_recon.planning.models import (
     StopReason,
 )
 from ti_recon.planning.planner import AdaptiveEnrichmentPlanner
+from ti_recon.planning.state import PlanningState
 from ti_recon.providers.adapter import ProviderAdapter
 from ti_recon.providers.registry import ProviderRegistry
 from ti_recon.providers.request import ProviderRequest
@@ -135,8 +136,21 @@ class AdaptiveEnrichmentOrchestrator:
         context: ExecutionContext,
         *,
         investigation_id: str,
+        carry_over: PlanningState | None = None,
+        focus: frozenset[ProviderCapability] = frozenset(),
+        excluded_families: dict[ProviderCapability, frozenset[str]] | None = None,
+        additional_coverage: frozenset[ProviderCapability] = frozenset(),
+        state_sink: list[PlanningState] | None = None,
     ) -> AdaptiveEnrichmentResult:
         """Enrich one observable and return what was decided, done and learned.
+
+        ``carry_over`` continues an earlier round of the same investigation:
+        budget already spent, calls already made and coverage already reached all
+        come with it, so an allowance is investigation-wide rather than per
+        round. ``focus`` narrows what the round may newly pursue, and
+        ``excluded_families`` narrows *who* may answer one capability. All three
+        are absent for an ordinary single-round run, which behaves exactly as
+        before.
 
         Enriches **the requested observable only**. Providers return related
         objects — domains a sample contacted, files it dropped, hosts serving a
@@ -145,7 +159,18 @@ class AdaptiveEnrichmentOrchestrator:
         a task that does it properly; doing it here would turn one file into
         hundreds of queries.
         """
-        state = self._planner.initial_state(request)
+        state = self._planner.initial_state(
+            request,
+            carry_over=carry_over,
+            focus=focus,
+            excluded_families=excluded_families,
+            additional_coverage=additional_coverage,
+        )
+        if state_sink is not None:
+            # Handed back so a later round can continue from what this one spent
+            # and attempted. The result model is frozen and carries no planner
+            # memory, and a caller composing rounds needs that memory.
+            state_sink.append(state)
         decisions: list[PlanningDecision] = []
         stop_reason = StopReason.NO_ELIGIBLE_PROVIDER
         rounds = 0

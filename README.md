@@ -147,11 +147,23 @@ manufacture precision nobody could defend. Verdict and confidence are separate
 decisions from different inputs, and MALICIOUS at MEDIUM confidence is an
 ordinary thing to say.
 
+Task 18 then asks a different question about the same investigation: was the
+*collection* adequate for analyst triage, and what is still missing? Coverage
+adequacy and whether more enrichment could help are separate axes, and neither
+touches the verdict — an incomplete investigation does not make a correct
+assessment less correct. `NO_DATA` means a source answered and held nothing,
+which is real coverage and is not evidence of safety.
+
+Task 19 runs the whole chain as one bounded investigation. It continues only when
+Task 18 reports a material gap with a path remaining, asks by naming a
+*capability* rather than a provider, and never raises the depth, the pivot mode or
+the budget the caller set. See `docs/investigation-workflow.md`.
+
 There is no SecurityTrails, AbuseIPDB, Shodan or IPinfo client yet, no *active*
-sandboxing, and there is no decision-readiness layer, no MCP server and no Claude
-Skill. Those are later Jira tasks. Task 17 assesses the observable and
-deliberately recommends no action: a MALICIOUS verdict on shared or compromised
-infrastructure can make blocking actively harmful.
+sandboxing, no persistence, and no MCP server or Claude Skill. Those are later
+Jira tasks. Task 17 assesses the observable and deliberately recommends no action:
+a MALICIOUS verdict on shared or compromised infrastructure can make blocking
+actively harmful.
 
 Task 6 added the execution layer every adapter runs behind — caching, retry and
 backoff, rate-limit and quota tracking, cooldowns, bounded concurrency and
