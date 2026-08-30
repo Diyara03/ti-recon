@@ -38,6 +38,13 @@ Starting the server contacts nothing. Adapters create their clients lazily and n
 credential is validated at startup, so a server starts cleanly on a machine with
 no keys at all and reports what is missing through `provider_status`.
 
+**Credentials are read once, when the server process starts.** After adding or
+changing one, restart or reconnect the server — in Claude Code, `/mcp` and
+reconnect — or the new configuration will not appear. `provider_status` and the
+investigation tools read the *same* snapshot, so they cannot disagree with each
+other: whatever the diagnostic reports is what an investigation will actually
+have available.
+
 ## Tools
 
 ### `investigate_observable`
@@ -114,6 +121,28 @@ crash.
 An unexpected internal failure returns a generic message. The exception type is
 logged to stderr and its text is not — a dependency can put a credential or a raw
 provider payload in an exception string.
+
+## Result size
+
+An MCP result carries the report twice: `structuredContent` for a program, and a
+JSON text block for clients that predate structured output. The MCP
+specification asks for both, and the SDK builds them together — so the text is
+not a second rendering this server produced, and removing it would break a
+spec-compliant client.
+
+Measured on the wire, with the whole report in both halves:
+
+| Result | structured | text | total |
+| --- | --- | --- | --- |
+| A typical investigation | ~4 KB | ~5 KB | ~9 KB |
+| An investigation with nothing configured | ~6 KB | ~8 KB | ~14 KB |
+| A report saturating every bound | ~10 KB | ~15 KB | ~25 KB |
+| `provider_status` | ~3 KB | ~5 KB | ~8 KB |
+
+Even the saturated case stays well inside a host's usual output budget, so
+Task 20's bounds are left exactly as they are. The schema resources are larger
+(~38 KB for the report schema) and are fetched only when a client asks for them
+— they are never embedded in a tool result.
 
 ## Streams
 
