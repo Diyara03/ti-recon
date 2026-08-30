@@ -112,3 +112,33 @@ def test_two_processes_serialize_one_value_identically() -> None:
     }
 
     assert len(outputs) == 1
+
+
+class _Member(FrozenTiReconModel):
+    name: str
+    rank: int
+
+
+class _Nested(TiReconModel):
+    members: frozenset[_Member] = frozenset()
+
+
+def test_a_set_of_models_is_ordered_without_raising() -> None:
+    """Unorderable members still get one order rather than an exception.
+
+    A frozen model is hashable, so a set of them is a legal field — and it
+    serializes to a list of dicts, which Python refuses to compare. Falling back
+    to a stable textual key keeps the round-trip working; raising here would
+    make an ordinary model undumpable to fix a determinism problem.
+    """
+    members = frozenset(
+        {_Member(name="beta", rank=2), _Member(name="alpha", rank=1), _Member(name="gamma", rank=3)}
+    )
+    original = _Nested(members=members)
+    dumped = original.model_dump_json()
+
+    restored = _Nested.model_validate_json(dumped)
+
+    assert restored.model_dump_json() == dumped
+    assert restored == original
+    assert [item["name"] for item in json.loads(dumped)["members"]] == ["alpha", "beta", "gamma"]
