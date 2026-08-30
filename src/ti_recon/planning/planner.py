@@ -100,6 +100,7 @@ class AdaptiveEnrichmentPlanner:
         carry_over: PlanningState | None = None,
         focus: frozenset[ProviderCapability] = frozenset(),
         excluded_families: dict[ProviderCapability, frozenset[str]] | None = None,
+        additional_coverage: frozenset[ProviderCapability] = frozenset(),
     ) -> PlanningState:
         """Build the starting state, with goals the registry can actually serve.
 
@@ -131,6 +132,7 @@ class AdaptiveEnrichmentPlanner:
                 requested=request.requested_capabilities,
                 focus=focus,
                 excluded_families=excluded_families,
+                additional_coverage=additional_coverage,
             )
         return PlanningState(
             budget=self._policy.budget_for(
@@ -314,7 +316,7 @@ class AdaptiveEnrichmentPlanner:
 
         adapters = sorted(self._registry.list_all(), key=lambda item: item.descriptor.provider_id)
         for goal in state.goals:
-            target = goal.families_for_depth(request.depth)
+            target = state.effective_target(goal.capability, goal.families_for_depth(request.depth))
             if state.satisfied(goal, target):
                 continue
             if not state.in_focus(goal.capability):
@@ -510,7 +512,13 @@ class AdaptiveEnrichmentPlanner:
                 goal.capability in state.requested_capabilities,
             )
         ]
-        if all(state.satisfied(goal, goal.families_for_depth(request.depth)) for goal in active):
+        if all(
+            state.satisfied(
+                goal,
+                state.effective_target(goal.capability, goal.families_for_depth(request.depth)),
+            )
+            for goal in active
+        ):
             return StopReason.GOALS_SATISFIED
 
         reasons = {item.reason for item in skipped}

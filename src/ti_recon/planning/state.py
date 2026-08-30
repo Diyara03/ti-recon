@@ -151,6 +151,39 @@ class PlanningState:
     #: *potentially* independent, and only the returned provenance settles it.
     excluded_source_families: dict[ProviderCapability, frozenset[str]] = field(default_factory=dict)
 
+    #: Capabilities whose *base* family target is not enough this round.
+    #:
+    #: The third seam a later planning round needs (Task 19). Task 13's goal
+    #: says how much coverage is worth buying by default; a higher layer can
+    #: have a requirement the default satisfies numerically and not in
+    #: substance — readiness wanting an adverse search from an origin
+    #: independent of the one that already answered. The base goal is met, so
+    #: the goal would be skipped before any other rule was consulted, and the
+    #: eligible unattempted source that could meet the requirement would never
+    #: be considered.
+    #:
+    #: This raises the *target* for one capability, reusing the family-breadth
+    #: concept the goal already has, rather than adding a parallel notion of
+    #: sufficiency. It never adds a capability, never activates a goal, never
+    #: clears coverage and never names a provider: Task 13 still ranks, still
+    #: refuses an attempted call, still honours a blocked provider and an
+    #: excluded family, and still has to afford it.
+    #:
+    #: Fresh each round, like the focus and the exclusions.
+    additional_coverage_capabilities: frozenset[ProviderCapability] = frozenset()
+
+    def effective_target(self, capability: ProviderCapability, base: int) -> int:
+        """The family target for ``capability`` this round.
+
+        ``base`` unless a higher layer asked for more breadth, in which case it
+        is one family beyond what is already covered — "somebody else as well",
+        expressed in the units the goal already uses. Never a reset: what has
+        been covered stays covered, and stays true.
+        """
+        if capability not in self.additional_coverage_capabilities:
+            return base
+        return max(base, len(self.covered_families.get(capability, set())) + 1)
+
     def in_focus(self, capability: ProviderCapability) -> bool:
         """Whether this round may pursue ``capability``."""
         return not self.focus_capabilities or capability in self.focus_capabilities
@@ -166,6 +199,7 @@ class PlanningState:
         requested: frozenset[ProviderCapability] | None = None,
         focus: frozenset[ProviderCapability] = frozenset(),
         excluded_families: dict[ProviderCapability, frozenset[str]] | None = None,
+        additional_coverage: frozenset[ProviderCapability] = frozenset(),
     ) -> PlanningState:
         """A state for a later round of the same investigation.
 
@@ -206,6 +240,7 @@ class PlanningState:
             # barring a family long after the question that needed independence
             # had been answered.
             excluded_source_families=dict(excluded_families or {}),
+            additional_coverage_capabilities=additional_coverage,
         )
 
     # ------------------------------------------------------------------ #

@@ -139,6 +139,7 @@ class AdaptiveEnrichmentOrchestrator:
         carry_over: PlanningState | None = None,
         focus: frozenset[ProviderCapability] = frozenset(),
         excluded_families: dict[ProviderCapability, frozenset[str]] | None = None,
+        additional_coverage: frozenset[ProviderCapability] = frozenset(),
         state_sink: list[PlanningState] | None = None,
     ) -> AdaptiveEnrichmentResult:
         """Enrich one observable and return what was decided, done and learned.
@@ -159,7 +160,11 @@ class AdaptiveEnrichmentOrchestrator:
         hundreds of queries.
         """
         state = self._planner.initial_state(
-            request, carry_over=carry_over, focus=focus, excluded_families=excluded_families
+            request,
+            carry_over=carry_over,
+            focus=focus,
+            excluded_families=excluded_families,
+            additional_coverage=additional_coverage,
         )
         if state_sink is not None:
             # Handed back so a later round can continue from what this one spent
