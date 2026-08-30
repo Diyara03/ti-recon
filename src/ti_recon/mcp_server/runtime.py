@@ -54,6 +54,7 @@ from ti_recon.credentials import (
 )
 from ti_recon.execution.models import ExecutionContext
 from ti_recon.mcp_server.auth import RemoteAuthConfig, resolve_remote_principal
+from ti_recon.mcp_server.limits import TenantInvestigationLimiter
 from ti_recon.mcp_server.models import ProviderStatusItem, ProviderStatusReport
 from ti_recon.planning.catalog import build_default_planning_registry
 from ti_recon.providers.adapter import ProviderAdapter
@@ -135,6 +136,15 @@ class McpRuntime:
     #: The adapters actually registered, so the diagnostic describes the
     #: catalogue that will really answer rather than a second list of its own.
     adapters: tuple[ProviderAdapter, ...] = ()
+    #: How many investigations one analyst may have running at once, or ``None``
+    #: where the question does not arise.
+    #:
+    #: Absent over stdio: one process serves one analyst through one
+    #: conversation, and nothing there can start a second call. Present over
+    #: HTTP, where an authenticated caller can open as many concurrent requests
+    #: as they like and a DEEP investigation is the most expensive thing this
+    #: system does.
+    investigations: TenantInvestigationLimiter | None = None
 
     def execution_context(self) -> ExecutionContext:
         """A fresh isolation boundary for one tool invocation.
@@ -249,6 +259,7 @@ async def build_remote_runtime(
     connections: ConnectionRepository | None = None,
     adapters: list[ProviderAdapter] | None = None,
     max_concurrency: int = 4,
+    max_investigations_per_tenant: int = 1,
 ) -> McpRuntime:
     """Compose one application for many authenticated analysts.
 
@@ -283,4 +294,5 @@ async def build_remote_runtime(
         connections=repository,
         principals=RemotePrincipalSource(auth),
         adapters=tuple(catalogue),
+        investigations=TenantInvestigationLimiter(max_concurrent=max_investigations_per_tenant),
     )

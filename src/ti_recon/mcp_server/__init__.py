@@ -2,11 +2,16 @@
 
 Exposes capability, and adds no threat-intelligence reasoning of its own.
 
-Task 22 adds the remote authentication primitives: a strict OAuth
-resource-server token check, a pseudonymous tenant identity derived from the
-validated issuer and subject, and request-scoped identity so one shared
-application can serve many authenticated analysts in isolation. There is no HTTP
-entry point yet — the transport is built on this boundary, not before it.
+Task 22 adds the authenticated remote surface: a strict OAuth resource-server
+token check, a pseudonymous tenant identity derived from the validated issuer and
+subject, request-scoped identity so one shared application can serve many
+analysts in isolation, and an ASGI Streamable HTTP application over the same
+Task 20 stack.
+
+The remote surface is a *factory*, not a process. Running it needs a real token
+verifier, and that means an identity platform; a console entry point could only
+be built today around a verifier that must never exist. The deployment injects
+its own delegate.
 """
 
 from ti_recon.mcp_server.auth import (
@@ -15,6 +20,15 @@ from ti_recon.mcp_server.auth import (
     StrictTokenVerifier,
     resolve_remote_principal,
 )
+from ti_recon.mcp_server.http import (
+    HEALTH_PATH,
+    MCP_PATH,
+    REMOTE_SCOPE,
+    REMOTE_SCOPES,
+    RemoteHttpConfig,
+    build_remote_http_app,
+)
+from ti_recon.mcp_server.limits import TenantBusyError, TenantInvestigationLimiter
 from ti_recon.mcp_server.models import ProviderStatusItem, ProviderStatusReport
 from ti_recon.mcp_server.principal import TENANT_ID_PREFIX, RemotePrincipal, derive_tenant_id
 from ti_recon.mcp_server.runtime import (
@@ -32,9 +46,15 @@ from ti_recon.mcp_server.server import (
     SERVER_INSTRUCTIONS,
     SERVER_NAME,
     build_mcp_server,
+    build_remote_server,
+    build_stdio_server,
 )
 
 __all__ = [
+    "HEALTH_PATH",
+    "MCP_PATH",
+    "REMOTE_SCOPE",
+    "REMOTE_SCOPES",
     "REPORT_SCHEMA_URI",
     "REQUEST_SCHEMA_URI",
     "SERVER_INSTRUCTIONS",
@@ -48,12 +68,18 @@ __all__ = [
     "ProviderStatusReport",
     "RemoteAuthConfig",
     "RemoteAuthenticationError",
+    "RemoteHttpConfig",
     "RemotePrincipal",
     "RemotePrincipalSource",
     "StrictTokenVerifier",
+    "TenantBusyError",
+    "TenantInvestigationLimiter",
     "build_mcp_server",
+    "build_remote_http_app",
     "build_remote_runtime",
+    "build_remote_server",
     "build_stdio_runtime",
+    "build_stdio_server",
     "derive_tenant_id",
     "resolve_remote_principal",
 ]
