@@ -28,6 +28,8 @@ import json
 from typing import Annotated, Any
 
 from mcp.server import MCPServer
+from mcp.server.auth.provider import TokenVerifier
+from mcp.server.auth.settings import AuthSettings
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
@@ -48,6 +50,8 @@ __all__ = [
     "SERVER_INSTRUCTIONS",
     "SERVER_NAME",
     "build_mcp_server",
+    "build_remote_server",
+    "build_stdio_server",
 ]
 
 SERVER_NAME = "ti-recon"
@@ -98,31 +102,75 @@ observable may send it to configured external intelligence providers.\
 """
 
 
-def build_mcp_server(runtime: McpRuntime) -> MCPServer:
+def build_mcp_server(
+    runtime: McpRuntime,
+    *,
+    auth: AuthSettings | None = None,
+    token_verifier: TokenVerifier | None = None,
+    local_file_tool: bool = True,
+) -> MCPServer:
     """One server bound to one runtime.
 
     The runtime is captured rather than rebuilt per call: reassembling the
     application for every tool invocation would re-read credentials, re-register
     every adapter and discard the execution caches between two questions in one
     conversation.
+
+    ``local_file_tool`` is the deployment profile, and the only difference
+    between the two surfaces. A file path means something on the machine the
+    server runs on, which over stdio is the analyst's own and over HTTP is
+    somebody else's — see :func:`build_remote_server`.
+
+    ``auth`` and ``token_verifier`` are what turn the HTTP app this server can
+    produce into a protected resource. They are inert over stdio, where the
+    specification says credentials come from the environment instead.
     """
     server: MCPServer = MCPServer(
         SERVER_NAME,
         title="TI Recon",
         version=__version__,
         instructions=SERVER_INSTRUCTIONS,
+        auth=auth,
+        token_verifier=token_verifier,
     )
-    _register_tools(server, runtime)
+    _register_tools(server, runtime, local_file_tool=local_file_tool)
     _register_resources(server)
     return server
 
 
-def _register_tools(server: MCPServer, runtime: McpRuntime) -> None:
-    """The whole public surface: three tools, no more.
+def build_stdio_server(runtime: McpRuntime) -> MCPServer:
+    """The local profile: three tools, one analyst, no authorization.
+
+    Unchanged from Task 21, and named explicitly now that a second profile
+    exists so neither can be reached by forgetting an argument.
+    """
+    return build_mcp_server(runtime, local_file_tool=True)
+
+
+def build_remote_server(
+    runtime: McpRuntime, *, auth: AuthSettings, token_verifier: TokenVerifier
+) -> MCPServer:
+    """The authenticated profile: two tools, many analysts, bearer-protected.
+
+    ``investigate_file`` is **absent**, not hidden. Its ``path`` argument names a
+    file on the machine running the server; over stdio that is the analyst's own
+    workstation, and over HTTP it is somebody else's server — so the tool would
+    stop being file analysis and become an authenticated arbitrary-read
+    primitive. Leaving it registered and undocumented would still put it in
+    ``tools/list`` and still make a hand-written ``tools/call`` reach a path.
+    """
+    return build_mcp_server(
+        runtime, auth=auth, token_verifier=token_verifier, local_file_tool=False
+    )
+
+
+def _register_tools(server: MCPServer, runtime: McpRuntime, *, local_file_tool: bool) -> None:
+    """The public surface: at most three tools, and never a fourth.
 
     No provider-specific tool exists, because which source answers a question is
     Task 13's ranked decision and exposing one would make results depend on what
-    a model happened to pick.
+    a model happened to pick. No credential tool exists either: a secret in a
+    tool argument is a secret in a conversation transcript.
     """
 
     @server.tool(
@@ -207,6 +255,37 @@ def _register_tools(server: MCPServer, runtime: McpRuntime) -> None:
             allow_remote_pivot_lookup=allow_remote_pivot_lookup,
         )
 
+    if local_file_tool:
+        _register_file_tool(server, runtime)
+
+    @server.tool(
+        title="Check intelligence source setup",
+        annotations=ToolAnnotations(
+            # Nothing outside this process is consulted, so the world it reads
+            # is closed.
+            read_only_hint=True,
+            open_world_hint=False,
+        ),
+    )
+    async def provider_status() -> ProviderStatusReport:
+        """Which intelligence sources this installation can use, and what they cover.
+
+        Makes no provider requests at all. "Configured" means *you* have the
+        required credentials stored — not that they are valid, that
+        authentication would succeed, or that quota remains.
+        """
+        return await tools.provider_status(runtime)
+
+
+def _register_file_tool(server: MCPServer, runtime: McpRuntime) -> None:
+    """The local-only tool, registered by the stdio profile alone.
+
+    Kept as one implementation shared with :mod:`ti_recon.mcp_server.tools`; the
+    deployment profile decides whether it is *registered*, which is what keeps it
+    out of ``tools/list`` and out of the tool manager rather than merely out of
+    the documentation.
+    """
+
     @server.tool(
         title="Investigate a local file",
         annotations=ToolAnnotations(read_only_hint=True, open_world_hint=True),
@@ -246,24 +325,6 @@ def _register_tools(server: MCPServer, runtime: McpRuntime) -> None:
             pivot_mode=pivot_mode,
             allow_remote_pivot_lookup=allow_remote_pivot_lookup,
         )
-
-    @server.tool(
-        title="Check intelligence source setup",
-        annotations=ToolAnnotations(
-            # Nothing outside this process is consulted, so the world it reads
-            # is closed.
-            read_only_hint=True,
-            open_world_hint=False,
-        ),
-    )
-    async def provider_status() -> ProviderStatusReport:
-        """Which intelligence sources this installation can use, and what they cover.
-
-        Makes no provider requests at all. "Configured" means *you* have the
-        required credentials stored — not that they are valid, that
-        authentication would succeed, or that quota remains.
-        """
-        return await tools.provider_status(runtime)
 
 
 def _register_resources(server: MCPServer) -> None:
