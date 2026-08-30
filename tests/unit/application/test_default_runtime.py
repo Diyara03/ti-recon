@@ -293,3 +293,20 @@ def test_the_providers_diagnostic_describes_the_runtime_catalogue() -> None:
 
     listed = {row["provider_id"] for row in json.loads(stdout.getvalue())["providers"]}
     assert listed == {item.descriptor.provider_id for item in build_default_adapters()}
+
+
+@pytest.mark.asyncio
+async def test_a_credential_bootstrap_must_name_whose_credentials_it_loads() -> None:
+    """``user_id`` is required exactly when the environment load runs.
+
+    A deployment serving many authenticated analysts passes its own stores and
+    ``load_credentials=False``; it has no single user to name, and inventing a
+    placeholder would put a meaningless owner on real credential records. Asking
+    for the bootstrap without saying whose it is has no honest answer.
+    """
+    with pytest.raises(ValueError, match="user_id is required"):
+        await build_default_application(environment={})
+
+    application, report = await build_default_application(load_credentials=False)
+    assert report.configured_groups == frozenset()
+    assert application is not None
