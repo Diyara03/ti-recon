@@ -11,6 +11,11 @@ dependencies = [
     # IDNA/UTS-46 handling for internationalized domain normalization.
     "idna>=3.7",
     "vt-py>=0.22.0",
+    # Official Model Context Protocol SDK, v2 line (protocol revision
+    # 2026-07-28). Plain `mcp` rather than `mcp[cli]`: the CLI extra exists for
+    # the development Inspector, and a runtime dependency is inherited by every
+    # consumer of this library.
+    "mcp>=2.1,<3",
 ]
 
 [project.scripts]
