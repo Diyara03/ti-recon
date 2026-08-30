@@ -72,10 +72,39 @@ class AnalystInvestigationRequest(FrozenTiReconModel):
     depth: InvestigationDepth = InvestigationDepth.STANDARD
     pivot_mode: PivotMode = PivotMode.RECOMMEND
 
+    #: Whether an *enriching* pivot may reach external providers.
+    #:
+    #: The public half of Task 14's deliberate double gate. ``ENRICH`` alone
+    #: authorises following a lead the *engine* found; this authorises telling a
+    #: third party about it. Those are different disclosures — looking up what
+    #: the analyst typed is one thing, and looking up an address a provider
+    #: mentioned is a wider one — so the second needs its own yes.
+    #:
+    #: Defaults to ``False``, which is what every existing caller gets: related
+    #: observables are graphed and recommended, and nothing about them leaves
+    #: the machine. Turning it on changes *who may be asked*, and nothing else:
+    #: depth, budgets, the one-hop limit, the privacy rules that refuse private
+    #: and credential-bearing targets, and Task 13's provider selection all
+    #: apply exactly as before.
+    allow_remote_pivot_lookup: bool = False
+
     @model_validator(mode="after")
-    def _reject_blank(self) -> AnalystInvestigationRequest:
-        """A value of only whitespace is a mistake, not an observable."""
+    def _validate_request(self) -> AnalystInvestigationRequest:
+        """Refuse input that cannot mean what it appears to say.
+
+        The remote-pivot permission is meaningless without ``ENRICH`` — there
+        would be no pivot enrichment for it to apply to. Accepting it silently
+        would leave a caller believing they had authorised something that was
+        never going to happen, which is the more dangerous of the two failures:
+        the next reader assumes the setting works.
+        """
         if not self.observable.strip():
             msg = "observable must not be blank"
+            raise ValueError(msg)
+        if self.allow_remote_pivot_lookup and self.pivot_mode is not PivotMode.ENRICH:
+            msg = (
+                "remote pivot lookup can only be enabled when pivot mode is "
+                f"{PivotMode.ENRICH.value!r}"
+            )
             raise ValueError(msg)
         return self

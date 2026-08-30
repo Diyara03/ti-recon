@@ -137,6 +137,13 @@ class RequestSummary(FrozenTiReconModel):
 
     depth: InvestigationDepth
     pivot_mode: str = Field(min_length=1, max_length=32)
+    #: Whether an enriching pivot was permitted to reach external providers.
+    #:
+    #: Recorded because it changes what the investigation *disclosed*, not only
+    #: what it found. A reader comparing two reports needs to know whether the
+    #: related observables were merely graphed or were themselves sent to third
+    #: parties, and that is not inferable from ``pivot_mode`` alone.
+    allow_remote_pivot_lookup: bool = False
 
 
 class AssessmentSummary(FrozenTiReconModel):

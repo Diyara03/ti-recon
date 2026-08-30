@@ -51,10 +51,34 @@ and it contacts nothing.
 | --- | --- | --- |
 | `--depth` | `standard` | The engine's own default. Not `deep`: deeper spends more of somebody's quota, and asking for it is the caller's decision. |
 | `--pivot` | `recommend` | Task 14's own default. Related objects are recorded and **not** queried, because looking up something the observable merely touched is a wider disclosure than looking up what the analyst typed. |
+| `--allow-remote-pivot-lookup` | off | The second half of Task 14's deliberate double gate. Only meaningful with `--pivot enrich`. |
 | `--format` | `text` | `json` is the integration contract. |
 
 Neither default is invented here; both are the values the engine already
 documents.
+
+### Pivots: three distinct behaviours
+
+`--pivot` and `--allow-remote-pivot-lookup` are two switches because they
+authorise two different things — following a lead, and telling a third party
+about it.
+
+| Setting | What happens |
+| --- | --- |
+| `--pivot none` | Related objects are not even ranked. |
+| `--pivot recommend` *(default)* | Related objects are graphed and recommended. **Nothing about them leaves the machine.** |
+| `--pivot enrich` | Eligible related objects may be enriched — but only through providers that disclose nothing, because the remote gate is still shut. |
+| `--pivot enrich --allow-remote-pivot-lookup` | Eligible related objects may be sent to configured external providers. **This discloses observables the analyst did not type, and consumes provider quota.** |
+
+`enrich` on its own is *not* remote enrichment. Everything else is unchanged by
+the flag: the same depth buys the same budget, the one-hop limit still holds,
+and the privacy rules that refuse private addresses and credential-bearing URLs
+still refuse them. It changes who may be asked, and nothing else.
+
+Enabling the flag without `--pivot enrich` is refused rather than ignored —
+there would be no pivot enrichment for it to apply to, and accepting it silently
+would leave you believing you had authorised something that was never going to
+happen.
 
 ## Streams
 

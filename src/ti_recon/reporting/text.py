@@ -102,6 +102,15 @@ def _heading(title: str) -> list[str]:
     return ["", title]
 
 
+def _label(value: str) -> str:
+    """An enum value as a word rather than a shout.
+
+    ``ready_with_limitations`` becomes ``Ready with limitations``. The value
+    itself is unchanged in JSON; this is only how it reads in a sentence.
+    """
+    return value.replace("_", " ").capitalize()
+
+
 def _omitted[Item](section: ReportSection[Item]) -> list[str]:
     """Always say when a list was cut.
 
@@ -126,13 +135,19 @@ def _target(report: AnalystInvestigationReport) -> list[str]:
 
 def _assessment(report: AnalystInvestigationReport) -> list[str]:
     assessment, readiness = report.assessment, report.readiness
-    confidence = assessment.confidence.upper()
-    if assessment.confidence_stix is not None:
-        confidence = f"{confidence} ({assessment.confidence_stix})"
     lines = _heading("Assessment")
     lines.append(f"  Verdict: {assessment.verdict.value.upper()}")
-    lines.append(f"  Confidence: {confidence}")
-    lines.append(f"  Readiness: {readiness.status.upper()}")
+    # The band alone. The canonical STIX integer stays in the JSON contract,
+    # where a consumer that wants it knows what it means — printed here beside
+    # a verdict it reads as "50% likely malicious", which is a different claim
+    # from the one Task 17 makes. Confidence is about whether the *assessment*
+    # is correct, and there is no calibration behind any probability.
+    lines.append(f"  Confidence: {_label(assessment.confidence)}")
+    # "TI coverage" rather than "Readiness": READY means the external-intelligence
+    # collection was adequate for triage, and a reader glancing at "Readiness:
+    # READY" can take it for ready to close, ready to block, or incident-ready —
+    # none of which this engine says or could say.
+    lines.append(f"  TI coverage: {_label(readiness.status)}")
     lines.append(f"  Verdict rule: {safe_text(assessment.verdict_rule_id)}")
     if assessment.confidence_caps:
         capped = ", ".join(safe_text(item, limit=60) for item in assessment.confidence_caps)

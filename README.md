@@ -347,6 +347,21 @@ investigation exits `0` whether the verdict is `MALICIOUS` or `INCONCLUSIVE`.
 The command does not block, quarantine, isolate or close alerts. It produces
 external threat-intelligence analysis for analyst triage.
 
+### From Claude Code
+
+With the MCP server connected, the bundled analyst Skill lets you just ask:
+
+```
+Investigate this suspicious URL: https://example.invalid/path
+Is this hash malicious? 44d88612fea8a8f36de82e1278abb02f
+/ti-recon-analyst example.com
+```
+
+Defaults are Standard depth with related observables recorded but not queried.
+Ask for a "quick check" or to "investigate thoroughly" to change collection
+scope; explaining an existing result never triggers new lookups. See
+[docs/mcp.md](docs/mcp.md) and [docs/claude-skill.md](docs/claude-skill.md).
+
 See [docs/cli.md](docs/cli.md) and [docs/analyst-output.md](docs/analyst-output.md).
 
 ## Installation (development)
@@ -461,3 +476,5 @@ In production, provider credentials are held per user by the credential layer
 - [docs/artifacts.md](docs/artifacts.md) — Task 8 bounded provider artifact storage
 - [docs/analyst-output.md](docs/analyst-output.md) — Task 20 analyst output contract
 - [docs/cli.md](docs/cli.md) — Task 20 `ti-recon` command
+- [docs/mcp.md](docs/mcp.md) — Task 21 local MCP server
+- [docs/claude-skill.md](docs/claude-skill.md) — Task 21 Claude analyst Skill

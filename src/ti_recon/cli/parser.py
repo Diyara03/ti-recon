@@ -112,6 +112,16 @@ def _add_investigate(commands: argparse._SubParsersAction[argparse.ArgumentParse
         ),
     )
     command.add_argument(
+        "--allow-remote-pivot-lookup",
+        dest="allow_remote_pivot_lookup",
+        action="store_true",
+        help=(
+            "used only with --pivot enrich. Allows eligible related observables "
+            "to be queried through configured external providers, which discloses "
+            "them to third parties and consumes provider quota. Off by default."
+        ),
+    )
+    command.add_argument(
         "--format",
         dest="output_format",
         choices=OUTPUT_FORMATS,

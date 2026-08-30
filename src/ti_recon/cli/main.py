@@ -334,6 +334,7 @@ def _request_from(args: argparse.Namespace) -> AnalystInvestigationRequest:
         observable_type=observable_type,
         depth=InvestigationDepth(args.depth),
         pivot_mode=PivotMode(args.pivot_mode),
+        allow_remote_pivot_lookup=args.allow_remote_pivot_lookup,
     )
 
 

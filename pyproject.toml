@@ -11,12 +11,20 @@ dependencies = [
     # IDNA/UTS-46 handling for internationalized domain normalization.
     "idna>=3.7",
     "vt-py>=0.22.0",
+    # Official Model Context Protocol SDK, v2 line (protocol revision
+    # 2026-07-28). Plain `mcp` rather than `mcp[cli]`: the CLI extra exists for
+    # the development Inspector, and a runtime dependency is inherited by every
+    # consumer of this library.
+    "mcp>=2.1,<3",
 ]
 
 [project.scripts]
 # The analyst entry point (Task 20). Stdlib argparse only: the CLI adds no
 # dependency that every consumer of the library would then inherit.
 ti-recon = "ti_recon.cli.main:main"
+# The local MCP server (Task 21). A server process spoken to over stdio by a
+# host, not a command a person runs interactively.
+ti-recon-mcp = "ti_recon.mcp_server.main:main"
 
 [project.optional-dependencies]
 dev = [
@@ -37,6 +45,15 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ti_recon"]
+
+[tool.hatch.build.targets.sdist]
+# Local machine state is not source. Hatchling builds an sdist from the working
+# directory, so a developer's own Claude Code settings — untracked, and ignored
+# only by whatever global gitignore that developer happens to have — would
+# otherwise ship inside a published archive and make two builds of one commit
+# differ. The analyst Skill under .claude/skills/ is tracked repository content
+# and stays.
+exclude = ["**/settings.local.json"]
 
 [tool.ruff]
 line-length = 100

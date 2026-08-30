@@ -136,6 +136,14 @@ Implemented (Jira Tasks 1-19):
   MCP server will call. Presentation only: it selects, orders, labels and
   bounds what Tasks 13-19 decided, and decides nothing itself.
 
+- Task 21 (in progress) — local MCP server (`mcp_server/`): the Task 20
+  application over the Model Context Protocol, stdio only. Three tools
+  (`investigate_observable`, `investigate_file`, `provider_status`), the
+  analyst report as structured output derived from the Task 20 model, and the
+  two public schemas as resources. Capability only: no reasoning, no provider
+  selection, no credential input, no active operation. The Claude Skill is not
+  yet implemented.
+
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Task 13 chooses what
 to ask, Task 14 assembles what came back, Task 15 says what each finding means in
@@ -1380,6 +1388,102 @@ about it.
      followed deliberately; a symlink to a pipe is refused. Hashing is
      streamed, and the only thing that leaves the machine is a digest.
 
+125e. **Remote pivot enrichment needs its own yes, in public too.** Task 14
+     gates it on `pivot_mode == ENRICH` *and* `allow_remote_pivot_lookup`, so
+     the public request exposes both — a request offering only the mode
+     promised a disclosure it could not perform, and enriched pivots through
+     local providers while a caller believed otherwise. The permission is
+     refused outside `ENRICH` rather than ignored, defaults off for every
+     existing caller, and changes only *who may be asked*: budgets, the one-hop
+     limit, the privacy refusals and Task 13's selection are untouched. The
+     report records it beside the mode, because the two together are what
+     decided whether anything about a related observable left the machine.
+
+125f. **A human label must not say more than the engine did.** The text
+     renderer prints `Confidence: Medium` and not `Medium (50)` — an integer
+     beside a verdict reads as "50% likely malicious", which is a different
+     claim from confidence that the *assessment* is correct, and no calibration
+     exists behind either. It prints `TI coverage:` and not `Readiness:`,
+     because READY means the collection was adequate for triage and never ready
+     to close, block or declare. Both are presentation: `confidence_stix` and
+     the readiness field names are unchanged in the JSON contract.
+
+127. **Task 21 exposes capability and adds no reasoning.** The MCP tools build
+     a Task 20 request, call the Task 20 application and return the Task 20
+     report. `mcp_server/` imports no adapter, no HTTP client and no reasoning
+     policy, calls no adapter or executor, and a test reads its AST to prove
+     it. The investigation tools are annotated `-> AnalystInvestigationReport`,
+     so the SDK derives the output schema from the Task 20 model and there is
+     no second report type to drift.
+
+128. **A tool call reports whether the tool worked, never what it found.**
+     MALICIOUS, SUSPICIOUS, LIKELY_BENIGN, INCONCLUSIVE and an UNRESOLVED
+     readiness are all `is_error=False`; so is a run where a provider was
+     unconfigured, throttled or broken, because Task 19 still produced a report
+     and Task 18 recorded what that cost. Only a failure the caller could act on
+     — an unparseable observable, a non-regular file, a permission that cannot
+     apply — is an error, and it carries a plain message.
+
+129. **An unexpected exception's text never reaches a client or a log.** A
+     dependency can put a credential or a raw provider payload in one, and the
+     SDK logs an escaping exception's whole traceback at ERROR. The tools
+     convert it to a fixed message and log the type alone. `CancelledError` is a
+     `BaseException` and is deliberately untouched: cancellation propagates and
+     never becomes a partial or inconclusive result.
+
+130. **The MCP principal is the process's, never the caller's.** One stdio
+     server serves one analyst, under a reserved local name rather than the
+     operating-system account — that identity reaches cache keys and metrics.
+     No tool input may carry a user id, an execution scope, a credential, a
+     provider preference or an active operation, and a test asserts each
+     against the published input schemas. stdout carries the protocol and
+     nothing else; logging is configured by the entry point, never by the
+     reusable factory.
+
+131. **Reading a local file needs a human, where the host can ask one.**
+     `investigate_file` carries `anthropic/requiresUserInteraction` in its
+     tool `_meta`, so Claude Code prompts on every call even when an allow rule
+     would match — a standing yes to investigating observables must not become
+     a standing yes to opening files. It is advisory and host-specific: a client
+     that does not know the key ignores it, which is why the real boundaries
+     stay elsewhere — the user selects the file, Task 20 accepts only a regular
+     file, the bytes are hashed locally and never sent, and an agent may not
+     browse for samples. Consent is never an input field: a model sets its own
+     arguments, so `user_confirmed` would be consent from nobody. A future Skill
+     must not pre-approve these tools with `allowed-tools`.
+
+132. **The Skill presents; it never recalculates.** It drives the MCP tools and
+     never the CLI or a provider API, and it decides no verdict, confidence,
+     independence, explanation applicability, readiness or provider choice —
+     all of those arrive in the Task 20 report. It carries no `allowed-tools`
+     grant: permission belongs to the user's configuration, and a grant here
+     would undercut the human approval Claude Code requires for local files.
+
+133. **Detail is free; collection is not.** Explaining a result already in the
+     conversation must never cause a new tool call, however thorough the request
+     — "explain this thoroughly" re-reads, it does not re-run. Broader
+     collection (Deep, pivot enrichment, external pivot enrichment) is
+     user-directed: a suspicious verdict never escalates depth on the model's
+     initiative, and an ambiguous "more" gets one clarifying question rather
+     than a guess. Defaults stay STANDARD, RECOMMEND, external pivot off.
+
+134. **Disclosure needs intent, and files need selection.** External pivot
+     enrichment is enabled only on unambiguous intent, never silently.
+     `investigate_file` runs only for a file the user supplied, attached or
+     named — no browsing, no enumerating, no reading `.env`, and "check my
+     machine" is not a selection. Credentials are configured locally and never
+     pasted into a conversation; after a change the MCP server must be
+     reconnected, because configuration is read at startup.
+
+135. **The Skill inherits every vocabulary rule the engine enforces.** Sources
+     are provenance and never votes, so no tally is ever produced. `NO_DATA` is
+     checked-and-nothing-found, never clean. `UNATTRIBUTED` is not `NO_DATA`.
+     `NOT_CONFIGURED` is a local setup fact, not a provider being offline. A
+     related observable is a relationship, not an indicator. TI coverage is not
+     permission to act, and confidence is not a probability of maliciousness.
+     The Skill states the assessment and makes no organisational remediation
+     decision.
+
 126. **Task 20 recommends no action.** The report states an assessment; it never
      says to block, quarantine, isolate, allowlist, suppress, close an alert or
      declare an incident. Those decisions need asset criticality, business
@@ -1667,6 +1771,11 @@ src/ti_recon/
                      report, bounded sections), builder (projection, never
                      analysis), text (deterministic rendering, terminal-injection
                      safety), schema (generated, dialect read from Pydantic)
+  mcp_server/        Task 21: the local MCP server. models (the configuration
+                     diagnostic, the only contract this layer owns), runtime
+                     (one application per process, one principal), tools (the
+                     three implementations and the error policy), server (the
+                     factory, annotations and resources), main (stdio process)
   cli/               Task 20: the `ti-recon` command. parser (argparse; no
                      credential or provider flags), main (streams, exit codes),
                      runtime (the one composition root a local invocation uses)

@@ -187,5 +187,12 @@ class InvestigationApplication:
         return await self.orchestrator.investigate(
             InvestigationRequest(root=root, depth=request.depth),
             context,
-            pivot_policy=PivotPolicy(mode=request.pivot_mode),
+            pivot_policy=PivotPolicy(
+                mode=request.pivot_mode,
+                # Mapped straight through to Task 14's own gate. This layer adds
+                # no pivot behaviour and removes none: the budgets, the one-hop
+                # limit and the privacy rules are all still Task 14's, and the
+                # root's own `allow_remote_lookup` still has to agree.
+                allow_remote_pivot_lookup=request.allow_remote_pivot_lookup,
+            ),
         )
