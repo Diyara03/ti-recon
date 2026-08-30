@@ -124,6 +124,12 @@ deciding how much to show.
 - **Related observables are not indicators.** A contacted host is a
   relationship. Call it malicious only if the report separately assessed *it*.
 - **Sources are provenance, not votes.** Never count providers for or against.
+- **A provider existing is not a provider being asked.** Say a source was
+  checked only when `source_checks` has an entry for it. Catalogue membership,
+  configuration and an actual call are different states, and "TI Recon will
+  query X" because X is installed is a false claim. *Which providers did you
+  use* comes from `source_checks`; *which are available* comes from
+  `provider_status`.
 - An **alternative explanation** covers the evidence Task 16 linked it to and
   nothing else. One explained detection is not a false-positive case.
 - Historical evidence stays historical; an offline malicious URL was malicious

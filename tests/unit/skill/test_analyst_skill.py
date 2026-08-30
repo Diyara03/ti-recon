@@ -279,3 +279,28 @@ def test_the_likely_benign_example_refuses_the_word_safe() -> None:
     section = examples.split("## D.")[1].split("## E.")[0].lower()
     assert "incomplete" in section
     assert "clean" in section or "safe" in section  # named as words to avoid
+
+
+def test_catalogue_membership_is_not_described_as_a_lookup(corpus: str) -> None:
+    """A provider existing is not a provider being asked.
+
+    Observed in review: an answer said TI Recon "plans lookups across" four
+    named providers, when what was true is that those integrations ship with the
+    installation. Between catalogued and called sit configured, applicable,
+    selected and reached — and a source that is merely installed may be none of
+    those. Claiming otherwise tells an analyst their observable went somewhere
+    it did not.
+    """
+    lowered = corpus.lower()
+    assert "source_checks" in lowered
+    assert "catalogue" in lowered or "catalogued" in lowered
+    # The two questions must be answered from different places.
+    assert "provider_status" in lowered
+    assert "which providers are available" in lowered or "available" in lowered
+
+
+def test_the_provider_state_vocabulary_is_spelled_out() -> None:
+    """The states have to be nameable to be kept apart."""
+    glossary = (REFERENCES / "interpretation.md").read_text(encoding="utf-8").lower()
+    for state in ("catalogued", "configured", "considered", "attempted", "called", "succeeded"):
+        assert state in glossary, state

@@ -123,6 +123,32 @@ Never promote historical evidence to current activity.
 
 `source_checks` records who was asked and what happened. It is provenance.
 
+### Existing is not the same as asked
+
+A provider passes through several distinct states, and collapsing them produces
+a false claim about what was actually queried. Keep them straight even when you
+only say one of them out loud:
+
+| State | Means | Where you learn it |
+| --- | --- | --- |
+| Catalogued | The installation ships this integration. | `provider_status` |
+| Configured | Its local credential is present. | `provider_status.configured` |
+| Considered | The planner could apply it to this observable. | `coverage[].providers_considered` |
+| Attempted | Task 13 selected it and Task 6 ran it. | a `source_checks` entry exists |
+| Called | A provider was physically contacted. | `called_provider` |
+| Succeeded | It returned a usable result. | `status` |
+
+**Never say a provider was queried, checked or used because it exists.** A
+source in the catalogue may be unconfigured, inapplicable to this observable
+type, not selected at this depth, served from cache, or never reached. If
+`source_checks` has no entry for it, it was not asked — say that, or say nothing
+about it.
+
+"Which providers did you use?" is answered from `source_checks`. "Which
+providers are available?" is answered from `provider_status`. They are different
+questions with different answers, and the second is never evidence for the
+first.
+
 **There is no counting anywhere in this engine.** No score, no ratio, no
 majority, no "5 of 9 providers". Evidence is weighed by what kind of claim it
 is, whose origin produced it, whether two claims are genuinely independent, and
