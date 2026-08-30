@@ -117,7 +117,8 @@ async def test_a_benign_verdict_and_incomplete_coverage_stay_separate() -> None:
     assert report.readiness.status == "needs_more_data"
     rendered = render_text(report)
     assert "LIKELY_BENIGN" in rendered
-    assert "NEEDS_MORE_DATA" in rendered
+    # The coverage line reads as coverage, not as a response decision.
+    assert "TI coverage: Needs more data" in rendered
     assert "safe" not in rendered.lower()
 
 
@@ -327,3 +328,53 @@ async def test_a_report_round_trips() -> None:
     assert restored == report
     assert restored.model_dump_json() == dumped
     assert json.loads(dumped)["schema_version"] == ANALYST_REPORT_SCHEMA_VERSION
+
+
+# --------------------------------------------------------------------------- #
+# Human labels must not be read as something the engine did not say
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_confidence_reads_as_a_band_not_a_probability() -> None:
+    """ "Medium (50)" beside a verdict reads as "50% likely malicious".
+
+    That is a different claim from the one Task 17 makes: confidence is about
+    whether the *assessment* is correct, and there is no calibration behind any
+    probability. The canonical STIX integer stays in the JSON contract, where a
+    consumer that asks for it knows what it means.
+    """
+    _, report = await malicious_report()
+
+    rendered = render_text(report)
+
+    assert "Confidence: Medium" in rendered
+    assert "(50)" not in rendered
+    assert "50%" not in rendered
+    # Still available to a machine, unchanged.
+    assert report.assessment.confidence_stix == 50
+    assert '"confidence_stix":50' in report.model_dump_json().replace(" ", "")
+
+
+@pytest.mark.asyncio
+async def test_coverage_is_labelled_as_coverage_not_as_readiness_to_act() -> None:
+    """READY means the collection was adequate for triage.
+
+    A reader glancing at "Readiness: READY" can take it for ready to close,
+    ready to block or incident-ready — none of which this engine says, or could
+    say without knowing the asset and the incident policy.
+    """
+    _, report = await malicious_report()
+
+    rendered = render_text(report)
+
+    assert "TI coverage:" in rendered
+    assert "Readiness:" not in rendered
+    # The field name itself is untouched; only the label changed.
+    assert report.readiness.status in {
+        "ready",
+        "ready_with_limitations",
+        "needs_more_data",
+        "unresolved",
+    }
+    assert '"status"' in report.model_dump_json()
