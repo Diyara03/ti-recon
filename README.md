@@ -461,3 +461,4 @@ In production, provider credentials are held per user by the credential layer
 - [docs/artifacts.md](docs/artifacts.md) — Task 8 bounded provider artifact storage
 - [docs/analyst-output.md](docs/analyst-output.md) — Task 20 analyst output contract
 - [docs/cli.md](docs/cli.md) — Task 20 `ti-recon` command
+- [docs/mcp.md](docs/mcp.md) — Task 21 local MCP server

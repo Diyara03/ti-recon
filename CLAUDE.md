@@ -136,6 +136,14 @@ Implemented (Jira Tasks 1-19):
   MCP server will call. Presentation only: it selects, orders, labels and
   bounds what Tasks 13-19 decided, and decides nothing itself.
 
+- Task 21 (in progress) — local MCP server (`mcp_server/`): the Task 20
+  application over the Model Context Protocol, stdio only. Three tools
+  (`investigate_observable`, `investigate_file`, `provider_status`), the
+  analyst report as structured output derived from the Task 20 model, and the
+  two public schemas as resources. Capability only: no reasoning, no provider
+  selection, no credential input, no active operation. The Claude Skill is not
+  yet implemented.
+
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Task 13 chooses what
 to ask, Task 14 assembles what came back, Task 15 says what each finding means in
@@ -1400,6 +1408,38 @@ about it.
      to close, block or declare. Both are presentation: `confidence_stix` and
      the readiness field names are unchanged in the JSON contract.
 
+127. **Task 21 exposes capability and adds no reasoning.** The MCP tools build
+     a Task 20 request, call the Task 20 application and return the Task 20
+     report. `mcp_server/` imports no adapter, no HTTP client and no reasoning
+     policy, calls no adapter or executor, and a test reads its AST to prove
+     it. The investigation tools are annotated `-> AnalystInvestigationReport`,
+     so the SDK derives the output schema from the Task 20 model and there is
+     no second report type to drift.
+
+128. **A tool call reports whether the tool worked, never what it found.**
+     MALICIOUS, SUSPICIOUS, LIKELY_BENIGN, INCONCLUSIVE and an UNRESOLVED
+     readiness are all `is_error=False`; so is a run where a provider was
+     unconfigured, throttled or broken, because Task 19 still produced a report
+     and Task 18 recorded what that cost. Only a failure the caller could act on
+     — an unparseable observable, a non-regular file, a permission that cannot
+     apply — is an error, and it carries a plain message.
+
+129. **An unexpected exception's text never reaches a client or a log.** A
+     dependency can put a credential or a raw provider payload in one, and the
+     SDK logs an escaping exception's whole traceback at ERROR. The tools
+     convert it to a fixed message and log the type alone. `CancelledError` is a
+     `BaseException` and is deliberately untouched: cancellation propagates and
+     never becomes a partial or inconclusive result.
+
+130. **The MCP principal is the process's, never the caller's.** One stdio
+     server serves one analyst, under a reserved local name rather than the
+     operating-system account — that identity reaches cache keys and metrics.
+     No tool input may carry a user id, an execution scope, a credential, a
+     provider preference or an active operation, and a test asserts each
+     against the published input schemas. stdout carries the protocol and
+     nothing else; logging is configured by the entry point, never by the
+     reusable factory.
+
 126. **Task 20 recommends no action.** The report states an assessment; it never
      says to block, quarantine, isolate, allowlist, suppress, close an alert or
      declare an incident. Those decisions need asset criticality, business
@@ -1687,6 +1727,11 @@ src/ti_recon/
                      report, bounded sections), builder (projection, never
                      analysis), text (deterministic rendering, terminal-injection
                      safety), schema (generated, dialect read from Pydantic)
+  mcp_server/        Task 21: the local MCP server. models (the configuration
+                     diagnostic, the only contract this layer owns), runtime
+                     (one application per process, one principal), tools (the
+                     three implementations and the error policy), server (the
+                     factory, annotations and resources), main (stdio process)
   cli/               Task 20: the `ti-recon` command. parser (argparse; no
                      credential or provider flags), main (streams, exit codes),
                      runtime (the one composition root a local invocation uses)
