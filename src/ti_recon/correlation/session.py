@@ -62,6 +62,11 @@ class CorrelationSession:
     #: Per capability rather than per round, so a family barred from supplying
     #: an independent challenge still answers every other question normally.
     excluded_families: dict[ProviderCapability, frozenset[str]] = field(default_factory=dict)
+    #: Capabilities whose base family target is not enough for the next round.
+    #:
+    #: Never a reset of what has been covered: it raises the bar for one
+    #: capability so an eligible unattempted source can still be considered.
+    additional_coverage: frozenset[ProviderCapability] = frozenset()
 
     #: Every provider outcome this investigation produced, root and pivot alike,
     #: in the order they completed.

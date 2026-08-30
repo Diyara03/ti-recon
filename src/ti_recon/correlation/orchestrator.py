@@ -216,6 +216,7 @@ class CorrelatedInvestigationOrchestrator:
             carry_over=None if carried is None else carried.planning,
             focus=frozenset() if carried is None else carried.focus,
             excluded_families=None if carried is None else carried.excluded_families,
+            additional_coverage=(frozenset() if carried is None else carried.additional_coverage),
             state_sink=states,
         )
         if carried is not None and states:

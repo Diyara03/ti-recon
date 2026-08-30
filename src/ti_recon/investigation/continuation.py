@@ -26,18 +26,30 @@ planner with a worse view, and the first thing it would break is the budget.
 from __future__ import annotations
 
 from ti_recon.enums import ProviderCapability
-from ti_recon.investigation.models import ContinuationDirective
+from ti_recon.investigation.models import ContinuationDirective, ContinuationNeed
 from ti_recon.reasoning.fusion.independence import independence_groups
 from ti_recon.reasoning.fusion.results import FusionResult
 from ti_recon.reasoning.readiness.models import (
     ContinuationState,
     GapOutlook,
     GapType,
+    InformationNeed,
+    ReadinessGap,
     ReadinessStatus,
 )
+from ti_recon.reasoning.readiness.policy import DIRECTIONAL_SEARCH_CAPABILITIES
 from ti_recon.reasoning.readiness.results import AssessmentReadinessResult
 
+#: Gap types asking for *more* coverage of something already answered.
+#:
+#: Task 13's goal says how much coverage is worth buying by default; these are
+#: the requirements that need breadth beyond it. Everything else is an ordinary
+#: missing-coverage gap that ordinary planning already handles, and reopening a
+#: satisfied goal for one would buy a second opinion nobody asked for.
+BREADTH_GAP_TYPES: frozenset[GapType] = frozenset({GapType.INDEPENDENT_CHALLENGE_MISSING})
+
 __all__ = [
+    "BREADTH_GAP_TYPES",
     "benign_basis_families",
     "directives_for",
     "wants_continuation",
@@ -125,18 +137,22 @@ def directives_for(
     for need in readiness.information_needs:
         if need.outlook is not GapOutlook.MAY_ADDRESS_MATERIAL_GAP:
             continue
-        if admissible is not None and need.capability not in admissible:
-            continue
         gap = next(
             (item for item in readiness.gaps if item.capability is need.capability),
             None,
         )
         if gap is None:
             continue
+        if gap.gap_type in BREADTH_GAP_TYPES:
+            found.extend(_breadth_directives(gap, need, avoid=avoid, admissible=admissible))
+            continue
+        if admissible is not None and need.capability not in admissible:
+            continue
         found.append(
             ContinuationDirective(
                 requirement_id=gap.requirement_id,
                 capability=need.capability,
+                need=ContinuationNeed.MISSING_COVERAGE,
                 criticality=need.criticality,
                 reason=need.reason,
                 # Only the need that asked for independence carries the hint.
@@ -146,9 +162,47 @@ def directives_for(
                 # the same whoever else has spoken. Attaching the families to
                 # every directive would record a constraint nobody asked for, and
                 # would be the first thing a future planner seam read as one.
-                avoid_source_families=(
-                    avoid if gap.gap_type is GapType.INDEPENDENT_CHALLENGE_MISSING else frozenset()
-                ),
+                avoid_source_families=frozenset(),
             )
         )
     return tuple(sorted(found, key=lambda item: item.capability.value))
+
+
+def _breadth_directives(
+    gap: ReadinessGap,
+    need: InformationNeed,
+    *,
+    avoid: frozenset[str],
+    admissible: frozenset[ProviderCapability] | None,
+) -> tuple[ContinuationDirective, ...]:
+    """Directives for a requirement that needs *another* source, not a first one.
+
+    Task 18 states this kind of requirement against a representative capability,
+    and the capability it names may not be one this depth admits. What the
+    requirement actually asks for is an adverse search from an independent
+    origin, and Task 18 publishes the set of capabilities whose job that is --
+    so the need is expressed against the members of that set this investigation
+    was already allowed to ask about.
+
+    Reusing Task 18's own set rather than naming a capability here is what keeps
+    this generic: whatever Task 18 counts as an adverse search is what satisfies
+    the requirement, and the two cannot drift apart.
+
+    Empty when the depth admits none of them. That is the correct answer, not a
+    failure: the search the requirement wants is not part of the investigation
+    the caller asked for.
+    """
+    targets = DIRECTIONAL_SEARCH_CAPABILITIES
+    if admissible is not None:
+        targets = targets & admissible
+    return tuple(
+        ContinuationDirective(
+            requirement_id=gap.requirement_id,
+            capability=capability,
+            need=ContinuationNeed.ADDITIONAL_COVERAGE,
+            criticality=need.criticality,
+            reason=need.reason,
+            avoid_source_families=avoid,
+        )
+        for capability in sorted(targets, key=lambda item: item.value)
+    )

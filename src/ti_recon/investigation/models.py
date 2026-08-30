@@ -38,6 +38,7 @@ __all__ = [
     "INVESTIGATION_WORKFLOW_VERSION",
     "RESULT_ID_LENGTH",
     "ContinuationDirective",
+    "ContinuationNeed",
     "InvestigationRequest",
     "InvestigationRound",
     "RoundTrigger",
@@ -149,6 +150,22 @@ class InvestigationRequest(FrozenTiReconModel):
         return ActivityMode.PASSIVE
 
 
+class ContinuationNeed(StrEnum):
+    """What kind of shortfall a directive is asking Task 13 to address.
+
+    Two genuinely different requests, and collapsing them into one would either
+    never obtain additional breadth or would quietly re-ask for everything.
+    """
+
+    #: Nobody has answered this capability yet. Ordinary planning handles it.
+    MISSING_COVERAGE = "missing_coverage"
+    #: Somebody answered, and Task 13's own goal is numerically satisfied, but a
+    #: higher-layer requirement needs another eligible source. The capability
+    #: was always admissible and active; only how much coverage is enough has
+    #: changed, and only for this round.
+    ADDITIONAL_COVERAGE = "additional_coverage"
+
+
 class ContinuationDirective(FrozenTiReconModel):
     """One thing the workflow will ask Task 13 to try to find out.
 
@@ -166,6 +183,7 @@ class ContinuationDirective(FrozenTiReconModel):
 
     requirement_id: str = Field(min_length=8, max_length=64)
     capability: ProviderCapability
+    need: ContinuationNeed = ContinuationNeed.MISSING_COVERAGE
     criticality: CoverageRelevance
     reason: str = Field(min_length=1, max_length=64)
     avoid_source_families: frozenset[str] = frozenset()

@@ -71,6 +71,7 @@ from ti_recon.investigation.metrics import (
 from ti_recon.investigation.models import (
     INVESTIGATION_WORKFLOW_VERSION,
     ContinuationDirective,
+    ContinuationNeed,
     InvestigationRequest,
     InvestigationRound,
     RoundTrigger,
@@ -279,6 +280,14 @@ class InvestigationOrchestrator:
             for item in directives
             if item.avoid_source_families
         }
+        # Only a directive that says so raises the bar, and only for its own
+        # capability. Task 13's default sufficiency is otherwise untouched:
+        # nothing here reopens a goal that readiness did not ask about.
+        state.session.additional_coverage = frozenset(
+            item.capability
+            for item in directives
+            if item.need is ContinuationNeed.ADDITIONAL_COVERAGE
+        )
         correlated = await self.correlation.run(
             self._planning_request(request, directives),
             context,
