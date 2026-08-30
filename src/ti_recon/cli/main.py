@@ -34,6 +34,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Final, TextIO
 
+from ti_recon.application.composition import CredentialLoadReport, load_environment_credentials
 from ti_recon.application.models import AnalystInvestigationRequest, ObservableInputType
 from ti_recon.application.service import (
     InvalidObservableError,
@@ -41,10 +42,23 @@ from ti_recon.application.service import (
     hash_local_file,
 )
 from ti_recon.cli.parser import build_parser
-from ti_recon.cli.runtime import build_local_context, build_local_runtime
+from ti_recon.cli.runtime import (
+    LOCAL_CLI_USER,
+    build_local_adapters,
+    build_local_application,
+    build_local_context,
+)
 from ti_recon.correlation.policy import PivotMode
+from ti_recon.credentials import (
+    CredentialManager,
+    InMemoryConnectionRepository,
+    InMemorySecretStore,
+)
 from ti_recon.enums import InvestigationDepth
 from ti_recon.investigation.engine import InvestigationError
+from ti_recon.planning.catalog import build_default_planning_registry
+from ti_recon.providers.adapter import ProviderAdapter
+from ti_recon.reporting.models import AnalystInvestigationReport
 from ti_recon.reporting.schema import report_json_schema, request_json_schema
 from ti_recon.reporting.text import render_text, safe_text
 
@@ -174,29 +188,75 @@ def _schema(args: argparse.Namespace, *, stdout: TextIO) -> int:
 
 
 def _providers(*, stdout: TextIO) -> int:
-    """What is registered locally, as a diagnostic.
+    """What this installation can use, as a diagnostic.
 
-    Contacts nothing. Reports whether a provider *requires* a credential, which
-    is a property of the descriptor — never whether one is present, how long it
-    is, or any part of its value.
+    The *same* catalogue the investigation runtime builds from, so a provider
+    listed here as configured is genuinely available to Task 13. Two lists —
+    one to display and one to execute — would eventually disagree, and the
+    disagreement would look like a provider that silently never ran.
+
+    Contacts nothing: it reads descriptors and asks the credential loader which
+    groups have a value, never what the value is. No secret, no prefix, no
+    length, no digest.
     """
-    from ti_recon.cli.runtime import build_local_adapters
-
+    adapters = build_local_adapters()
+    report = asyncio.run(_credential_report(adapters))
     rows = [
         {
             "provider_id": adapter.descriptor.provider_id,
             "source_family": adapter.descriptor.source_family,
+            "credential_group": adapter.descriptor.credential_group,
             "requires_credentials": adapter.descriptor.requires_credentials,
+            "configured": _configured(adapter, report),
+            "locality": _locality(adapter.descriptor.provider_id),
             "capabilities": sorted(item.value for item in adapter.descriptor.capabilities),
             "object_types": sorted(
                 item.value for item in adapter.descriptor.supported_object_types
             ),
             "dataset_version": adapter.descriptor.dataset_version,
         }
-        for adapter in sorted(build_local_adapters(), key=lambda item: item.descriptor.provider_id)
+        for adapter in sorted(adapters, key=lambda item: item.descriptor.provider_id)
     ]
     _write_json({"providers": rows}, stdout)
     return EXIT_OK
+
+
+async def _credential_report(adapters: list[ProviderAdapter]) -> CredentialLoadReport:
+    """Which credential groups this machine has configured, by name only.
+
+    Loaded into a throwaway store: the diagnostic must not leave credentials
+    behind in anything an investigation later runs on, and it needs the answer
+    rather than the secrets.
+    """
+    secrets, connections = InMemorySecretStore(), InMemoryConnectionRepository()
+    return await load_environment_credentials(
+        CredentialManager(secrets, connections),
+        user_id=LOCAL_CLI_USER,
+        adapters=adapters,
+    )
+
+
+def _configured(adapter: ProviderAdapter, report: CredentialLoadReport) -> bool:
+    """Whether this provider could authenticate if it were selected.
+
+    A credential-free provider is always configured — there is nothing to
+    configure — which is the honest answer rather than a false negative.
+    """
+    descriptor = adapter.descriptor
+    if not descriptor.requires_credentials:
+        return True
+    return report.configured(descriptor.credential_group)
+
+
+def _locality(provider_id: str) -> str:
+    """Local or remote, taken from Task 13's own planning profile.
+
+    Read rather than restated: locality is a disclosure property, and a second
+    opinion about it here could tell an analyst a provider discloses nothing
+    when the planner believes otherwise.
+    """
+    profile = build_default_planning_registry().get(provider_id)
+    return "unknown" if profile is None else profile.locality.value
 
 
 def _investigate(
@@ -218,13 +278,8 @@ def _investigate(
         print(f"error: {safe_text(str(error), limit=300)}", file=stderr)
         return EXIT_USAGE_ERROR
 
-    service = (
-        InvestigationApplication(orchestrator=build_local_runtime())
-        if application is None
-        else application
-    )
     try:
-        report = asyncio.run(service.investigate(request, build_local_context()))
+        report = asyncio.run(_investigate_with(application, request))
     except InvalidObservableError as error:
         print(f"error: {safe_text(str(error), limit=300)}", file=stderr)
         return EXIT_USAGE_ERROR
@@ -244,6 +299,19 @@ def _investigate(
     else:
         stdout.write(render_text(report))
     return EXIT_OK
+
+
+async def _investigate_with(
+    application: InvestigationApplication | None, request: AnalystInvestigationRequest
+) -> AnalystInvestigationReport:
+    """Run the request, composing the default application if none was given.
+
+    Composed inside the loop because credential loading is asynchronous, and
+    lazily because the diagnostic commands must never build an engine at all.
+    """
+    if application is None:
+        application, _ = await build_local_application()
+    return await application.investigate(request, build_local_context())
 
 
 def _request_from(args: argparse.Namespace) -> AnalystInvestigationRequest:

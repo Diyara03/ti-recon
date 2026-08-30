@@ -1,73 +1,47 @@
-"""Composing a runnable engine for a local invocation (Task 20).
+"""What a local invocation runs on (Task 20).
 
-Deployment configuration, kept out of the application service on purpose: the
-service takes an orchestrator and does not care where it came from, which is why
-a test can hand it a fully faked stack and get the identical report.
-
-What a local CLI can compose
-----------------------------
-
-Adapters that need neither a credential nor a network client. In the shipped
-catalogue that is the local dataset provider, which answers from a pinned
-snapshot inside the package — so ``ti-recon investigate`` does something honest
-on a machine with no keys configured at all, and discloses nothing to anybody
-while doing it.
-
-Remote providers are deliberately *not* constructed here. Each needs an HTTP
-client, a base URL and a resolved per-user credential, and choosing those is a
-deployment decision — the kind that belongs in whatever configures a service,
-not in an argument parser. A deployment that has them builds its own registry
-and executor and injects the orchestrator; nothing in the application layer
-changes.
-
-The consequence is stated rather than hidden: with no remote provider
-registered, coverage says so. Task 18 reports the capabilities nobody could
-serve, and the report shows an investigation that consulted what it had.
+A thin adapter over :mod:`ti_recon.application.composition`. It exists to name
+the identity a local run uses and nothing else — the provider catalogue, the
+credential loading and the execution stores all live in the application layer,
+so a future MCP server gets the same engine without going through here.
 """
 
 from __future__ import annotations
 
-from ti_recon.credentials import (
-    CredentialResolver,
-    InMemoryConnectionRepository,
-    InMemorySecretStore,
+from ti_recon.application.composition import (
+    CredentialLoadReport,
+    build_default_application,
 )
-from ti_recon.execution import (
-    ConcurrencyLimiter,
-    ExecutionContext,
-    InMemoryCooldownStore,
-    InMemoryProviderCache,
-    InMemoryQuotaStore,
-    ProviderExecutor,
-    ProviderPolicyRegistry,
-    SystemClock,
-)
-from ti_recon.investigation.composition import build_default_investigation_orchestrator
-from ti_recon.investigation.engine import InvestigationOrchestrator
+from ti_recon.application.service import InvestigationApplication
+from ti_recon.execution import ExecutionContext
 from ti_recon.providers.adapter import ProviderAdapter
-from ti_recon.providers.misp_warninglists import MispWarningListsAdapter
-from ti_recon.providers.registry import ProviderRegistry
+from ti_recon.providers.catalog import build_default_adapters
 
-__all__ = ["LOCAL_CLI_USER", "build_local_adapters", "build_local_context", "build_local_runtime"]
+__all__ = [
+    "LOCAL_CLI_USER",
+    "build_local_adapters",
+    "build_local_application",
+    "build_local_context",
+]
 
 #: The identity a local invocation runs under.
 #:
-#: Every execution store below is keyed by this, so it has to be *something*.
-#: A fixed local name rather than an operating-system user: it is a cache and
-#: quota partition, and putting a real account name into a key that is also a
-#: metrics dimension would make a person identifiable in operational data for no
-#: analytical gain. A deployment serving several analysts supplies its own.
+#: Every execution store is keyed by this, so it has to be *something*. A fixed
+#: local name rather than the operating-system user: it partitions a cache and a
+#: quota bucket, and it reaches metrics — putting a real account name there would
+#: make a person identifiable in operational data for no analytical gain. A
+#: deployment serving several analysts supplies its own.
 LOCAL_CLI_USER: str = "local-cli"
 
 
 def build_local_adapters() -> list[ProviderAdapter]:
-    """Every shipped adapter a local invocation can construct safely.
+    """Every provider the repository ships.
 
-    Credential-free and network-free. An adapter that would need a key or an
-    endpoint is absent rather than registered-and-broken: a provider that cannot
-    answer should be a coverage fact, not a failed call in every investigation.
+    The same catalogue the investigation runtime uses, which is the point: a
+    diagnostic listing a different set from the one that actually runs would be
+    worse than no diagnostic.
     """
-    return [MispWarningListsAdapter()]
+    return build_default_adapters()
 
 
 def build_local_context(*, user_id: str = LOCAL_CLI_USER) -> ExecutionContext:
@@ -75,26 +49,15 @@ def build_local_context(*, user_id: str = LOCAL_CLI_USER) -> ExecutionContext:
     return ExecutionContext(authenticated_user_id=user_id)
 
 
-def build_local_runtime(
-    adapters: list[ProviderAdapter] | None = None,
-) -> InvestigationOrchestrator:
-    """One orchestrator, wired to the shipped catalogues and in-memory stores.
+async def build_local_application(
+    *, user_id: str = LOCAL_CLI_USER
+) -> tuple[InvestigationApplication, CredentialLoadReport]:
+    """The default application for a local invocation.
 
-    In-memory throughout, because a CLI invocation is one process with no next
-    time: a cache that outlived it would be persistence, which this task does
-    not implement and which would need its own isolation story.
+    Credentials come from the environment variable names ``.env.example``
+    documents, into the ordinary per-user credential store. Whatever is absent
+    stays absent: the provider remains registered and reports ``NOT_CONFIGURED``
+    if it is selected, rather than vanishing from the catalogue and looking like
+    a capability nobody implements.
     """
-    registry = ProviderRegistry(build_local_adapters() if adapters is None else adapters)
-    clock = SystemClock()
-    secrets = InMemorySecretStore()
-    connections = InMemoryConnectionRepository()
-    executor = ProviderExecutor(
-        credential_resolver=CredentialResolver(secrets, connections),
-        cache=InMemoryProviderCache(clock=clock),
-        quota_store=InMemoryQuotaStore(clock=clock),
-        cooldown_store=InMemoryCooldownStore(clock=clock),
-        limiter=ConcurrencyLimiter(max_concurrency=4),
-        policies=ProviderPolicyRegistry(policies=[]),
-        clock=clock,
-    )
-    return build_default_investigation_orchestrator(registry=registry, executor=executor)
+    return await build_default_application(user_id=user_id)
