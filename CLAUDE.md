@@ -136,13 +136,25 @@ Implemented (Jira Tasks 1-19):
   MCP server will call. Presentation only: it selects, orders, labels and
   bounds what Tasks 13-19 decided, and decides nothing itself.
 
-- Task 21 (in progress) — local MCP server (`mcp_server/`): the Task 20
-  application over the Model Context Protocol, stdio only. Three tools
-  (`investigate_observable`, `investigate_file`, `provider_status`), the
-  analyst report as structured output derived from the Task 20 model, and the
-  two public schemas as resources. Capability only: no reasoning, no provider
-  selection, no credential input, no active operation. The Claude Skill is not
-  yet implemented.
+- Task 21 — local MCP server (`mcp_server/`) and the analyst Skill
+  (`.claude/skills/ti-recon-analyst/`): the Task 20 application over the Model
+  Context Protocol, stdio only. Three tools (`investigate_observable`,
+  `investigate_file`, `provider_status`), the analyst report as structured
+  output derived from the Task 20 model, and the two public schemas as
+  resources. Capability only: no reasoning, no provider selection, no credential
+  input, no active operation.
+
+- Task 22 (in progress) — remote authentication primitives (`mcp_server/auth.py`,
+  `mcp_server/principal.py`): the identity substrate an authenticated HTTP
+  deployment is built on. TI Recon is an OAuth **resource server**; a
+  deployment's own `TokenVerifier` proves a token and `StrictTokenVerifier`
+  enforces the invariants the SDK does not — non-empty subject, exact issuer,
+  and an audience naming this MCP resource. Identity below the boundary is one
+  pseudonymous `tenant-v1:` HMAC over the validated issuer and subject.
+  Request-scoped `ExecutionContext`, principal-scoped `provider_status`, and a
+  remote composition that never reads the process environment for provider
+  credentials. **There is no HTTP entry point yet**: no Streamable HTTP app, no
+  `AuthSettings` wiring, no health route, no remote console command.
 
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Task 13 chooses what
@@ -204,10 +216,9 @@ about it.
   answers for one purpose only; readiness for containment, alert closure or
   incident declaration depends on asset criticality, business impact, user
   context, internal telemetry and incident policy that TI Recon has no access to
-- MCP server, Claude Skill, REST API, web or desktop UI, streaming progress,
-  HTML/PDF/Markdown export, and any LLM-written analyst narrative. Task 20 adds
-  a CLI and a transport-neutral application service and stops there; Task 21
-  consumes that service rather than parsing its text
+- REST API, web or desktop UI, streaming progress, HTML/PDF/Markdown export, and
+  any LLM-written analyst narrative. Task 20 adds a CLI and a transport-neutral
+  application service; Task 21 consumes that service rather than parsing its text
 - Persistence, cross-process resume, job queues and durable idempotency. Task 19
   continues *within one invocation* and claims nothing beyond it
 - Any remediation or containment action: blocking, quarantine, isolation, alert
@@ -271,8 +282,23 @@ about it.
 - Redis or any distributed coordination: every execution store, and the artifact
   store, is in-memory and single-process
 - PostgreSQL, production secret vault, Kafka, Celery, Neo4j
-- MCP server, Claude connector, Claude Skill, web frontend
+- Claude connector, web frontend
 - Active actions: URL/file submission, rescan, sandboxing, sample download
+- Any remote HTTP transport: `streamable_http_app`, `AuthSettings`,
+  `TransportSecuritySettings`, uvicorn, a health or startup route, a remote
+  console script, a per-principal request limiter. Task 22's first phase builds
+  the identity substrate only, so the transport can be proven against a
+  boundary that already exists rather than beside one that does not
+- Any authorization server inside TI Recon: a user/password database, a login
+  page, password reset, MFA, client registration (DCR or CIMD), token issuance.
+  TI Recon verifies tokens an external IdP issued and never becomes a login
+  system. The code stays vendor-neutral: no IdP is named as a requirement
+- Persistent or encrypted credential storage, an out-of-band provisioning API,
+  rotation, revocation and audit events. Those are Task 23, and none of them is
+  ever an MCP tool — `set_api_key` would put a provider secret through a model
+  prompt, into tool arguments and into a conversation transcript
+- Tenant-key rotation or migration, and any second identity scheme beside
+  `tenant-v1:`
 
 ## Architectural invariants
 
@@ -1489,6 +1515,77 @@ about it.
      declare an incident. Those decisions need asset criticality, business
      impact and incident policy this engine has no access to.
 
+136. **The OAuth access token stops at the `mcp_server/` boundary.** It
+     authorizes an analyst to call TI Recon; a provider credential authenticates
+     TI Recon to a provider, and neither may become the other. `RemotePrincipal`
+     carries one field, so the token, the raw issuer, the raw subject, the
+     `client_id` and the claims all end where it was built. No module in
+     `application/`, `investigation/`, `planning/`, `correlation/`, `execution/`,
+     `credentials/`, `providers/`, `reasoning/`, `reporting/` or `cli/` imports
+     the MCP SDK, names an authentication symbol, or imports ASGI machinery that
+     could read an inbound header — a passthrough would have to add an import,
+     and an AST test is what notices.
+
+137. **The tenant is the validated issuer *and* subject, never the client id.**
+     `sub` is unique only per issuer, so two organizations' `alice` are two
+     tenants; the OAuth `client_id` identifies Claude Code rather than the person
+     using it, and deriving from it would collapse every analyst in an
+     organization into one. The derivation is HMAC-SHA-256 under a deployment
+     key over a domain-separated, length-framed encoding — keyed rather than a
+     plain digest, because a subject is routinely an email or an employee number
+     and an unkeyed digest of one is a dictionary attack away from recovery.
+     Nothing is case-folded, trimmed or URL-normalized: those semantics are the
+     IdP's. Call the result *pseudonymous*, never anonymous or irreversible.
+
+138. **Only a delegate-verified token may become a tenant, and the wrapper is
+     not a parser.** `StrictTokenVerifier` never reads the bearer string, so an
+     opaque token an introspection endpoint proved is as acceptable as a JWT.
+     Format-specific rules — signature, `active`, `nbf`, RFC 9068 `typ`,
+     revocation — belong to the delegate; the wrapper enforces a non-empty
+     subject, an exact issuer and an audience naming this resource, because the
+     installed SDK checks none of the three. Two audience representations that
+     disagree are refused rather than resolved conveniently. A permissive or
+     development-mode verifier must never be reachable from a production
+     composition; fakes live under `tests/`.
+
+139. **The tenant key is durable deployment configuration, and is never
+     rendered.** Not a provider key, not an access token, not the OAuth client
+     secret. It has no default, an empty one is refused, and it must stay stable
+     for an environment's life — Task 23 will key credential ownership on the
+     identifiers it produces, so rotating it would orphan every stored
+     credential. Never logged, serialized or included in an exception; not its
+     value, and not its length, prefix or digest either.
+
+140. **One shared application is safe only because identity is request-scoped.**
+     Both profiles share one `InvestigationApplication`, one `ProviderExecutor`
+     and one set of Task 6 stores; every tool invocation builds a fresh
+     `ExecutionContext` whose principal comes from a `PrincipalSource`. Isolation
+     lives in the *key*, which Task 6 already derives from
+     `authenticated_user_id` for cache, cooldown, quota, concurrency and
+     single-flight. An application per user would discard the cache for no gain;
+     a server-wide `current_user` would be a race. The request id is fresh per
+     call, never observable-derived, never caller-supplied, and appears in
+     neither the internal result nor the public report.
+
+141. **A remote runtime never reads the process environment for provider
+     credentials.** A server's environment is global to the server: loading it
+     would hand every authenticated analyst the same keys, spend one quota on
+     everybody's behalf, share one abuse.ch fair-use block between strangers and
+     use a provider account under terms nobody agreed to. `build_remote_runtime`
+     passes `load_credentials=False`; stdio keeps its one-analyst startup load.
+     An organization-wide shared credential is a deliberate deployment mode,
+     never an implicit default.
+
+142. **`provider_status` configuration is principal-scoped, and authentication
+     is not configuration.** `configured` means *this* caller has the credential
+     stored — read from the shared connection repository by user and group, one
+     authoritative path, never a startup snapshot answering "the server has a
+     key". Catalogue facts stay shared; `configured` stays a boolean, never a
+     value, prefix, length, digest, connection id or secret reference. A fully
+     authenticated analyst with no provider credentials gets a valid report with
+     `NOT_CONFIGURED` coverage — a missing provider key is never an
+     authorization failure.
+
 
 ## Security rules
 
@@ -1644,6 +1741,20 @@ about it.
 - **GTI data is provider-policy-sensitive.** Do not expose raw or normalized GTI
   content to Claude, MCP or any AI layer before the applicable Google Threat
   Intelligence data-use terms have been reviewed. See `docs/providers/gti.md`.
+- **An MCP access token is never a provider credential.** It authorizes an
+  analyst to call TI Recon and must never be forwarded to GTI, VirusTotal,
+  urlscan, GreyNoise, Censys, abuse.ch, Hybrid Analysis or anything else — they
+  are different credentials from different trust domains. The only path to a
+  provider secret is `CredentialResolver` -> `CredentialMaterial` -> the
+  transport's `_apply_auth`, and nothing below `mcp_server/` can reach an access
+  token at all. A runtime regression drives the real seam with a planted token
+  and asserts it reaches no provider request, report, result, log or exception.
+- **A raw subject never travels below the MCP layer, and neither does a raw
+  issuer.** What crosses is a keyed `tenant-v1:` HMAC, so a subject that is an
+  email address or an employee number never reaches a cache key, a cooldown key,
+  a quota key, a metric or a credential record. The tenant key itself is a
+  deployment secret held in `SecretStr`, absent from `repr`, never serialized,
+  and never logged — not as a value, a length, a prefix or a digest.
 
 ## Commands
 
@@ -1771,11 +1882,15 @@ src/ti_recon/
                      report, bounded sections), builder (projection, never
                      analysis), text (deterministic rendering, terminal-injection
                      safety), schema (generated, dialect read from Pydantic)
-  mcp_server/        Task 21: the local MCP server. models (the configuration
-                     diagnostic, the only contract this layer owns), runtime
-                     (one application per process, one principal), tools (the
-                     three implementations and the error policy), server (the
-                     factory, annotations and resources), main (stdio process)
+  mcp_server/        Tasks 21-22: the MCP server and the remote identity
+                     boundary. models (the configuration diagnostic, the only
+                     contract this layer owns), runtime (one shared application,
+                     request-scoped identity, the stdio and remote composition
+                     roots), auth (the strict resource-server token check and
+                     the principal resolver), principal (RemotePrincipal and the
+                     keyed tenant derivation), tools (the three implementations
+                     and the error policy), server (the factory, annotations and
+                     resources), main (stdio process)
   cli/               Task 20: the `ti-recon` command. parser (argparse; no
                      credential or provider flags), main (streams, exit codes),
                      runtime (the one composition root a local invocation uses)
@@ -1832,7 +1947,8 @@ tools/               Task 11: operator scripts. update_misp_warninglists.py
                      (build a snapshot from a local checkout; the only code that
                      runs git), measure_misp_warninglists.py (footprint report)
 docs/                scope, architecture, data model, credentials, provider
-                     framework, provider execution, artifacts, sandbox,
+                     framework, provider execution, artifacts, sandbox, mcp,
+                     remote-mcp,
                      providers/gti, providers/urlscan, providers/greynoise,
                      providers/censys, providers/threatfox, providers/urlhaus,
                      providers/malwarebazaar, providers/misp-warninglists,

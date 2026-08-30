@@ -166,7 +166,11 @@ stderr; `TI_RECON_LOG_LEVEL` sets the level, defaulting to `WARNING`.
 
 ## Not in this task
 
-No HTTP transport, no OAuth, no multi-user deployment, no persistence, and no
-active provider operation — nothing submits, detonates, rescans or downloads a
-sample. Provider selection stays with Task 13 and cannot be influenced from a
-tool call.
+No HTTP transport, no multi-user deployment, no persistence, and no active
+provider operation — nothing submits, detonates, rescans or downloads a sample.
+Provider selection stays with Task 13 and cannot be influenced from a tool call.
+
+Task 22 has since added the remote *authentication primitives* this server's
+identity model is built on — see [remote-mcp.md](remote-mcp.md). There is still
+no HTTP entry point: stdio remains the only transport, and this page describes
+it in full.
