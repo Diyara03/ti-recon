@@ -258,6 +258,40 @@ def test_an_identical_attempt_seen_twice_is_one_attempt() -> None:
     assert [item.sequence for item in merged.attempts] == [0]
 
 
+def test_merging_no_rounds_at_all_is_a_structural_error() -> None:
+    """An investigation has at least one collection round.
+
+    Reachable only from a caller that composed nothing, so it is a fault in the
+    workflow rather than an empty result to hand onward.
+    """
+    with pytest.raises(MergeConflictError, match="at least one"):
+        merge_enrichment_results([])
+
+
+def test_rounds_describing_different_observables_are_refused() -> None:
+    """The target describes the investigation, not the round.
+
+    Two rounds about different objects is not something to reconcile: whichever
+    one won, the merged view would attribute one observable's coverage to
+    another, and every stage above reads that view.
+    """
+    other = _round().model_copy(update={"target": observable_root(CONTACTED)})
+    with pytest.raises(MergeConflictError, match="different observables"):
+        merge_enrichment_results([_round(_attempt(0, "alpha")), other])
+
+
+def test_rounds_disagreeing_about_depth_are_refused() -> None:
+    """Depth is a ceiling the caller set, identical every round.
+
+    A disagreement means a continuation escalated or reduced it, which is the one
+    thing the workflow promises never to do — so it is raised rather than merged
+    away under whichever value happened to be last.
+    """
+    deeper = _round().model_copy(update={"depth": InvestigationDepth.DEEP})
+    with pytest.raises(MergeConflictError, match="depth"):
+        merge_enrichment_results([_round(_attempt(0, "alpha")), deeper])
+
+
 def test_two_different_attempts_sharing_a_sequence_are_refused() -> None:
     """Never silently overwritten.
 
