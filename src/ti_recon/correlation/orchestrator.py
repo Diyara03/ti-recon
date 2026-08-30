@@ -146,6 +146,7 @@ class CorrelatedInvestigationOrchestrator:
                 policy=policy,
                 budget=budget,
                 candidates=candidates,
+                session=session,
             )
             # Ranked again over the finished graph, so what a pivot discovered is
             # visible as a candidate too — carrying HOP_LIMIT, because seeing a
@@ -186,21 +187,38 @@ class CorrelatedInvestigationOrchestrator:
         investigation_id: str,
         *,
         session: CorrelationSession | None = None,
+        continue_planning: bool = True,
     ) -> tuple[AdaptiveEnrichmentResult, tuple[ProviderExecutionOutcome, ...]]:
-        """One Task 13 run, with its provider results collected on the way past."""
+        """One Task 13 run, with its provider results collected on the way past.
+
+        ``continue_planning`` separates the two things a session holds. The root
+        of a later round continues the *same* planning state: its budget, its
+        record of calls made and its coverage. A pivot does not — it is a
+        different observable with its own goals, and it spends the pivot
+        allowance Task 14 handed down as a constraint, so carrying the root's
+        planning memory into it would charge one budget twice and let the root's
+        focus decide what a pivot may ask.
+
+        The *outcomes* are recorded either way. Everything a provider returned
+        about anything in this investigation belongs to the investigation, and
+        the layers above read them from here: a pivot result that reached the
+        graph but not the session would be correlated and then never qualified,
+        explained, assessed or counted as coverage.
+        """
         collector = _OutcomeCollector()
         orchestrator = self._enrichment.with_outcome_sink(collector)
         states: list[PlanningState] = []
+        carried = session if session is not None and continue_planning else None
         result = await orchestrator.run(
             request,
             context,
             investigation_id=investigation_id,
-            carry_over=None if session is None else session.planning,
-            focus=frozenset() if session is None else session.focus,
+            carry_over=None if carried is None else carried.planning,
+            focus=frozenset() if carried is None else carried.focus,
             state_sink=states,
         )
-        if session is not None and states:
-            session.planning = states[0]
+        if carried is not None and states:
+            carried.planning = states[0]
         outcomes = tuple(collector.outcomes)
         if session is not None:
             session.record_outcomes(outcomes)
@@ -246,6 +264,7 @@ class CorrelatedInvestigationOrchestrator:
         policy: PivotPolicy,
         budget: PivotBudget,
         candidates: tuple[PivotCandidate, ...],
+        session: CorrelationSession | None = None,
     ) -> tuple[PivotBudget, list[PivotRun]]:
         """Enrich selected pivots in rank order, inside one shared budget."""
         runs: list[PivotRun] = []
@@ -276,6 +295,7 @@ class CorrelatedInvestigationOrchestrator:
                 budget=budget,
                 candidate=candidate,
                 policy=policy,
+                session=session,
             )
             # Marked enriched before ingestion, so a result naming the target
             # again — or naming the root, which a cycle does — cannot queue it a
@@ -304,6 +324,7 @@ class CorrelatedInvestigationOrchestrator:
         budget: PivotBudget,
         candidate: PivotCandidate,
         policy: PivotPolicy,
+        session: CorrelationSession | None = None,
     ) -> tuple[PivotRun, tuple[ProviderExecutionOutcome, ...]]:
         """Hand one pivot target to Task 13, inside what is left of the budget."""
         constraints = PlanningConstraints(
@@ -325,7 +346,16 @@ class CorrelatedInvestigationOrchestrator:
             depth=depth,
             constraints=constraints,
         )
-        result, outcomes = await self._enrich(pivot_request, context, investigation_id)
+        result, outcomes = await self._enrich(
+            pivot_request,
+            context,
+            investigation_id,
+            # The session takes the outcomes and not the planning state: a pivot
+            # is a different observable spending the pivot allowance, and the
+            # root's budget, attempts and focus are none of its business.
+            session=session,
+            continue_planning=False,
+        )
         # Task 13's own accounting, not a second count of it: a provider that was
         # called still costs nothing here if it was local, and a cache hit,
         # cooldown or unconfigured credential costs nothing either. Counting
