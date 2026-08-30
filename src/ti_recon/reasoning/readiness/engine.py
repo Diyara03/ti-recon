@@ -51,6 +51,7 @@ from ti_recon.reasoning.fusion.results import FusionResult
 from ti_recon.reasoning.readiness.coverage import (
     capability_checks,
     capability_coverage_items,
+    completion_for,
     directional_provider_ids,
 )
 from ti_recon.reasoning.readiness.gaps import (
@@ -364,6 +365,19 @@ class AssessmentReadinessEngine:
                 elif check.completion is CheckCompletion.PARTIAL:
                     limited = True
 
+        # An adverse search can also arrive as the *secondary* half of a bundled
+        # call, where Task 13 records one attempt under the call's primary
+        # capability. Reading attempts alone would miss it and report a benign
+        # assessment as unchallenged when an independent search had in fact run
+        # -- sending a later orchestration to buy a lookup that already happened.
+        for completion, family in self._bundled_adverse_searches(planning):
+            if family in dependent_families:
+                continue
+            if completion is CheckCompletion.COMPLETE:
+                challenged = True
+            elif completion is CheckCompletion.PARTIAL:
+                limited = True
+
         requirement = CoverageRequirement(
             requirement_id=requirement_id_for(
                 policy_version=READINESS_POLICY_VERSION,
@@ -409,6 +423,46 @@ class AssessmentReadinessEngine:
                 material=material,
             ),
         )
+
+    def _bundled_adverse_searches(
+        self, planning: AdaptiveEnrichmentResult
+    ) -> tuple[tuple[CheckCompletion, str], ...]:
+        """Adverse searches answered as the secondary half of a bundled call.
+
+        Task 13 records one :class:`ProviderAttempt` per call, carrying the
+        call's *primary* capability; everything else the response answered is
+        named on the :class:`PlannedProviderCall` itself. So a bundle whose
+        primary was, say, an infrastructure lookup and whose secondary was a
+        threat search leaves no attempt keyed to the search — and the challenge
+        rule, which reads attempts, would not see it.
+
+        The planner's own record supplies both halves of what the challenge
+        needs: ``answered_capabilities`` says the search was answered, and
+        ``source_family`` says by whom, which is what independence is judged on.
+        The call carries no outcome, so completion comes from the attempt for its
+        primary capability — the same execution, so the same result.
+
+        Nothing here reads evidence, a claim type or a provider name. A coverage
+        item alone would not do: it records *candidacy* rather than who answered,
+        so crediting a challenge from it could credit the benign basis's own
+        family with challenging itself.
+        """
+        by_primary = {(item.provider_id, item.capability): item for item in planning.attempts}
+        found: list[tuple[CheckCompletion, str]] = []
+        for decision in planning.decisions:
+            call = decision.call
+            if call is None:
+                continue
+            secondary = (
+                frozenset(call.answered_capabilities) & DIRECTIONAL_SEARCH_CAPABILITIES
+            ) - {call.capability}
+            if not secondary:
+                continue
+            attempt = by_primary.get((call.provider_id, call.capability))
+            if attempt is None:
+                continue
+            found.append((completion_for(attempt), call.source_family))
+        return tuple(found)
 
     def _benign_origin_families(self, fusion: FusionResult) -> frozenset[str]:
         """Every source family dependent on the benign claim's information origin.
