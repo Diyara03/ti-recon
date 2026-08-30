@@ -57,6 +57,11 @@ class CorrelationSession:
     planning: PlanningState | None = None
     #: Capabilities the next round may pursue. Empty means no restriction.
     focus: frozenset[ProviderCapability] = frozenset()
+    #: capability -> source families that may not answer *that* capability.
+    #:
+    #: Per capability rather than per round, so a family barred from supplying
+    #: an independent challenge still answers every other question normally.
+    excluded_families: dict[ProviderCapability, frozenset[str]] = field(default_factory=dict)
 
     #: Every provider outcome this investigation produced, root and pivot alike,
     #: in the order they completed.

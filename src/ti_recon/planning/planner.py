@@ -99,6 +99,7 @@ class AdaptiveEnrichmentPlanner:
         *,
         carry_over: PlanningState | None = None,
         focus: frozenset[ProviderCapability] = frozenset(),
+        excluded_families: dict[ProviderCapability, frozenset[str]] | None = None,
     ) -> PlanningState:
         """Build the starting state, with goals the registry can actually serve.
 
@@ -129,6 +130,7 @@ class AdaptiveEnrichmentPlanner:
                 goals=goals,
                 requested=request.requested_capabilities,
                 focus=focus,
+                excluded_families=excluded_families,
             )
         return PlanningState(
             budget=self._policy.budget_for(
@@ -451,6 +453,13 @@ class AdaptiveEnrichmentPlanner:
             return skip(SkipReason.UNSUPPORTED_OBSERVABLE, object_type.value)
         if not depth_at_least(request.depth, profile.minimum_depth):
             return skip(SkipReason.DEPTH_TOO_SHALLOW, f"needs {profile.minimum_depth.value}")
+        if state.family_excluded(capability, profile.source_family):
+            # Checked before cost and budget, because the point is that this
+            # source cannot answer *this* question at all: letting it win the
+            # ranking and spend the allowance would leave the requirement unmet
+            # and the candidate that could have met it unaffordable. Per
+            # capability, so the same family remains eligible everywhere else.
+            return skip(SkipReason.SOURCE_FAMILY_EXCLUDED, profile.source_family)
         if (provider_id, capability) in state.attempted:
             return skip(SkipReason.ALREADY_ATTEMPTED)
         if provider_id in state.blocked:

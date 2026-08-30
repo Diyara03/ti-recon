@@ -132,9 +132,32 @@ class PlanningState:
     #: so default planning behaviour is unchanged.
     focus_capabilities: frozenset[ProviderCapability] = frozenset()
 
+    #: capability -> source families that may not answer *that* capability.
+    #:
+    #: The second seam a later planning round needs (Task 19). Readiness can ask
+    #: for a search independent of the origin behind an assessment, and a family
+    #: already known to share that origin cannot supply one however well it
+    #: ranks. Without this the planner would spend the remaining allowance on a
+    #: source that could not satisfy the requirement it was released for, and the
+    #: genuinely independent candidate would be unreachable behind an empty
+    #: budget.
+    #:
+    #: Keyed per capability on purpose. One set for the whole round would block a
+    #: family from every other question too, where independence was never what
+    #: was being asked and the family's answer is worth exactly what it always
+    #: was.
+    #:
+    #: Conservative, never a proof: a family nobody has linked to the origin is
+    #: *potentially* independent, and only the returned provenance settles it.
+    excluded_source_families: dict[ProviderCapability, frozenset[str]] = field(default_factory=dict)
+
     def in_focus(self, capability: ProviderCapability) -> bool:
         """Whether this round may pursue ``capability``."""
         return not self.focus_capabilities or capability in self.focus_capabilities
+
+    def family_excluded(self, capability: ProviderCapability, source_family: str) -> bool:
+        """Whether ``source_family`` is barred from answering ``capability`` here."""
+        return source_family in self.excluded_source_families.get(capability, frozenset())
 
     def continuation(
         self,
@@ -142,6 +165,7 @@ class PlanningState:
         goals: tuple[CapabilityGoal, ...] | None = None,
         requested: frozenset[ProviderCapability] | None = None,
         focus: frozenset[ProviderCapability] = frozenset(),
+        excluded_families: dict[ProviderCapability, frozenset[str]] | None = None,
     ) -> PlanningState:
         """A state for a later round of the same investigation.
 
@@ -177,6 +201,11 @@ class PlanningState:
             false_positive_context_families=set(self.false_positive_context_families),
             sequence=self.sequence,
             focus_capabilities=focus,
+            # Fresh each round, like the focus: an exclusion belongs to the
+            # requirement that asked for it, and carrying it forward would keep
+            # barring a family long after the question that needed independence
+            # had been answered.
+            excluded_source_families=dict(excluded_families or {}),
         )
 
     # ------------------------------------------------------------------ #

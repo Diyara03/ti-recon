@@ -174,6 +174,14 @@ class SkipReason(StrEnum):
     ALREADY_ATTEMPTED = "already_attempted"
     BLOCKED = "blocked"
     GOAL_NOT_ACTIVE = "goal_not_active"
+    #: This source family cannot answer *this* question independently enough.
+    #:
+    #: Set only where a caller asked for a capability from outside a named set of
+    #: families -- readiness wanting an adverse search independent of whatever
+    #: called the object benign. It is per capability, never per run: the same
+    #: family stays eligible for every other question, where independence was
+    #: never what was being asked.
+    SOURCE_FAMILY_EXCLUDED = "source_family_excluded"
 
 
 class StopReason(StrEnum):

@@ -138,6 +138,7 @@ class AdaptiveEnrichmentOrchestrator:
         investigation_id: str,
         carry_over: PlanningState | None = None,
         focus: frozenset[ProviderCapability] = frozenset(),
+        excluded_families: dict[ProviderCapability, frozenset[str]] | None = None,
         state_sink: list[PlanningState] | None = None,
     ) -> AdaptiveEnrichmentResult:
         """Enrich one observable and return what was decided, done and learned.
@@ -145,8 +146,10 @@ class AdaptiveEnrichmentOrchestrator:
         ``carry_over`` continues an earlier round of the same investigation:
         budget already spent, calls already made and coverage already reached all
         come with it, so an allowance is investigation-wide rather than per
-        round. ``focus`` narrows what the round may newly pursue. Both are
-        absent for an ordinary single-round run, which behaves exactly as before.
+        round. ``focus`` narrows what the round may newly pursue, and
+        ``excluded_families`` narrows *who* may answer one capability. All three
+        are absent for an ordinary single-round run, which behaves exactly as
+        before.
 
         Enriches **the requested observable only**. Providers return related
         objects — domains a sample contacted, files it dropped, hosts serving a
@@ -155,7 +158,9 @@ class AdaptiveEnrichmentOrchestrator:
         a task that does it properly; doing it here would turn one file into
         hundreds of queries.
         """
-        state = self._planner.initial_state(request, carry_over=carry_over, focus=focus)
+        state = self._planner.initial_state(
+            request, carry_over=carry_over, focus=focus, excluded_families=excluded_families
+        )
         if state_sink is not None:
             # Handed back so a later round can continue from what this one spent
             # and attempted. The result model is frozen and carries no planner
