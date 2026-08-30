@@ -1380,6 +1380,26 @@ about it.
      followed deliberately; a symlink to a pipe is refused. Hashing is
      streamed, and the only thing that leaves the machine is a digest.
 
+125e. **Remote pivot enrichment needs its own yes, in public too.** Task 14
+     gates it on `pivot_mode == ENRICH` *and* `allow_remote_pivot_lookup`, so
+     the public request exposes both — a request offering only the mode
+     promised a disclosure it could not perform, and enriched pivots through
+     local providers while a caller believed otherwise. The permission is
+     refused outside `ENRICH` rather than ignored, defaults off for every
+     existing caller, and changes only *who may be asked*: budgets, the one-hop
+     limit, the privacy refusals and Task 13's selection are untouched. The
+     report records it beside the mode, because the two together are what
+     decided whether anything about a related observable left the machine.
+
+125f. **A human label must not say more than the engine did.** The text
+     renderer prints `Confidence: Medium` and not `Medium (50)` — an integer
+     beside a verdict reads as "50% likely malicious", which is a different
+     claim from confidence that the *assessment* is correct, and no calibration
+     exists behind either. It prints `TI coverage:` and not `Readiness:`,
+     because READY means the collection was adequate for triage and never ready
+     to close, block or declare. Both are presentation: `confidence_stix` and
+     the readiness field names are unchanged in the JSON contract.
+
 126. **Task 20 recommends no action.** The report states an assessment; it never
      says to block, quarantine, isolate, allowlist, suppress, close an alert or
      declare an incident. Those decisions need asset criticality, business

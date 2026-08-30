@@ -62,6 +62,18 @@ second opinion formed here would eventually disagree with the first.
 
 ## Distinctions the report must preserve
 
+**Confidence is not a probability.** `confidence_stix` carries the canonical STIX
+integer (15/50/85) for consumers that need one, and it expresses *confidence
+that the assessment is correct* — never the probability that the observable is
+malicious. There is no calibration behind any such number. The human renderer
+prints the band alone for exactly this reason; the integer stays in the JSON,
+where a consumer asking for it knows what it means.
+
+**Readiness is coverage, not permission to act.** The human renderer labels it
+"TI coverage" because `READY` means the external-intelligence collection was
+adequate for triage — not ready to close, ready to block, or incident-ready. The
+model field name is unchanged.
+
 **Verdict, confidence and readiness are three different answers.** The verdict is
 about the observable. The confidence is about whether *the assessment* is
 correct — never how bad the thing is. The readiness is about whether the
