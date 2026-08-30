@@ -45,6 +45,7 @@ from ti_recon.planning.models import AdaptiveEnrichmentResult
 from ti_recon.planning.policy import EnrichmentPolicy
 from ti_recon.reasoning.false_positive.models import FindingLimitation
 from ti_recon.reasoning.false_positive.results import FalsePositiveReasoningResult
+from ti_recon.reasoning.fusion.independence import independence_groups
 from ti_recon.reasoning.fusion.models import FusionIssueType
 from ti_recon.reasoning.fusion.results import FusionResult
 from ti_recon.reasoning.readiness.coverage import (
@@ -351,16 +352,12 @@ class AssessmentReadinessEngine:
         if not requires_independent_challenge(assessment.verdict, assessment.verdict_rule_id):
             return ()
 
-        benign_families = frozenset(
-            claim.source_family
-            for claim in fusion.normalized_claims
-            if not claim.is_malicious_direction
-        )
+        dependent_families = self._benign_origin_families(fusion)
         challenged = False
         limited = False
         for capability in DIRECTIONAL_SEARCH_CAPABILITIES:
             for check in inputs.checks_by_capability.get(capability, ()):
-                if check.source_family in benign_families:
+                if check.source_family in dependent_families:
                     continue
                 if check.completion is CheckCompletion.COMPLETE:
                     challenged = True
@@ -411,6 +408,47 @@ class AssessmentReadinessEngine:
                 gap_type=gap_type,
                 material=material,
             ),
+        )
+
+    def _benign_origin_families(self, fusion: FusionResult) -> frozenset[str]:
+        """Every source family dependent on the benign claim's information origin.
+
+        **Task 17's connected components, not a family comparison.** Reading the
+        benign claims' own ``source_family`` and calling anything else
+        independent is precisely the approximation Task 17 had to abandon: a
+        relayed finding carries a different transport family while naming the
+        same origin, so a family-only test reads one source reporting twice as
+        two, and a benign assessment ends up "challenged" by itself.
+
+        So the benign claims' component is resolved through
+        :func:`independence_groups`, which unions over source family, origin
+        provider and lineage group, and every family inside that component is
+        treated as dependent.
+
+        **The honest limit.** A check that returned ``NO_DATA`` has no claim and
+        therefore no origin or lineage to group on — the only provenance an
+        attempt records is its provider id and source family. So for those,
+        family separation is the strongest defensible test available, and it is
+        weaker than Task 17's claim-level precision. Two sources that silently
+        share an upstream feed would be indistinguishable here. That is a
+        limitation of what the execution record contains, not a policy choice,
+        and it is not papered over by inventing an origin the data never had.
+        """
+        benign_claims = [
+            claim for claim in fusion.normalized_claims if not claim.is_malicious_direction
+        ]
+        if not benign_claims:
+            return frozenset()
+        benign_ids = {claim.claim_id for claim in benign_claims}
+        return frozenset(
+            family
+            for group in independence_groups(fusion.normalized_claims)
+            if benign_ids & set(group.claim_ids)
+            for family in {
+                claim.source_family
+                for claim in fusion.normalized_claims
+                if claim.claim_id in set(group.claim_ids)
+            }
         )
 
     # ------------------------------------------------------------------ #
