@@ -236,6 +236,36 @@ def capability_coverage_items(
     return {item.capability: item for item in items}
 
 
+#: What Task 13's own per-capability coverage statement means for completion.
+#:
+#: This is the *authoritative* record for whether a capability was answered,
+#: because one provider execution can answer several. Task 13 bundles compatible
+#: goals into a single request and credits every capability the response
+#: ``answered_capabilities`` names — but it records one ``ProviderAttempt``
+#: carrying only the call's *primary* capability. So the attempts describe what
+#: was executed, and the coverage items describe what was covered, and for a
+#: bundled call those are deliberately not the same set.
+_COVERAGE_COMPLETION: dict[CoverageStatus, CheckCompletion] = {
+    CoverageStatus.COVERED: CheckCompletion.COMPLETE,
+    CoverageStatus.PARTIAL: CheckCompletion.PARTIAL,
+    CoverageStatus.NOT_COVERED: CheckCompletion.NOT_ATTEMPTED,
+    CoverageStatus.NOT_APPLICABLE: CheckCompletion.OUT_OF_SCOPE,
+}
+
+
+def coverage_completion(item: CoverageItem | None) -> CheckCompletion:
+    """How far Task 13 says this capability got, independent of who ran.
+
+    Reading it is what stops readiness demanding a second call for a capability
+    the planner deliberately answered with one request. ``NOT_COVERED`` maps to
+    ``NOT_ATTEMPTED`` so it never *raises* a completion — the attempts remain
+    the place where a blocked or partial execution is recognised.
+    """
+    if item is None:
+        return CheckCompletion.NOT_ATTEMPTED
+    return _COVERAGE_COMPLETION[item.status]
+
+
 def has_no_eligible_source(item: CoverageItem | None) -> bool:
     """Whether nothing registered could have served this capability at all.
 

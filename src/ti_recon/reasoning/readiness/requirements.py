@@ -50,6 +50,7 @@ from ti_recon.planning.models import SkippedCandidate, SkipReason
 from ti_recon.reasoning.models import ContextSignal, ContextSignalType
 from ti_recon.reasoning.readiness.coverage import (
     best_yield,
+    coverage_completion,
     has_no_eligible_source,
     independent_families,
     worst_completion,
@@ -67,6 +68,16 @@ from ti_recon.reasoning.readiness.models import (
     requirement_id_for,
 )
 from ti_recon.reasoning.readiness.policy import BASIS_RATIONALE, is_material
+
+#: Worst to best, so combining the two records is a maximum rather than a nest
+#: of conditionals. Mirrors the ordering in :mod:`.coverage`.
+_COMPLETION_RANK: dict[CheckCompletion, int] = {
+    CheckCompletion.NOT_ATTEMPTED: 0,
+    CheckCompletion.OUT_OF_SCOPE: 1,
+    CheckCompletion.BLOCKED: 2,
+    CheckCompletion.PARTIAL: 3,
+    CheckCompletion.COMPLETE: 4,
+}
 
 __all__ = [
     "EvaluationInputs",
@@ -287,7 +298,21 @@ def evaluate_requirement(
         )
 
     checks = inputs.checks_by_capability.get(requirement.capability, ())
-    completion = worst_completion(checks)
+    item = inputs.coverage_by_capability.get(requirement.capability)
+
+    # Two records of the same run, describing different things. The attempts say
+    # what was executed and why anything failed; Task 13's coverage item says
+    # which capabilities were actually *answered*, which is more than was
+    # executed whenever a bundled request answered several goals at once.
+    #
+    # Taking the better of the two is what keeps readiness from demanding a
+    # second call for a capability the planner deliberately covered with one --
+    # while leaving the attempts free to report a partial or blocked execution
+    # that the coverage summary alone would not show.
+    completion = max(
+        (worst_completion(checks), coverage_completion(item)),
+        key=lambda value: _COMPLETION_RANK[value],
+    )
     yielded = best_yield(checks)
     limitations = _limitations(requirement, checks, inputs)
 
