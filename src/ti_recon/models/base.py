@@ -6,7 +6,8 @@ from datetime import UTC, datetime
 from typing import Annotated
 from uuid import uuid4
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_serializer
+from pydantic_core.core_schema import SerializerFunctionWrapHandler
 
 __all__ = [
     "FrozenTiReconModel",
@@ -66,6 +67,45 @@ class TiReconModel(BaseModel):
         use_enum_values=False,
         hide_input_in_errors=True,
     )
+
+    @field_serializer("*", mode="wrap")
+    def _serialize_sets_in_order(
+        self, value: object, handler: SerializerFunctionWrapHandler
+    ) -> object:
+        """Give every set field one serialized order.
+
+        A ``frozenset`` has no order, and JSON has nothing else to offer than a
+        list — so pydantic emits whatever the hash table happens to iterate. That
+        order depends on the interpreter's hash seed *and*, where two members
+        collide, on the order they were inserted. The consequences are not
+        cosmetic:
+
+        * a stored result does not round-trip. Reading one back and re-serializing
+          it produces different bytes, because the rebuilt set was filled from a
+          list in a different order than the original was built by set union;
+        * two runs of the same investigation, in two processes, can serialize the
+          same plan differently, which makes a byte comparison between them
+          meaningless — and this repository compares serialized results to prove
+          that qualification, fusion and readiness are re-derivable.
+
+        Sorting the *serialized* elements fixes both, and only in JSON mode: in
+        Python mode the handler returns the set itself and it is left alone, so
+        nothing that reasons over sets in memory changes. Elements that cannot be
+        ordered are left in whatever order they came, because an arbitrary but
+        working dump beats an exception.
+        """
+        dumped = handler(value)
+        if not isinstance(value, frozenset | set) or not isinstance(dumped, list):
+            return dumped
+        try:
+            return sorted(dumped)
+        except TypeError:
+            # Dicts and other unorderable members: a stable textual key still
+            # beats hash order, and still round-trips.
+            try:
+                return sorted(dumped, key=repr)
+            except TypeError:  # pragma: no cover - defensive
+                return dumped
 
 
 class FrozenTiReconModel(TiReconModel):
