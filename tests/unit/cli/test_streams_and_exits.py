@@ -13,6 +13,7 @@ import asyncio
 import io
 import json
 import logging
+import sys
 
 import pytest
 
@@ -247,3 +248,27 @@ def test_the_providers_command_names_no_credential() -> None:
             "object_types",
             "dataset_version",
         }
+
+
+def test_a_closed_pipe_is_not_a_traceback() -> None:
+    """``ti-recon schema report | head`` is an ordinary thing to type.
+
+    Without handling, Python raises again while flushing at interpreter
+    shutdown and the analyst gets a traceback for having piped into something
+    that stopped reading.
+    """
+
+    class _ClosedPipe(io.StringIO):
+        def write(self, _: str) -> int:
+            raise BrokenPipeError
+
+    from ti_recon.cli.main import main
+
+    original = (sys.stdout, sys.stderr)
+    sys.stdout, sys.stderr = _ClosedPipe(), io.StringIO()
+    try:
+        code = main(["schema", "report"])
+    finally:
+        sys.stdout, sys.stderr = original
+
+    assert code == EXIT_OK

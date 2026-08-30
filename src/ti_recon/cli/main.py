@@ -28,6 +28,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -79,8 +80,25 @@ _LOGGER = logging.getLogger("ti_recon.cli")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Entry point for the console script."""
-    return run(argv, stdout=sys.stdout, stderr=sys.stderr)
+    """Entry point for the console script.
+
+    Logging is configured *here* and not in :func:`run`, because this function
+    owns a process and ``run`` does not. A library that reconfigured the
+    package logger whenever somebody called it would silently overwrite the
+    handlers of any application embedding it — and would leak that state
+    between callers in the same interpreter.
+    """
+    _configure_logging(sys.stderr)
+    try:
+        return run(argv, stdout=sys.stdout, stderr=sys.stderr)
+    except BrokenPipeError:
+        # The reader went away first — ``ti-recon schema report | head`` is an
+        # ordinary thing to type. Without this, Python raises again while
+        # flushing at shutdown and the analyst gets a traceback for having
+        # piped into something that stopped reading. stdout is redirected to
+        # devnull so the interpreter's own final flush has somewhere to go.
+        _discard_stdout()
+        return EXIT_OK
 
 
 def run(
@@ -95,8 +113,11 @@ def run(
     Injected so a test can prove what landed on which stream — the JSON contract
     is a claim about stdout specifically, and a test that captured both together
     could not tell the difference.
+
+    Deliberately does not touch logging configuration: that is the process
+    entry point's business, and doing it here would mutate global state on
+    behalf of whoever called a library function.
     """
-    _configure_logging(stderr)
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command is None:
@@ -260,6 +281,8 @@ def _write_json(document: object, stdout: TextIO) -> None:
     stdout.write("\n")
 
 
-def _entrypoint() -> None:  # pragma: no cover - exercised as a subprocess
-    with contextlib.suppress(BrokenPipeError):
-        sys.exit(main())
+def _discard_stdout() -> None:
+    """Point stdout at the void so a closed pipe cannot raise twice."""
+    with contextlib.suppress(OSError, ValueError):
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
