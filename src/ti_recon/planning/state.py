@@ -119,6 +119,66 @@ class PlanningState:
     attempts: list[ProviderAttempt] = field(default_factory=list)
     sequence: int = 0
 
+    #: Capabilities this round may spend budget pursuing, or empty for all.
+    #:
+    #: The seam a later planning round needs (Task 19). A continuation asks for
+    #: specific missing information, and without this the planner would happily
+    #: spend the remaining allowance on whatever else was still uncovered —
+    #: which is not what was asked for and not what the budget is left for.
+    #:
+    #: Goals themselves are *not* filtered: the full set stays so coverage still
+    #: reports every goal's accumulated status. Only what may be newly pursued
+    #: narrows. Empty means no restriction, which is what every first round uses,
+    #: so default planning behaviour is unchanged.
+    focus_capabilities: frozenset[ProviderCapability] = frozenset()
+
+    def in_focus(self, capability: ProviderCapability) -> bool:
+        """Whether this round may pursue ``capability``."""
+        return not self.focus_capabilities or capability in self.focus_capabilities
+
+    def continuation(
+        self,
+        *,
+        goals: tuple[CapabilityGoal, ...] | None = None,
+        requested: frozenset[ProviderCapability] | None = None,
+        focus: frozenset[ProviderCapability] = frozenset(),
+    ) -> PlanningState:
+        """A state for a later round of the same investigation.
+
+        Everything accumulated carries: the budget with what it has already
+        spent, the calls already made, the providers found unusable, the coverage
+        reached and the attempt sequence. A fresh state would hand a continuation
+        a new allowance and let it repeat calls it has already made, which is
+        exactly what an investigation-wide budget exists to prevent.
+
+        Attempts are deliberately *not* carried into the new state's list: each
+        round reports what it did, and the caller composes the rounds. Carrying
+        them would make every round's result contain the previous one's work.
+
+        ``goals`` is recomputed by the caller rather than carried, because a
+        continuation may ask for a capability the first round's goal set never
+        contained -- readiness can require a check the depth template does not
+        include. Carrying the old goals would silently drop that request, and the
+        round would plan nothing while appearing to have tried.
+        """
+        return PlanningState(
+            budget=self.budget,
+            goals=self.goals if goals is None else goals,
+            requested_capabilities=(
+                self.requested_capabilities if requested is None else requested
+            ),
+            attempted=set(self.attempted),
+            blocked=set(self.blocked),
+            covered_families={key: set(value) for key, value in self.covered_families.items()},
+            partial_families={key: set(value) for key, value in self.partial_families.items()},
+            malicious_families=set(self.malicious_families),
+            benign_families=set(self.benign_families),
+            context_families=set(self.context_families),
+            false_positive_context_families=set(self.false_positive_context_families),
+            sequence=self.sequence,
+            focus_capabilities=focus,
+        )
+
     # ------------------------------------------------------------------ #
     # Questions the planner asks
     # ------------------------------------------------------------------ #

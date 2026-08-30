@@ -47,6 +47,7 @@ from ti_recon.correlation.policy import (
     PivotSkipReason,
 )
 from ti_recon.correlation.results import CorrelatedEnrichmentResult, PivotRun
+from ti_recon.correlation.session import CorrelationSession
 from ti_recon.enums import InvestigationDepth
 from ti_recon.execution.models import ExecutionContext, ProviderExecutionOutcome
 from ti_recon.models.intel_object import IntelObject
@@ -56,6 +57,7 @@ from ti_recon.planning import (
     EnrichmentPlanningRequest,
     PlanningConstraints,
 )
+from ti_recon.planning.state import PlanningState
 
 __all__ = ["CorrelatedInvestigationOrchestrator"]
 
@@ -96,23 +98,41 @@ class CorrelatedInvestigationOrchestrator:
         *,
         investigation_id: str,
         pivot_policy: PivotPolicy | None = None,
+        session: CorrelationSession | None = None,
     ) -> CorrelatedEnrichmentResult:
-        """Investigate one observable and correlate everything it produced."""
+        """Investigate one observable and correlate everything it produced.
+
+        ``session`` continues an earlier round of the same investigation. One
+        graph, one pivot budget and one enriched-node set span every round: a
+        fresh graph per round would disconnect what the rounds learned, hand a
+        continuation a new pivot allowance, and let a target enriched in round
+        one be enriched again in round two — which is also how a second hop would
+        appear without anyone deciding to allow one.
+        """
         policy = PivotPolicy() if pivot_policy is None else pivot_policy
         self._budget_blocked = {}
-        graph = InvestigationGraph(
-            investigation_id=investigation_id,
-            authenticated_user_id=context.authenticated_user_id,
-            limits=self._limits,
-        )
+        if session is not None and session.graph is not None:
+            graph = session.graph
+        else:
+            graph = InvestigationGraph(
+                investigation_id=investigation_id,
+                authenticated_user_id=context.authenticated_user_id,
+                limits=self._limits,
+            )
         engine = CorrelationEngine(graph=graph)
         root_key = engine.add_root(request.intel_object)
 
-        root_result, outcomes = await self._enrich(request, context, investigation_id)
+        root_result, outcomes = await self._enrich(
+            request, context, investigation_id, session=session
+        )
         self._ingest(engine, outcomes, hop=0, anchor_key=root_key)
         graph.mark_enriched(root_key)
 
-        budget = policy.budget_for(request.depth)
+        budget = (
+            policy.budget_for(request.depth)
+            if session is None or session.pivot_budget is None
+            else session.pivot_budget
+        )
         candidates, dropped = self._rank(graph, policy, request)
         pivot_runs: list[PivotRun] = []
 
@@ -134,6 +154,10 @@ class CorrelatedInvestigationOrchestrator:
             # silence.
             candidates, dropped = self._rank(graph, policy, request)
             candidates = self._apply_budget_skips(candidates)
+
+        if session is not None:
+            session.graph = graph
+            session.pivot_budget = budget
 
         result = CorrelatedEnrichmentResult(
             root_enrichment=root_result,
@@ -160,12 +184,27 @@ class CorrelatedInvestigationOrchestrator:
         request: EnrichmentPlanningRequest,
         context: ExecutionContext,
         investigation_id: str,
+        *,
+        session: CorrelationSession | None = None,
     ) -> tuple[AdaptiveEnrichmentResult, tuple[ProviderExecutionOutcome, ...]]:
         """One Task 13 run, with its provider results collected on the way past."""
         collector = _OutcomeCollector()
         orchestrator = self._enrichment.with_outcome_sink(collector)
-        result = await orchestrator.run(request, context, investigation_id=investigation_id)
-        return result, tuple(collector.outcomes)
+        states: list[PlanningState] = []
+        result = await orchestrator.run(
+            request,
+            context,
+            investigation_id=investigation_id,
+            carry_over=None if session is None else session.planning,
+            focus=frozenset() if session is None else session.focus,
+            state_sink=states,
+        )
+        if session is not None and states:
+            session.planning = states[0]
+        outcomes = tuple(collector.outcomes)
+        if session is not None:
+            session.record_outcomes(outcomes)
+        return result, outcomes
 
     def _ingest(
         self,

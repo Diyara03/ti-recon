@@ -93,7 +93,13 @@ class AdaptiveEnrichmentPlanner:
     # Setting up a run
     # ------------------------------------------------------------------ #
 
-    def initial_state(self, request: EnrichmentPlanningRequest) -> PlanningState:
+    def initial_state(
+        self,
+        request: EnrichmentPlanningRequest,
+        *,
+        carry_over: PlanningState | None = None,
+        focus: frozenset[ProviderCapability] = frozenset(),
+    ) -> PlanningState:
         """Build the starting state, with goals the registry can actually serve.
 
         A goal nothing can satisfy is dropped rather than carried: it would
@@ -113,6 +119,17 @@ class AdaptiveEnrichmentPlanner:
             )
             if goal.capability in servable
         )
+        if carry_over is not None:
+            # A later round of the same investigation: everything already spent,
+            # attempted and covered comes with it, so the allowance is
+            # investigation-wide rather than per round. Goals are recomputed
+            # because a continuation may name a capability the first round's
+            # template never included.
+            return carry_over.continuation(
+                goals=goals,
+                requested=request.requested_capabilities,
+                focus=focus,
+            )
         return PlanningState(
             budget=self._policy.budget_for(
                 request.depth,
@@ -297,6 +314,14 @@ class AdaptiveEnrichmentPlanner:
         for goal in state.goals:
             target = goal.families_for_depth(request.depth)
             if state.satisfied(goal, target):
+                continue
+            if not state.in_focus(goal.capability):
+                # A later round asked for specific missing information. The goal
+                # is still active and still reported in coverage -- it is simply
+                # not what the remaining allowance was released for. No skip is
+                # recorded: "out of this round's focus" is not a planning
+                # judgement about the goal, and reusing GOAL_NOT_ACTIVE would
+                # tell Task 18 the goal had never activated at all.
                 continue
             explicit = goal.capability in state.requested_capabilities
             if not self._goal_active(goal, state, request, baseline_done, explicit):
