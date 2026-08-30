@@ -1027,12 +1027,15 @@ about it.
 
 102e. **Yield belongs to the capability that produced it.** `InformationYield`
      comes only from attempts keyed to the capability, so a secondary bundled
-     capability reports `NONE` and never the primary's `DIRECTIONAL` — a context
-     requirement inheriting a directional yield would look like a search that
-     happened. Task 13 records outcomes per *call*, so where one response
+     capability never inherits the primary's `DIRECTIONAL` — a context
+     requirement that did would look like a search that happened. Task 13 records outcomes per *call*, so where one response
      answered two capabilities the repository cannot say which returned data,
-     context or nothing; `NONE` is the narrowest available representation and
-     nothing is guessed from evidence sharing an envelope. An adverse search
+     context or nothing; that state is named `UNATTRIBUTED` rather than reported
+     as `NONE`, which would assert nothing came back, or `NO_DATA`, which would
+     assert the source held nothing — both claims about content the record
+     cannot support. It is a retention limit, never satisfies a need for
+     directional information, creates no evidence, and is counted as itself
+     rather than folded into `checks_no_data`. An adverse search
      bundled as a secondary is still found, through
      `PlanningDecision.call.answered_capabilities` plus its `source_family` —
      never through a coverage item, which records candidacy rather than who

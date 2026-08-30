@@ -81,7 +81,18 @@ The core model. Two independent questions about one check:
 
 | `CheckCompletion` | `InformationYield` |
 |---|---|
-| `COMPLETE`, `PARTIAL`, `NOT_ATTEMPTED`, `BLOCKED`, `OUT_OF_SCOPE` | `DIRECTIONAL`, `CONTEXT_ONLY`, `NO_DATA`, `NONE` |
+| `COMPLETE`, `PARTIAL`, `NOT_ATTEMPTED`, `BLOCKED`, `OUT_OF_SCOPE` | `DIRECTIONAL`, `CONTEXT_ONLY`, `NO_DATA`, `NONE`, `UNATTRIBUTED` |
+
+Four of the yields describe an outcome; `UNATTRIBUTED` describes a gap in the
+record, which is a different kind of fact:
+
+| Yield | Means |
+|---|---|
+| `DIRECTIONAL` | a directional claim reached the assessment layer |
+| `CONTEXT_ONLY` | something was learned that points neither way |
+| `NO_DATA` | the source answered and held nothing about this observable |
+| `NONE` | no usable result — nothing ran, or what ran produced nothing |
+| `UNATTRIBUTED` | the capability **was** answered, and what it returned is not retained |
 
 A source queried about an exact hash that answers "nothing known" is
 `COMPLETE` + `NO_DATA`. That is strictly more coverage than a source nobody
@@ -183,18 +194,29 @@ Evidence for capability A never establishes coverage for capability B. The
 crediting comes from Task 13's own per-capability statement, never from the
 presence of evidence in a shared envelope, and never from reading a claim type.
 
-**Yield does not travel with completion.** `InformationYield` is derived only
-from attempts keyed to the capability, so a secondary bundled capability reports
-`NONE` — never the primary's `DIRECTIONAL`. That matters most for the challenge
-rules: a context requirement that inherited a directional yield would look like a
-search that had happened.
+**Yield does not travel with completion.** It is derived only from attempts keyed
+to the capability, so a secondary bundled capability never inherits the primary's
+`DIRECTIONAL`. That matters most for the challenge rules: a context requirement
+that inherited a directional yield would look like a search that had happened.
 
-The honest limit: Task 13 records the outcome per *call*, not per capability, so
-where one response answered two capabilities the repository cannot say which of
-them returned data, context or nothing. `NONE` is the narrowest representation
-the existing vocabulary offers, and no yield is guessed from evidence sharing the
-envelope. Nothing decides on yield — it is reported and counted — so the
-imprecision costs a summary figure rather than an answer.
+Where the coverage record proves a capability was answered but no attempt
+observed it, the yield is **`UNATTRIBUTED`**. Task 13 records outcomes per *call*,
+so a bundled response covers several capabilities while retaining content for
+none of them individually. Reporting `NONE` there would assert that nothing came
+back, and `NO_DATA` would assert the source held nothing — both are claims about
+content, and the record has none to give. Naming the gap is the only honest
+option, and no yield is ever guessed from evidence sharing the envelope.
+
+`UNATTRIBUTED` is a data-retention limit, not an observation. It never satisfies
+a need for directional information, never creates evidence in either direction,
+and is counted as itself rather than folded into `checks_no_data` — which answers
+"how many sources told us they hold nothing", a question this state cannot answer.
+Nothing decides on yield, so the imprecision costs a summary figure rather than an
+answer.
+
+A challenge satisfied that way carries `COMPLETE` + `UNATTRIBUTED`, which is
+sufficient: the rule asks whether an applicable independent search *ran*, and any
+directional claim it produced would already be in Task 17's assessment.
 
 An adverse search can also arrive as the *secondary* half of a bundle, leaving no
 attempt of its own. The benign challenge therefore reads `PlanningDecision.call`
@@ -312,9 +334,14 @@ rules: an assessment can be correct and under-investigated at the same time.
 
 ## 13. Determinism and versioning
 
-`READINESS_POLICY_VERSION` is `1.0.0`. Every result carries it alongside the
-Task 15, 16 and 17 policy versions, so a stored answer can always be traced to
-the rules that produced it.
+`READINESS_POLICY_VERSION` is `1.0.0`, the first policy and not yet shipped — so
+the `UNATTRIBUTED` correction above landed without a bump, there being no
+persisted `1.0.0` result to reinterpret. **Once 1.0.0 ships, or any readiness
+result is persisted under it, a semantic change to the vocabularies or the rules
+requires an explicit version review**, exactly as Task 17's policy does.
+
+Every result carries the version alongside the Task 15, 16 and 17 policy
+versions, so a stored answer can always be traced to the rules that produced it.
 
 `result_id` is **record identity, not a cross-run semantic fingerprint**. It
 incorporates the Task 17 `assessment_id`, which is built over `Evidence.id` — a

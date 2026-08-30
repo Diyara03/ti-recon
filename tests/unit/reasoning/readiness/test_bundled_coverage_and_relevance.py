@@ -444,9 +444,10 @@ def test_a_secondary_bundled_capability_does_not_inherit_the_primary_yield() -> 
     may never have answered — and would let a context requirement report itself
     as directionally informed.
 
-    Yield is derived only from attempts keyed to the capability, so a secondary
-    reports ``NONE``: honest about the fact that Task 13 records the outcome per
-    *call*, not per capability.
+    The secondary reports ``UNATTRIBUTED``: the capability was demonstrably
+    answered, and Task 13 records outcomes per *call*, so what that answer
+    contained is simply not retained. Reporting ``NONE`` there would assert that
+    nothing came back — a claim the record cannot support.
     """
     result = assess(_bundled(CoverageStatus.COVERED))
 
@@ -454,8 +455,7 @@ def test_a_secondary_bundled_capability_does_not_inherit_the_primary_yield() -> 
     secondary = _evaluation(result, INTELLIGENCE)
 
     assert primary.information_yield is InformationYield.DIRECTIONAL
-    assert secondary.information_yield is not InformationYield.DIRECTIONAL
-    assert secondary.information_yield is InformationYield.NONE
+    assert secondary.information_yield is InformationYield.UNATTRIBUTED
     # Completion is restored from coverage; yield is not invented alongside it.
     assert secondary.completion is CheckCompletion.COMPLETE
 
@@ -483,7 +483,7 @@ def test_completion_never_implies_a_yield() -> None:
     )
 
     assert covered.completion is CheckCompletion.COMPLETE
-    assert covered.information_yield is InformationYield.NONE
+    assert covered.information_yield is InformationYield.UNATTRIBUTED
 
     assert no_data.completion is CheckCompletion.COMPLETE
     assert no_data.information_yield is InformationYield.NO_DATA
@@ -687,3 +687,157 @@ def test_a_bundled_challenge_creates_no_benign_evidence() -> None:
     assert challenged.verdict is baseline.verdict is Verdict.LIKELY_BENIGN
     assert challenged.confidence is baseline.confidence
     assert challenged.assessment_id == baseline.assessment_id
+
+
+# --------------------------------------------------------------------------- #
+# A gap in the record is not an observation
+# --------------------------------------------------------------------------- #
+
+
+def test_the_five_yields_stay_distinct() -> None:
+    """Four outcomes and one gap in the record, each reachable and separate.
+
+    ``UNATTRIBUTED`` exists because the alternative was asserting something the
+    data does not support. A capability answered by a bundled call *was*
+    answered — Task 13 proves it — but Task 13 records outcomes per call, so what
+    that answer contained is not retained. Reporting ``NONE`` would say nothing
+    came back; reporting ``NO_DATA`` would say the source held nothing. Both are
+    claims about content, and the record has none to give.
+    """
+    root = file_object(sha256="b" * 64)
+
+    def build(coverage_status: CoverageStatus, extra=None):
+        scene = (
+            scenario(root)
+            .with_claim("aggregated_reputation", provider="alpha", source_family="fam_a")
+            .with_attempt(attempt(REPUTATION, provider="alpha", source_family="fam_a"))
+            .with_coverage(coverage_item(REPUTATION, status=CoverageStatus.COVERED))
+            .with_coverage(coverage_item(INTELLIGENCE, status=coverage_status))
+        )
+        return assess(scene.with_attempt(extra) if extra is not None else scene)
+
+    directional = _evaluation(build(CoverageStatus.COVERED), REPUTATION)
+    unattributed = _evaluation(build(CoverageStatus.COVERED), INTELLIGENCE)
+    no_data = _evaluation(
+        build(
+            CoverageStatus.NOT_COVERED,
+            attempt(
+                INTELLIGENCE,
+                provider="beta",
+                source_family="fam_b",
+                status=ProviderRunStatus.NO_DATA,
+            ),
+        ),
+        INTELLIGENCE,
+    )
+    not_attempted = _evaluation(build(CoverageStatus.NOT_COVERED), INTELLIGENCE)
+    blocked = _evaluation(
+        build(
+            CoverageStatus.NOT_COVERED,
+            attempt(
+                INTELLIGENCE,
+                provider="beta",
+                status=ProviderRunStatus.NOT_CONFIGURED,
+            ),
+        ),
+        INTELLIGENCE,
+    )
+
+    assert (directional.completion, directional.information_yield) == (
+        CheckCompletion.COMPLETE,
+        InformationYield.DIRECTIONAL,
+    )
+    assert (unattributed.completion, unattributed.information_yield) == (
+        CheckCompletion.COMPLETE,
+        InformationYield.UNATTRIBUTED,
+    )
+    assert (no_data.completion, no_data.information_yield) == (
+        CheckCompletion.COMPLETE,
+        InformationYield.NO_DATA,
+    )
+    assert (not_attempted.completion, not_attempted.information_yield) == (
+        CheckCompletion.NOT_ATTEMPTED,
+        InformationYield.NONE,
+    )
+    assert (blocked.completion, blocked.information_yield) == (
+        CheckCompletion.BLOCKED,
+        InformationYield.NONE,
+    )
+
+
+def test_an_unattributed_yield_is_counted_as_itself() -> None:
+    """Never folded into the no-data count.
+
+    ``checks_no_data`` answers "how many sources told us they hold nothing".
+    Adding a capability whose content is simply unknown would turn a data
+    retention limit into a reported observation.
+    """
+    summary = assess(_bundled(CoverageStatus.COVERED)).coverage_summary
+
+    assert summary.requirements_yield_unattributed == 1
+    assert summary.checks_no_data == 0
+
+
+def test_an_unattributed_challenge_satisfies_coverage_without_yielding_anything() -> None:
+    """The challenge asks whether a search ran, not what it found.
+
+    Any directional claim it produced would already be in Task 17's assessment,
+    so check completion is the whole question. The yield stays honest about not
+    being known, and no evidence is created in either direction.
+    """
+    root = file_object(sha256="d" * 64)
+    scene = (
+        scenario(root)
+        .with_claim(
+            semantic="benign_reputation",
+            provider="alpha",
+            source_family="fam_a",
+            effect=EvidenceEffect.SUPPORTS_BENIGN,
+        )
+        .with_attempt(attempt(REPUTATION, provider="alpha", source_family="fam_a"))
+        .with_attempt(attempt(INTELLIGENCE, provider="alpha_i", source_family="fam_a"))
+        .with_coverage(coverage_item(REPUTATION))
+        .with_coverage(coverage_item(INTELLIGENCE))
+    )
+    baseline = assess(scene)
+    challenged = assess(
+        scene.with_attempt(
+            attempt(
+                ProviderCapability.SCANNER_CONTEXT,
+                provider="gamma",
+                source_family="fam_gamma",
+                status=ProviderRunStatus.NO_DATA,
+            )
+        ).with_call(
+            bundled_call(
+                ProviderCapability.SCANNER_CONTEXT,
+                frozenset({THREAT}),
+                provider="gamma",
+                source_family="fam_gamma",
+            )
+        )
+    )
+    challenge = _evaluation(challenged, THREAT)
+
+    assert not _challenge_missing(challenged)
+    assert challenge.completion is CheckCompletion.COMPLETE
+    assert challenge.information_yield is InformationYield.UNATTRIBUTED
+    assert challenge.information_yield is not InformationYield.NO_DATA
+    # Coverage moved; the assessment did not.
+    assert challenged.verdict is baseline.verdict
+    assert challenged.confidence is baseline.confidence
+    assert challenged.assessment_id == baseline.assessment_id
+
+
+def test_an_unattributed_yield_survives_serialization() -> None:
+    """Round-trips as itself, and the result identity is unaffected."""
+    result = assess(_bundled(CoverageStatus.COVERED))
+    dumped = result.model_dump_json()
+    restored = type(result).model_validate_json(dumped)
+
+    assert restored.model_dump_json() == dumped
+    assert restored.result_id == result.result_id
+    assert any(
+        item.information_yield is InformationYield.UNATTRIBUTED
+        for item in restored.requirement_evaluations
+    )
