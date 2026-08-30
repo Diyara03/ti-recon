@@ -98,9 +98,13 @@ _COMPLETION_ORDER: dict[CheckCompletion, int] = {
 
 _YIELD_ORDER: dict[InformationYield, int] = {
     InformationYield.NONE: 0,
-    InformationYield.NO_DATA: 1,
-    InformationYield.CONTEXT_ONLY: 2,
-    InformationYield.DIRECTIONAL: 3,
+    # Total by construction rather than by need: a SourceCheck is always derived
+    # from one attempt, so it can never carry UNATTRIBUTED. Leaving it out would
+    # make a hand-built check raise a KeyError instead of sorting.
+    InformationYield.UNATTRIBUTED: 1,
+    InformationYield.NO_DATA: 2,
+    InformationYield.CONTEXT_ONLY: 3,
+    InformationYield.DIRECTIONAL: 4,
 }
 
 

@@ -356,12 +356,17 @@ class AssessmentReadinessEngine:
         dependent_families = self._benign_origin_families(fusion)
         challenged = False
         limited = False
+        # What the challenging search returned, where that is knowable. An
+        # attempt keyed to the capability carries its own yield; a bundled
+        # secondary does not, and says so rather than reporting an absence.
+        challenge_yield = InformationYield.NONE
         for capability in DIRECTIONAL_SEARCH_CAPABILITIES:
             for check in inputs.checks_by_capability.get(capability, ()):
                 if check.source_family in dependent_families:
                     continue
                 if check.completion is CheckCompletion.COMPLETE:
                     challenged = True
+                    challenge_yield = check.information_yield
                 elif check.completion is CheckCompletion.PARTIAL:
                     limited = True
 
@@ -374,6 +379,9 @@ class AssessmentReadinessEngine:
             if family in dependent_families:
                 continue
             if completion is CheckCompletion.COMPLETE:
+                if not challenged:
+                    # Answered, and the record does not retain what it returned.
+                    challenge_yield = InformationYield.UNATTRIBUTED
                 challenged = True
             elif completion is CheckCompletion.PARTIAL:
                 limited = True
@@ -418,7 +426,7 @@ class AssessmentReadinessEngine:
                 requirement=requirement,
                 status=status,
                 completion=completion,
-                information_yield=InformationYield.NONE,
+                information_yield=challenge_yield if challenged else InformationYield.NONE,
                 gap_type=gap_type,
                 material=material,
             ),
@@ -529,6 +537,9 @@ class AssessmentReadinessEngine:
             ),
             requirements_not_applicable=sum(
                 1 for item in evaluations if item.status is RequirementStatus.NOT_APPLICABLE
+            ),
+            requirements_yield_unattributed=sum(
+                1 for item in evaluations if item.information_yield is InformationYield.UNATTRIBUTED
             ),
             checks_complete=sum(
                 1 for item in checks if item.completion is CheckCompletion.COMPLETE

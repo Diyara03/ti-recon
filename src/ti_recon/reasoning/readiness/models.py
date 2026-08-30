@@ -164,8 +164,11 @@ class CheckCompletion(StrEnum):
 class InformationYield(StrEnum):
     """What came back, quite separately from whether the check ran.
 
-    ``NO_DATA`` is a source that answered. ``NONE`` is a source that did not.
-    Both are honest, and they are not the same fact.
+    Four of these describe a known outcome and one describes a known *gap in the
+    record*, which is a different kind of fact and must not be dressed up as the
+    others. ``NO_DATA`` is a source that answered and held nothing. ``NONE`` is a
+    source that produced nothing at all. ``UNATTRIBUTED`` is a capability that was
+    demonstrably answered where the repository cannot say what the answer was.
     """
 
     #: A directional claim reached the assessment layer.
@@ -174,8 +177,24 @@ class InformationYield(StrEnum):
     CONTEXT_ONLY = "context_only"
     #: The source answered, and held nothing about this observable.
     NO_DATA = "no_data"
-    #: Nothing came back at all.
+    #: No usable result was produced for this capability -- because nothing ran,
+    #: or because what ran produced nothing.
     NONE = "none"
+    #: The capability was answered, and which of the three outcomes above it
+    #: yielded cannot be determined from what was retained.
+    #:
+    #: Task 13 records a provider outcome per *call*, and one call can answer
+    #: several capabilities. Where a bundled response covered a capability, the
+    #: fact of the answer survives in ``answered_capabilities`` while the content
+    #: does not, so nothing here can say whether that capability produced a
+    #: directional claim, context, or nothing at all.
+    #:
+    #: It is a data-retention limit, not an observation. It never means
+    #: ``NO_DATA``, never satisfies a need for directional information, and never
+    #: creates evidence in either direction — recording it as ``NONE`` would have
+    #: asserted that nothing came back, which is a claim the record cannot
+    #: support.
+    UNATTRIBUTED = "unattributed"
 
 
 class RequirementStatus(StrEnum):
@@ -416,6 +435,11 @@ class ReadinessCoverageSummary(FrozenTiReconModel):
     requirements_limited: int = Field(default=0, ge=0)
     requirements_unsatisfied: int = Field(default=0, ge=0)
     requirements_not_applicable: int = Field(default=0, ge=0)
+
+    #: Requirements answered by a bundled call whose per-capability content the
+    #: record does not retain. Counted separately so it can never be read as
+    #: "the source held nothing".
+    requirements_yield_unattributed: int = Field(default=0, ge=0)
 
     checks_complete: int = Field(default=0, ge=0)
     checks_partial: int = Field(default=0, ge=0)

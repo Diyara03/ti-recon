@@ -309,11 +309,19 @@ def evaluate_requirement(
     # second call for a capability the planner deliberately covered with one --
     # while leaving the attempts free to report a partial or blocked execution
     # that the coverage summary alone would not show.
-    completion = max(
-        (worst_completion(checks), coverage_completion(item)),
-        key=lambda value: _COMPLETION_RANK[value],
-    )
-    yielded = best_yield(checks)
+    observed = worst_completion(checks)
+    recorded = coverage_completion(item)
+    completion = max((observed, recorded), key=lambda value: _COMPLETION_RANK[value])
+
+    # Where the coverage record proves a capability was answered but no attempt
+    # observed it, the answer came from a bundled call and its content is not
+    # retained per capability. Saying NONE there would assert that nothing came
+    # back, which the record cannot support; saying NO_DATA would invent an
+    # answer. The gap in the record gets named instead.
+    if _COMPLETION_RANK[recorded] > _COMPLETION_RANK[observed]:
+        yielded = InformationYield.UNATTRIBUTED
+    else:
+        yielded = best_yield(checks)
     limitations = _limitations(requirement, checks, inputs)
 
     if completion is CheckCompletion.COMPLETE:
