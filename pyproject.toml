@@ -46,6 +46,15 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/ti_recon"]
 
+[tool.hatch.build.targets.sdist]
+# Local machine state is not source. Hatchling builds an sdist from the working
+# directory, so a developer's own Claude Code settings — untracked, and ignored
+# only by whatever global gitignore that developer happens to have — would
+# otherwise ship inside a published archive and make two builds of one commit
+# differ. The analyst Skill under .claude/skills/ is tracked repository content
+# and stays.
+exclude = ["**/settings.local.json"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

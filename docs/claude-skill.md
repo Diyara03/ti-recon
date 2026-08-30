@@ -131,6 +131,27 @@ The Skill never asks anyone to paste a key into the conversation. When a source
 is missing it points at the local configuration and notes that the MCP server
 must be reconnected afterwards, because configuration is read at startup.
 
+## How it is distributed
+
+The Skill is a **project** asset: a user gets it by working in this repository.
+It is tracked source, so it ships inside the sdist — but **installing the Python
+wheel does not install it**. The wheel carries the MCP server and the CLI;
+`.claude/skills/` is not Python and pip puts nothing where Claude Code looks.
+
+To use it across all your projects, copy it into your personal skills directory:
+
+```bash
+cp -r .claude/skills/ti-recon-analyst ~/.claude/skills/
+```
+
+That is your choice to make, not something this project does to your home
+directory.
+
+The MCP registration made during development is **local scope** — this project
+only, private to that machine. `--scope user` makes it available in every
+project; it is not the default here, deliberately. Credentials never belong in
+an MCP registration command: they stay TI Recon runtime configuration.
+
 ## What it will not decide
 
 Blocking, quarantine, isolation, allowlisting, alert closure, incident

@@ -35,3 +35,6 @@ htmlcov/
 .vscode/
 .idea/
 .DS_Store
+
+# Claude Code local machine settings. The analyst Skill is tracked; this is not.
+.claude/settings.local.json
