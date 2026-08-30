@@ -127,6 +127,15 @@ Implemented (Jira Tasks 1-19):
   capabilities and Task 13 chooses the provider. No transport, no persistence, no
   action.
 
+- Task 20 — stable analyst output contract and CLI (`application/`,
+  `reporting/`, `cli/`): the first application-facing interface. A public
+  request that names an observable and two ceilings, a versioned
+  `AnalystInvestigationReport` derived deterministically from
+  `InvestigationResult`, deterministic text and JSON renderings, a generated
+  JSON Schema, and a `ti-recon` console command over the same service a future
+  MCP server will call. Presentation only: it selects, orders, labels and
+  bounds what Tasks 13-19 decided, and decides nothing itself.
+
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Task 13 chooses what
 to ask, Task 14 assembles what came back, Task 15 says what each finding means in
@@ -187,9 +196,10 @@ about it.
   answers for one purpose only; readiness for containment, alert closure or
   incident declaration depends on asset criticality, business impact, user
   context, internal telemetry and incident policy that TI Recon has no access to
-- Any transport or interface layer: REST API, CLI, MCP server, Claude Skill,
-  analyst prose rendering, streaming progress. Task 19 is callable Python and
-  stops there
+- MCP server, Claude Skill, REST API, web or desktop UI, streaming progress,
+  HTML/PDF/Markdown export, and any LLM-written analyst narrative. Task 20 adds
+  a CLI and a transport-neutral application service and stops there; Task 21
+  consumes that service rather than parsing its text
 - Persistence, cross-process resume, job queues and durable idempotency. Task 19
   continues *within one invocation* and claims nothing beyond it
 - Any remediation or containment action: blocking, quarantine, isolation, alert
@@ -1263,6 +1273,119 @@ about it.
      remediation, and `INVESTIGATION_WORKFLOW_VERSION` versions its composition
      semantics.
 
+116. **Task 20 presents Tasks 13-19 and reinterprets none of them.** The report
+     builder selects, orders, labels and bounds; it decides no verdict, no
+     confidence, no readiness, no independence and no explanation. Every value
+     is copied from the layer that owns it, because a presentation layer that
+     re-derived one would eventually disagree with the engine and an analyst
+     would have no way to tell which half was wrong. `reporting/` imports no
+     `.policy` module and a test asserts it.
+
+117. **`AnalystInvestigationReport` is the supported public contract;
+     `InvestigationResult` stays internal.** The internal result carries planner
+     decisions, graph structure and every engine's counters — unbounded,
+     coupled to seven layers, and changing whenever any of them is refactored.
+     `ANALYST_REPORT_SCHEMA_VERSION` is versioned separately from the workflow
+     and policy versions it reports, because a fusion policy bump should not
+     oblige every consumer to re-integrate. The full result stays reachable
+     through the application service for anyone debugging a disagreement.
+
+118. **Report generation is pure and performs no I/O.** No clock — the instant
+     is Task 19's `evaluated_at` — no network, no filesystem, no randomness, and
+     `report_id` is derived from the schema version and the result id rather
+     than generated. The same result always produces the same report and the
+     same bytes. `assessment_id` and the claim and evidence ids remain
+     run-scoped exactly as the engine defines them.
+
+119. **A related observable is a relationship, never an indicator.** A contacted
+     host, a resolved address and a dropped file are things a source connected
+     to the root; `assessed` says whether Task 17 separately reached a verdict
+     about the object, and where it did not, none is implied. `PROVIDER_OBSERVED`
+     and `PROVIDER_REPORTED` stay distinct — watching a connection happen is
+     different knowledge from hearing about it, and neither is an accusation.
+     Labelling these as IOCs is how a public resolver reaches a blocklist.
+
+120. **The coverage vocabulary survives presentation intact.** `NO_DATA` is a
+     completed check and never benign — it is equally true of every threat
+     nobody has caught. `NOT_ATTEMPTED` is not `NO_DATA`. `UNATTRIBUTED` is
+     neither: one call answered two capabilities and the record cannot say which
+     returned what. An alternative explanation covers the evidence Task 16
+     linked it to and never the investigation, and a historical detection never
+     renders as current activity.
+
+121. **The text renderer neutralises terminal injection; JSON does not need
+     to.** Provider labels, tags and the observable itself are
+     attacker-influenceable, and a value carrying CR or an ANSI sequence could
+     forge report lines an analyst would read as the engine's own words.
+     Control characters are replaced visibly, ordinary Unicode is preserved and
+     every field is bounded — for display only. JSON keeps the canonical values,
+     because it has structural escaping and no cursor to move.
+
+122. **JSON stdout is exactly one document, and diagnostics never reach it.**
+     Logging is configured by the process entry point rather than by the
+     library seam, so an embedding application's handlers are never silently
+     replaced. A closed pipe is an ordinary event, not a traceback.
+
+123. **CLI exit status describes the process, never the verdict.** A completed
+     investigation exits 0 whether it reached MALICIOUS, SUSPICIOUS,
+     INCONCLUSIVE or LIKELY_BENIGN, and whether readiness was READY or
+     UNRESOLVED. Input and structural failures exit nonzero and emit no report:
+     a software fault must never be dressed as an analytical conclusion.
+
+124. **Credentials are never CLI arguments, and never reach output.** A secret
+     on a command line lands in shell history and the process list. Resolution
+     stays per user in the credential layer, no report or log carries a
+     credential value or a credential-shaped field name, and the provider
+     diagnostic reports only whether one is *required*.
+
+125. **The interface layer never selects a provider and never assesses.** No
+     provider flag, no provider name outside the two composition roots
+     (`providers/catalog.py` and `application/composition.py`), no adapter
+     call, no socket. Ranking is Task 13's and stays reproducible only while it
+     is. The application service is transport-neutral, so the CLI is one caller
+     among several and a future MCP layer consumes the same contract rather
+     than parsing text.
+
+125a. **One catalogue, registered whole, contacting nothing.**
+     `providers/catalog.py` is the authoritative adapter list and a test
+     asserts it names exactly the providers `planning/catalog.py` can plan, so
+     neither can drift. `build_default_application` wires it once for every
+     interface: a second assembly point would eventually investigate
+     differently. Adapters build with no arguments and create their clients
+     lazily, so composing the catalogue, listing it and generating a schema are
+     all offline — the first packet leaves when Task 13 selects a provider and
+     Task 6 executes it.
+
+125b. **A missing credential removes nothing.** Every shipped provider is
+     registered whether or not a key exists, and reports `NOT_CONFIGURED` when
+     selected. Dropping it from the catalogue instead would report "the analyst
+     has not set this up" as "no source implements this", and Task 18 decides
+     materiality from exactly that difference. Secrets load from the variable
+     names `.env.example` documents into the ordinary per-user store, one
+     connection per credential *group* — which is what keeps one abuse.ch key
+     serving three adapters and stores it once. `configured` is a boolean:
+     never a value, a prefix, a length or a digest.
+
+125c. **Opposition is not basis.** Task 17 can reach a verdict while recording
+     claims that pushed the other way. They appear in their own section under
+     their own heading, because under one heading meaning "why" a benign
+     assertion reads as a reason the object was called malicious. Every item
+     carries its Task 17 role in either section, and Task 17's contributions
+     and dispositions are never altered.
+
+125d. **A local file is hashed, and only if it is a file.** Regular files only,
+     checked against the resolved target before the open: a FIFO blocks until
+     somebody writes to it and a character device can be endless, so either
+     would hang the command with no output. A symlink to a real file is
+     followed deliberately; a symlink to a pipe is refused. Hashing is
+     streamed, and the only thing that leaves the machine is a digest.
+
+126. **Task 20 recommends no action.** The report states an assessment; it never
+     says to block, quarantine, isolate, allowlist, suppress, close an alert or
+     declare an incident. Those decisions need asset criticality, business
+     impact and incident policy this engine has no access to.
+
+
 ## Security rules
 
 - **No secrets in the repo.** `.env` is git-ignored; `.env.example` holds
@@ -1532,6 +1655,21 @@ src/ti_recon/
                      policy (decisive/weak semantics, verdict and confidence rule
                      ids, caps), confidence (bands and caps, decided separately
                      from the verdict), engine, results, metrics
+  application/       Task 20: the transport-neutral public boundary. models
+                     (AnalystInvestigationRequest, observable input types),
+                     service (input -> Task 19 -> report; local file hashing),
+                     composition (the default application: every shipped
+                     provider, the execution stores, credential loading)
+  providers/catalog.py
+                     Task 20: the authoritative shipped-adapter list, the
+                     counterpart to planning/catalog.py
+  reporting/         Task 20: the analyst output contract. models (versioned
+                     report, bounded sections), builder (projection, never
+                     analysis), text (deterministic rendering, terminal-injection
+                     safety), schema (generated, dialect read from Pydantic)
+  cli/               Task 20: the `ti-recon` command. parser (argparse; no
+                     credential or provider flags), main (streams, exit codes),
+                     runtime (the one composition root a local invocation uses)
   investigation/     Task 19: end-to-end orchestration. models (request, round,
                      stop reasons, directives, workflow version), analysis (the
                      one Task 15-18 pass), continuation (readiness -> capability

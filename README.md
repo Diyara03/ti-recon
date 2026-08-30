@@ -311,6 +311,44 @@ properties of a `file` object rather than object types of their own.
 
 Full in/out-of-scope list: [docs/scope.md](docs/scope.md).
 
+## Usage
+
+After installing the package, the `ti-recon` command is available:
+
+```bash
+# Investigate an observable and read the result
+ti-recon investigate example.com
+
+# The machine contract: exactly one JSON document on stdout
+ti-recon investigate 44d88612fea8a8f36de82e1278abb02f --format json | jq .assessment
+
+# A local file is hashed on this machine; its contents are never sent anywhere
+ti-recon investigate --file ./sample.bin
+
+# The schema a tool consumer integrates against
+ti-recon schema report
+
+# What is registered locally, and whether it needs a credential
+ti-recon providers
+```
+
+Provider credentials are configured through the credential layer, per user —
+never as command-line arguments, which would land in shell history and the
+process list. `ti-recon providers` shows which credential groups are configured.
+
+Every shipped provider is registered whether or not it has a credential: one
+without stays visible and reports `NOT_CONFIGURED` if the planner selects it, so
+a fresh install with no keys still investigates using the credential-free local
+dataset provider and says exactly which capabilities nobody could serve.
+
+Exit status describes whether the command ran, never what it found: a completed
+investigation exits `0` whether the verdict is `MALICIOUS` or `INCONCLUSIVE`.
+
+The command does not block, quarantine, isolate or close alerts. It produces
+external threat-intelligence analysis for analyst triage.
+
+See [docs/cli.md](docs/cli.md) and [docs/analyst-output.md](docs/analyst-output.md).
+
 ## Installation (development)
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
@@ -421,3 +459,5 @@ In production, provider credentials are held per user by the credential layer
 - [docs/correlation/investigation-graph.md](docs/correlation/investigation-graph.md) — Task 14 correlation graph
 - [docs/correlation/controlled-pivots.md](docs/correlation/controlled-pivots.md) — Task 14 controlled pivots
 - [docs/artifacts.md](docs/artifacts.md) — Task 8 bounded provider artifact storage
+- [docs/analyst-output.md](docs/analyst-output.md) — Task 20 analyst output contract
+- [docs/cli.md](docs/cli.md) — Task 20 `ti-recon` command

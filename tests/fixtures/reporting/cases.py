@@ -1,0 +1,114 @@
+"""Whole investigations that end in each verdict (Task 20).
+
+Real engines throughout — Tasks 13 to 19 all run — with scripted providers on
+top, so a report fixture is a projection of something the engine actually
+concluded rather than a hand-written object asserting what a report should say.
+A report test built on a stubbed assessment would prove only that a value can be
+copied between two models.
+"""
+
+from __future__ import annotations
+
+from fixtures.investigation import InvestigationStack, claim_evidence, file_root, spec
+from fixtures.investigation.stack import FAKE_SECRET_MARKER, ScriptedProvider
+from ti_recon.application.models import AnalystInvestigationRequest, ObservableInputType
+from ti_recon.application.service import InvestigationApplication
+from ti_recon.enums import EvidenceEffect, ProviderCapability
+from ti_recon.investigation import InvestigationRequest, InvestigationResult
+from ti_recon.reasoning.claims.models import ClaimSemantic
+from ti_recon.reporting.builder import build_analyst_report
+from ti_recon.reporting.models import AnalystInvestigationReport
+
+FAKE_SECRET = FAKE_SECRET_MARKER
+
+REPUTATION = ProviderCapability.REPUTATION
+INTELLIGENCE = ProviderCapability.MALWARE_INTELLIGENCE
+DIGEST = "a" * 64
+
+
+def report_for(result: InvestigationResult) -> AnalystInvestigationReport:
+    return build_analyst_report(result)
+
+
+async def _run(providers: list[ScriptedProvider], **overrides: object) -> InvestigationResult:
+    stack = InvestigationStack(providers=providers)
+    await stack.add_credentials()
+    request = InvestigationRequest(root=file_root(DIGEST), **overrides)  # type: ignore[arg-type]
+    return await stack.orchestrator.investigate(request, stack.context())
+
+
+async def malicious_report() -> tuple[InvestigationResult, AnalystInvestigationReport]:
+    """A curated repository holding this exact sample."""
+    repo = ScriptedProvider(
+        spec("repo", family="fam_repo", capabilities=frozenset({INTELLIGENCE, REPUTATION})),
+        {DIGEST: claim_evidence(ClaimSemantic.MALWARE_SAMPLE_IDENTITY)},
+    )
+    result = await _run([repo])
+    return result, report_for(result)
+
+
+async def suspicious_report() -> tuple[InvestigationResult, AnalystInvestigationReport]:
+    """One generic reputation claim: concern, short of a decisive identification."""
+    reputation = ScriptedProvider(
+        spec("rep", family="fam_rep", capabilities=frozenset({REPUTATION})),
+        {DIGEST: claim_evidence(ClaimSemantic.MALICIOUS_REPUTATION)},
+    )
+    result = await _run([reputation])
+    return result, report_for(result)
+
+
+async def inconclusive_report() -> tuple[InvestigationResult, AnalystInvestigationReport]:
+    """Everybody applicable was asked and nobody knew anything."""
+    quiet = ScriptedProvider(
+        spec("quiet", family="fam_quiet", capabilities=frozenset({REPUTATION, INTELLIGENCE})),
+        {},
+    )
+    result = await _run([quiet])
+    return result, report_for(result)
+
+
+async def benign_report() -> tuple[InvestigationResult, AnalystInvestigationReport]:
+    """One unopposed benign assertion, which readiness will want challenged."""
+    benign = ScriptedProvider(
+        spec("benign", family="fam_a", capabilities=frozenset({REPUTATION, INTELLIGENCE})),
+        {
+            DIGEST: claim_evidence(
+                ClaimSemantic.BENIGN_REPUTATION, effect=EvidenceEffect.SUPPORTS_BENIGN
+            )
+        },
+    )
+    result = await _run([benign])
+    return result, report_for(result)
+
+
+def scripted_application(providers: list[ScriptedProvider]) -> InvestigationStack:
+    """A stack whose orchestrator an application service can be built on."""
+    return InvestigationStack(providers=providers)
+
+
+def application_for(stack: InvestigationStack) -> InvestigationApplication:
+    return InvestigationApplication(orchestrator=stack.orchestrator)
+
+
+def hash_request(**overrides: object) -> AnalystInvestigationRequest:
+    return AnalystInvestigationRequest(
+        observable=DIGEST,
+        observable_type=ObservableInputType.FILE_HASH,
+        **overrides,  # type: ignore[arg-type]
+    )
+
+
+__all__ = [
+    "DIGEST",
+    "FAKE_SECRET",
+    "INTELLIGENCE",
+    "REPUTATION",
+    "application_for",
+    "benign_report",
+    "hash_request",
+    "inconclusive_report",
+    "malicious_report",
+    "report_for",
+    "scripted_application",
+    "suspicious_report",
+]

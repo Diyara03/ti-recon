@@ -89,7 +89,12 @@
            |                                      Tasks 13-18; readiness-driven
            |                                      continuation within one budget
            |
-     Interface / MCP / Skill       FUTURE
+     Analyst Output & CLI          IMPLEMENTED — Task 20. the public contract:
+           |                                      a versioned report, text and
+           |                                      JSON, and a `ti-recon` command
+           |
+     MCP server / Claude Skill     FUTURE — consumes the Task 20 application
+                                            service, never its CLI text
 ```
 
 Task 19 composes the layers above into one investigation and decides only when to
@@ -98,6 +103,14 @@ a remaining path, never when a verdict merely feels unfinished; and it asks by
 naming a capability, leaving Task 13 to choose the provider. Depth, pivot mode and
 budget are ceilings the caller set, and a continuation works within all three —
 see `docs/investigation-workflow.md`.
+
+Task 20 is the first application-facing layer. It converts analyst input into the
+canonical observable the engine expects, runs Task 19, and projects the result
+onto `AnalystInvestigationReport` — a bounded, versioned contract that a CLI, a
+future MCP server and a UI all consume, so none of them interprets the engine
+separately. It presents and never decides: the verdict is Task 17's, the
+readiness is Task 18's, and the report builder performs no I/O at all. See
+`docs/analyst-output.md` and `docs/cli.md`.
 
 Task 17 is the first layer allowed to conclude, and the last one that concludes
 anything about the *observable* alone. It produces a verdict and a confidence
