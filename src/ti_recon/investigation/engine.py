@@ -482,6 +482,7 @@ class InvestigationOrchestrator:
             root=request.root,
             requested_depth=request.depth,
             pivot_mode=policy.mode.value,
+            allow_remote_pivot_lookup=policy.allow_remote_pivot_lookup,
             enrichment=merged,
             correlation=state.correlation,
             qualification=analysis.qualification,

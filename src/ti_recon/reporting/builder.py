@@ -130,7 +130,11 @@ def build_analyst_report(result: InvestigationResult) -> AnalystInvestigationRep
             canonical_value=result.root.canonical_value,
             canonical_key=result.root.canonical_key,
         ),
-        request=RequestSummary(depth=result.requested_depth, pivot_mode=result.pivot_mode),
+        request=RequestSummary(
+            depth=result.requested_depth,
+            pivot_mode=result.pivot_mode,
+            allow_remote_pivot_lookup=result.allow_remote_pivot_lookup,
+        ),
         assessment=AssessmentSummary(
             verdict=assessment.verdict,
             confidence=assessment.confidence.value,

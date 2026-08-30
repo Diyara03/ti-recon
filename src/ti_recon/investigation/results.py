@@ -51,6 +51,13 @@ class InvestigationResult(FrozenTiReconModel):
     root: IntelObject
     requested_depth: InvestigationDepth
     pivot_mode: str = Field(min_length=1, max_length=32)
+    #: Whether an enriching pivot was permitted to reach external providers.
+    #:
+    #: Recorded beside the mode because the two together are what decided
+    #: disclosure: Task 14 gates remote pivot enrichment on both, so a result
+    #: carrying only the mode cannot say whether anything about a related
+    #: observable actually left the machine.
+    allow_remote_pivot_lookup: bool = False
 
     #: Everything executed and covered, across every round.
     enrichment: AdaptiveEnrichmentResult
