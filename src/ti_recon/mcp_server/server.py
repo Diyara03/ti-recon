@@ -259,11 +259,11 @@ def _register_tools(server: MCPServer, runtime: McpRuntime) -> None:
     async def provider_status() -> ProviderStatusReport:
         """Which intelligence sources this installation can use, and what they cover.
 
-        Makes no provider requests at all. "Configured" means the required
-        credentials were present at startup — not that they are valid, that
+        Makes no provider requests at all. "Configured" means *you* have the
+        required credentials stored — not that they are valid, that
         authentication would succeed, or that quota remains.
         """
-        return tools.provider_status(runtime)
+        return await tools.provider_status(runtime)
 
 
 def _register_resources(server: MCPServer) -> None:

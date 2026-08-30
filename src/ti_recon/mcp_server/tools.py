@@ -24,6 +24,16 @@ The type name is safe to log; the message is not, so it is not logged.
 ``asyncio.CancelledError`` is a ``BaseException`` and is therefore untouched by
 both handlers. Cancellation propagates rather than becoming an analytical
 result.
+
+Identity
+--------
+
+Every tool resolves the principal itself, per call, and every investigation gets
+a fresh execution context. Nothing here accepts an identity as an argument: a
+model sets its own arguments, so a ``user_id`` field would be an identity from
+nobody. A call with no establishable principal is refused with a fixed message
+that describes nothing about the token — and once the HTTP layer exists it never
+reaches here, because the bearer middleware has already answered 401.
 """
 
 from __future__ import annotations
@@ -38,7 +48,9 @@ from ti_recon.application.models import AnalystInvestigationRequest, ObservableI
 from ti_recon.application.service import InvalidObservableError, hash_local_file
 from ti_recon.correlation.policy import PivotMode
 from ti_recon.enums import InvestigationDepth
+from ti_recon.execution.models import ExecutionContext
 from ti_recon.investigation.engine import InvestigationError
+from ti_recon.mcp_server.auth import RemoteAuthenticationError
 from ti_recon.mcp_server.models import ProviderStatusReport
 from ti_recon.mcp_server.runtime import McpRuntime
 from ti_recon.reporting.models import AnalystInvestigationReport
@@ -105,9 +117,40 @@ async def investigate_file(
     return await _investigate(runtime, request)
 
 
-def provider_status(runtime: McpRuntime) -> ProviderStatusReport:
-    """What this installation is set up to consult. Contacts nothing."""
-    return runtime.provider_status()
+async def provider_status(runtime: McpRuntime) -> ProviderStatusReport:
+    """What this installation is set up to consult, for whoever is asking.
+
+    Contacts nothing — no provider, no DNS, no authorization server. The
+    catalogue is shared; ``configured`` is answered from the caller's own stored
+    connections, so one analyst is never told about another's setup or about the
+    server's.
+    """
+    return await runtime.provider_status(user_id=_principal(runtime))
+
+
+def _principal(runtime: McpRuntime) -> str:
+    """Who this call belongs to, or a plain refusal.
+
+    Fails closed. There is no fallback to the stdio principal, to the OAuth
+    client id or to an anonymous tenant: serving one identity's work under
+    another's is exactly what the scope exists to prevent.
+
+    The message is fixed and describes nothing about the token — and once the
+    HTTP layer exists this is unreachable, because the bearer middleware has
+    already answered 401.
+    """
+    try:
+        return runtime.principals.user_id()
+    except RemoteAuthenticationError as error:
+        raise ToolError(str(error)) from None
+
+
+def _context(runtime: McpRuntime) -> ExecutionContext:
+    """A fresh isolation boundary for one invocation, or a plain refusal."""
+    try:
+        return runtime.execution_context()
+    except RemoteAuthenticationError as error:
+        raise ToolError(str(error)) from None
 
 
 def _request(**fields: object) -> AnalystInvestigationRequest:
@@ -147,8 +190,12 @@ async def _investigate(
     problem into a tool error would hide a real assessment behind an
     infrastructure complaint.
     """
+    # Built before the guard, and per call: the identity has to be the one
+    # authenticated for *this* request, and a failure to establish one is an
+    # authentication problem rather than an investigation that went wrong.
+    context = _context(runtime)
     try:
-        return await runtime.application.investigate(request, runtime.context)
+        return await runtime.application.investigate(request, context)
     except InvalidObservableError as error:
         # Reachable for input that parses as a string but is not an observable.
         raise ToolError(str(error)) from error
