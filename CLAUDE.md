@@ -1197,6 +1197,29 @@ about it.
      address a material need the run stops with `NO_ACTIONABLE_CONTINUATION`,
      because deciding an investigation should have been deeper is the caller's.
 
+111d. **The envelope freezes which capabilities, never how much coverage.**
+     Task 13's goal states the family target worth buying by default; Task 18
+     can hold a requirement that target satisfies numerically and not in
+     substance — a benign assessment on one origin needs an *independent* look,
+     and one family answering is exactly what met the base goal. A directive
+     therefore carries a typed `ContinuationNeed`: `MISSING_COVERAGE` is
+     ordinary planning, and `ADDITIONAL_COVERAGE` raises that capability's
+     family target to `covered + 1` for one round, reusing the breadth concept
+     the goal already has rather than adding a second notion of sufficiency. It
+     adds no capability, activates no goal, clears no coverage and names no
+     provider; Task 13 still ranks, still refuses an attempted call, still
+     honours a blocked provider and an excluded family, and still has to afford
+     it. Without the request the effective target is the goal's own, so an
+     ordinary Task 13 caller is unaffected. So
+     `continuation capabilities ⊆ initial admissible capabilities` holds while
+     `continuation source coverage ⊇ first-round source coverage` is allowed —
+     and a breadth need is expressed against the adverse-search capabilities
+     *this depth admits*, taken from Task 18's own published set, never against
+     the representative capability it happened to name. This is not provider
+     voting: Task 18 said a check was missing, Task 17 still decides what the
+     answer means, and the second source may return nothing, context, agreement,
+     contradiction or a relay of the first one's origin.
+
 112. **Pre-call family separation is a planning hint, not proof of
      independence.** A benign-challenge directive carries the families already
      known to share the benign basis's origin so the planner can prefer another,

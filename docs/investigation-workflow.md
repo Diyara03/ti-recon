@@ -166,6 +166,50 @@ with `NO_ACTIONABLE_CONTINUATION` and records the issue. Readiness is right that
 more data would help; deciding the investigation should have been deeper is the
 caller's decision, and starting one remains theirs to make.
 
+### Which capabilities, not how much coverage
+
+The envelope freezes **which** capabilities may be queried. It deliberately does
+not freeze **how much** source coverage may be collected for one of them.
+
+Task 13's goal says how much coverage is worth buying by default — a family
+target per capability per depth. Task 18 can hold a requirement that target
+satisfies numerically and not in substance: a benign assessment resting on one
+origin is not ready until somebody *independent* has looked, and "one family
+answered" is exactly what the base goal was satisfied by. Without a way to say
+so, the goal is skipped before any other rule is consulted and the eligible
+unattempted source that could meet the requirement is never considered.
+
+So a directive carries a typed `ContinuationNeed`:
+
+| Need | Meaning | Task 13 effect |
+| --- | --- | --- |
+| `MISSING_COVERAGE` | nobody has answered this capability yet | ordinary planning |
+| `ADDITIONAL_COVERAGE` | answered, base goal met, more breadth required | family target raised to `covered + 1`, for this capability, for this round |
+
+Expressed in the units the goal already uses, rather than as a parallel notion of
+sufficiency. It **never** adds a capability, activates a goal, clears coverage or
+names a provider — Task 13 still ranks, still refuses an attempted call, still
+honours a blocked provider and an excluded family, and still has to afford it.
+Without the request the effective target is the goal's own, so an ordinary Task
+13 caller sees no change at all.
+
+Formally, what is preserved and what is allowed to grow:
+
+```
+continuation capabilities   ⊆  initial admissible capabilities     (frozen)
+continuation source coverage ⊇ first-round source coverage         (may grow)
+```
+
+Only a Task 18 material need can raise the bar. `READY`,
+`READY_WITH_LIMITATIONS`, `BLOCKED` and `EXHAUSTED` reopen nothing, because none
+of them reaches `directives_for` at all.
+
+**This is not provider voting.** Task 19 is not saying two sources make a truth.
+Task 17 still decides semantics, independence, conflict and verdict; Task 18 said
+a *check* was missing, and the second source may return nothing, context,
+agreement, contradiction or a relay of the first one's origin. No outcome is
+assumed, and the check having run is the whole of what was obtained.
+
 ## 3b. Excluding a source family from one question
 
 Readiness can require an adverse search *independent* of whatever produced an
@@ -195,7 +239,11 @@ the investigation would end further from an answer than it began.
 
 Still not a proof of independence. A family nobody has linked to the origin is
 *potentially* independent; only the returned provenance settles it, and Task 17
-regroups from that afterwards.
+regroups from that afterwards. When the second family turns out to relay the
+first one's origin, Task 17 puts them in one component, Task 18 reports the
+challenge still missing, and — if a third family is admissible, unattempted and
+affordable — the next round avoids both. The exclusion set grows from what the
+responses proved, never from a comparison of provider ids.
 
 ## 4. Continuation directives name capabilities
 
