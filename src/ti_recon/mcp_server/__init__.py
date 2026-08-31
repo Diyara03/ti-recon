@@ -25,6 +25,7 @@ from ti_recon.mcp_server.http import (
     MCP_PATH,
     REMOTE_SCOPE,
     REMOTE_SCOPES,
+    RemoteHttpApp,
     RemoteHttpConfig,
     build_remote_http_app,
 )
@@ -68,6 +69,7 @@ __all__ = [
     "ProviderStatusReport",
     "RemoteAuthConfig",
     "RemoteAuthenticationError",
+    "RemoteHttpApp",
     "RemoteHttpConfig",
     "RemotePrincipal",
     "RemotePrincipalSource",

@@ -50,18 +50,19 @@ from dataclasses import dataclass, field
 from typing import Final
 from urllib.parse import urlparse
 
-from mcp.server import MCPServer
 from mcp.server.auth.provider import TokenVerifier
 from mcp.server.auth.routes import build_resource_metadata_url
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.transport_security import (
     DEFAULT_MAX_REQUEST_BODY_SIZE,
+    TransportSecurityMiddleware,
     TransportSecuritySettings,
 )
 from pydantic import AnyHttpUrl
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
+from starlette.types import Receive, Scope, Send
 
 from ti_recon.mcp_server.auth import RemoteAuthConfig, StrictTokenVerifier
 from ti_recon.mcp_server.runtime import McpRuntime
@@ -72,6 +73,7 @@ __all__ = [
     "MCP_PATH",
     "REMOTE_SCOPE",
     "REMOTE_SCOPES",
+    "RemoteHttpApp",
     "RemoteHttpConfig",
     "build_remote_http_app",
 ]
@@ -225,7 +227,7 @@ def build_remote_http_app(
     config: RemoteHttpConfig,
     auth: RemoteAuthConfig,
     delegate: TokenVerifier,
-) -> Starlette:
+) -> RemoteHttpApp:
     """The authenticated remote MCP application.
 
     ``delegate`` is the deployment's own verifier — a signed-JWT validator, an
@@ -237,6 +239,10 @@ def build_remote_http_app(
     the resource this app publishes is ``config.resource_url``. They must be the
     same string, and this refuses to build if they are not — two values that
     drifted apart would advertise one resource and accept tokens for another.
+
+    Returns the preflight gate wrapping the SDK's application, not the SDK's
+    application itself. See :class:`RemoteHttpApp` for why the order has to be
+    arranged from outside.
     """
     if auth.resource != config.resource_url:
         msg = "the verifier's expected resource must equal the published resource URL"
@@ -250,8 +256,7 @@ def build_remote_http_app(
         auth=config.auth_settings(),
         token_verifier=StrictTokenVerifier(delegate=delegate, config=auth),
     )
-    _register_health(server)
-    return server.streamable_http_app(
+    mcp_app = server.streamable_http_app(
         streamable_http_path=MCP_PATH,
         # Every 2026-07-28 request is self-contained already; this additionally
         # stops a handshake-era client creating a server-side transport session.
@@ -263,21 +268,118 @@ def build_remote_http_app(
         # Request in, response out. Nothing here streams progress.
         json_response=True,
         max_request_body_size=MAX_REQUEST_BODY_SIZE,
+        # Kept, and deliberately not weakened because the gate now checks the
+        # same things first. Defence in depth: a mistake in the outer wrapper
+        # must not silently disable the SDK's own protection.
         transport_security=config.transport_security(),
     )
+    return RemoteHttpApp(mcp_app=mcp_app, config=config)
 
 
-def _register_health(server: MCPServer) -> None:
-    """Deployment liveness, and nothing else.
+class RemoteHttpApp:
+    """The outermost ASGI application: a preflight gate over the MCP app.
 
-    The SDK's custom routes are documented as *not* requiring authorization, and
-    a health check is the use it names. So this must be safe to serve to the
-    public internet: it performs no token verification, no credential lookup, no
-    provider request and no dataset enumeration, and returns a fixed document.
+    Why a gate at all
+    -----------------
+
+    The SDK composes its Starlette application with
+    ``AuthenticationMiddleware(BearerAuthBackend)`` at the *application* level,
+    so it wraps the whole routing table — while ``TransportSecurityMiddleware``
+    runs *inside* the Streamable HTTP transport handler, which is reached only
+    after routing and after ``RequireAuthMiddleware``. Two consequences follow,
+    and both were measured rather than assumed:
+
+    * a request with an untrusted ``Host``, an untrusted ``Origin`` or a wrong
+      POST content type still had its bearer verified first — so a rebinding
+      probe or a content-type typo could drive a verifier that, for an
+      introspection-based deployment, makes a network call to the identity
+      provider;
+    * ``GET /health`` had its bearer verified too, because an app-level
+      middleware cannot know that one route was meant to be public.
+
+    Neither is a disclosure — the eventual answers were still ``421``/``403`` and
+    a fixed health document — but both let unauthenticated traffic reach the most
+    expensive thing in the request path. So the cheap checks are hoisted in front
+    of the whole SDK application, where they belong:
+
+    ``Host -> Origin -> content type -> public route -> OAuth -> scope -> tool``.
+
+    What it does not do
+    -------------------
+
+    It parses no ``Authorization`` header, reads no bearer, understands no scope,
+    builds no ``WWW-Authenticate`` and generates no metadata. OAuth stays entirely
+    inside the SDK. This layer decides only whether a request is *eligible* to
+    reach the authenticated application.
+
+    It also invents no Host or Origin rules: validation is delegated to the SDK's
+    own :class:`~mcp.server.transport_security.TransportSecurityMiddleware`,
+    built from the same :class:`RemoteHttpConfig` the inner transport gets. One
+    configuration, two enforcement points — never two policies.
+    """
+
+    def __init__(self, *, mcp_app: Starlette, config: RemoteHttpConfig) -> None:
+        self.mcp_app = mcp_app
+        self.config = config
+        #: The SDK's own validator, over the same settings the transport holds.
+        self._security = TransportSecurityMiddleware(config.transport_security())
+        self._metadata_path = urlparse(config.resource_metadata_url).path
+
+    #: Paths this gate answers itself, without entering the SDK application.
+    @property
+    def public_paths(self) -> tuple[str, ...]:
+        return (HEALTH_PATH,)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            # Lifespan passes straight through, unexamined. The SDK application
+            # owns the Streamable HTTP session manager's lifecycle, and it must
+            # start exactly once for the process — not once per request, and not
+            # once per wrapper.
+            await self.mcp_app(scope, receive, send)
+            return
+
+        rejection = await self._preflight(scope, receive)
+        if rejection is not None:
+            await rejection(scope, receive, send)
+            return
+
+        if scope["path"] == HEALTH_PATH:
+            await _health(scope, receive, send)
+            return
+
+        await self.mcp_app(_without_authorization(scope, self._metadata_path), receive, send)
+
+    async def _preflight(self, scope: Scope, receive: Receive) -> Response | None:
+        """The SDK's own Host/Origin/content-type check, run first.
+
+        The content-type rule applies only to a POST at the MCP path, which is
+        the one place the SDK itself applies it. ``GET /health`` and the metadata
+        endpoint carry no JSON requirement, and inventing one for them would be a
+        rule this repository made up.
+
+        The request body is never read here — only headers — so ``receive`` is
+        handed onwards untouched and the MCP transport still sees a complete
+        request.
+        """
+        request = Request(scope, receive)
+        is_post = scope["method"] == "POST" and scope["path"] == MCP_PATH
+        return await self._security.validate_request(request, is_post=is_post)
+
+
+async def _health(scope: Scope, receive: Receive, send: Send) -> None:
+    """Deployment liveness, answered before the SDK application is entered.
+
+    Served by the gate rather than as an SDK custom route, which is the whole
+    point: a custom route still sits behind the app-level authentication
+    middleware, so a caller sending ``Authorization: Bearer garbage`` to a
+    *public* endpoint drove a token verification. Here nothing about
+    authentication is reachable — no middleware, no verifier, no principal
+    resolver, no credential store, no executor.
 
     It says nothing about the deployment. No version, no issuer, no resource URL,
-    no provider counts, no configured tenants, no uptime, no cache state — each
-    of those is a small gift to somebody deciding whether this host is worth
+    no provider counts, no configured tenants, no uptime, no cache state — each of
+    those is a small gift to somebody deciding whether this host is worth
     attacking, and none of them helps a load balancer.
 
     Deliberately not called *readiness*: Task 18 owns that word for whether the
@@ -286,15 +388,33 @@ def _register_health(server: MCPServer) -> None:
     readiness probe waits for Task 24, where there is a credential backend whose
     reachability would be worth reporting.
     """
+    if scope["method"] not in ("GET", "HEAD"):
+        await Response(status_code=405, headers={"allow": "GET, HEAD"})(scope, receive, send)
+        return
+    await JSONResponse({"status": "ok"})(scope, receive, send)
 
-    async def health(request: Request) -> JSONResponse:
-        del request
-        return JSONResponse({"status": "ok"})
 
-    # Registered by call rather than as a decorator: ``custom_route`` is
-    # unannotated in the SDK, and decorating with it would erase this handler's
-    # own types under strict mypy.
-    server.custom_route(HEALTH_PATH, methods=["GET"], include_in_schema=False)(health)
+def _without_authorization(scope: Scope, metadata_path: str) -> Scope:
+    """Drop the ``Authorization`` header on the public metadata path only.
+
+    RFC 9728 protected-resource metadata is unconditionally public — a client
+    reads it precisely *because* it was refused, and no token it holds is
+    meaningful there. But the SDK's authentication middleware is app-level, so a
+    bearer sent to that route was verified anyway.
+
+    Removing the header is enough to make the SDK skip verification, and it
+    changes nothing else: the route is unauthenticated either way and returns the
+    same SDK-generated document. Nothing is copied, rebuilt or re-routed — the
+    metadata stays the SDK's.
+
+    The path comparison is exact, and it fails in the safe direction: matching
+    too broadly would strip a bearer from a *protected* path, which turns into a
+    401 rather than into access.
+    """
+    if scope["path"] != metadata_path:
+        return scope
+    headers = [(key, value) for key, value in scope["headers"] if key.lower() != b"authorization"]
+    return {**scope, "headers": headers}
 
 
 def _require(value: object, message: str) -> None:
