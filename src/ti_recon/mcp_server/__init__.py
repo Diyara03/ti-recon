@@ -8,10 +8,12 @@ subject, request-scoped identity so one shared application can serve many
 analysts in isolation, and an ASGI Streamable HTTP application over the same
 Task 20 stack.
 
-The remote surface is a *factory*, not a process. Running it needs a real token
-verifier, and that means an identity platform; a console entry point could only
-be built today around a verifier that must never exist. The deployment injects
-its own delegate.
+Task 22's final piece is the production delegate — a JWT/JWKS verifier that
+validates signed access tokens against an authorization server's published public
+keys — and the ``ti-recon-mcp-http`` process that runs the whole thing on one
+worker. Neither names an identity provider: configuration is an issuer, a JWKS
+URL, a resource and an algorithm allowlist, and any OAuth server issuing
+compatible JWT access tokens works with the same code.
 """
 
 from ti_recon.mcp_server.auth import (
@@ -28,6 +30,11 @@ from ti_recon.mcp_server.http import (
     RemoteHttpApp,
     RemoteHttpConfig,
     build_remote_http_app,
+)
+from ti_recon.mcp_server.jwt_auth import (
+    JwtJwksTokenVerifier,
+    JwtVerifierConfig,
+    TokenProfile,
 )
 from ti_recon.mcp_server.limits import TenantBusyError, TenantInvestigationLimiter
 from ti_recon.mcp_server.models import ProviderStatusItem, ProviderStatusReport
@@ -63,6 +70,8 @@ __all__ = [
     "STDIO_PRINCIPAL",
     "TENANT_ID_PREFIX",
     "FixedPrincipal",
+    "JwtJwksTokenVerifier",
+    "JwtVerifierConfig",
     "McpRuntime",
     "PrincipalSource",
     "ProviderStatusItem",
@@ -76,6 +85,7 @@ __all__ = [
     "StrictTokenVerifier",
     "TenantBusyError",
     "TenantInvestigationLimiter",
+    "TokenProfile",
     "build_mcp_server",
     "build_remote_http_app",
     "build_remote_runtime",

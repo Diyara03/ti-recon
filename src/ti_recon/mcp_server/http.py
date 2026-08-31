@@ -46,8 +46,10 @@ performance note.
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Final
+from typing import Final, Protocol, runtime_checkable
 from urllib.parse import urlparse
 
 from mcp.server.auth.provider import TokenVerifier
@@ -62,7 +64,7 @@ from pydantic import AnyHttpUrl
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from starlette.types import Receive, Scope, Send
+from starlette.types import Message, Receive, Scope, Send
 
 from ti_recon.mcp_server.auth import RemoteAuthConfig, StrictTokenVerifier
 from ti_recon.mcp_server.runtime import McpRuntime
@@ -73,8 +75,10 @@ __all__ = [
     "MCP_PATH",
     "REMOTE_SCOPE",
     "REMOTE_SCOPES",
+    "ClosableVerifier",
     "RemoteHttpApp",
     "RemoteHttpConfig",
+    "ResourceScopedVerifier",
     "build_remote_http_app",
 ]
 
@@ -104,6 +108,8 @@ HEALTH_PATH: Final[str] = "/health"
 #: an unresearched number invented for appearance. Task 24 tunes the application
 #: and the ingress together, where the two can be made to agree.
 MAX_REQUEST_BODY_SIZE: Final[int] = DEFAULT_MAX_REQUEST_BODY_SIZE
+
+_LOGGER = logging.getLogger("ti_recon.mcp_server")
 
 
 @dataclass(frozen=True)
@@ -250,6 +256,7 @@ def build_remote_http_app(
     if auth.issuer != config.issuer_url:
         msg = "the verifier's expected issuer must equal the published issuer URL"
         raise ValueError(msg)
+    _check_delegate_agrees(delegate, config)
 
     server = build_remote_server(
         runtime,
@@ -273,7 +280,56 @@ def build_remote_http_app(
         # must not silently disable the SDK's own protection.
         transport_security=config.transport_security(),
     )
-    return RemoteHttpApp(mcp_app=mcp_app, config=config)
+    return RemoteHttpApp(mcp_app=mcp_app, config=config, closers=_closers(delegate))
+
+
+@runtime_checkable
+class ResourceScopedVerifier(Protocol):
+    """A delegate that knows which issuer and resource it was configured for.
+
+    Optional: the ``TokenVerifier`` contract says nothing about configuration, so
+    a delegate this repository did not write may not expose either. Where one
+    does, the factory checks it — three values naming the same resource are three
+    chances for two of them to drift apart, and a server advertising one resource
+    while accepting tokens minted for another is the confused-deputy shape.
+    """
+
+    @property
+    def expected_issuer(self) -> str: ...
+
+    @property
+    def expected_resource(self) -> str: ...
+
+
+@runtime_checkable
+class ClosableVerifier(Protocol):
+    """A delegate holding something that has to be released at shutdown."""
+
+    async def aclose(self) -> None: ...
+
+
+def _check_delegate_agrees(delegate: TokenVerifier, config: RemoteHttpConfig) -> None:
+    """One canonical resource and issuer, enforced wherever it can be seen."""
+    if not isinstance(delegate, ResourceScopedVerifier):
+        return
+    if delegate.expected_resource != config.resource_url:
+        msg = "the delegate verifier's resource must equal the published resource URL"
+        raise ValueError(msg)
+    if delegate.expected_issuer != config.issuer_url:
+        msg = "the delegate verifier's issuer must equal the published issuer URL"
+        raise ValueError(msg)
+
+
+def _closers(delegate: TokenVerifier) -> tuple[Callable[[], Awaitable[None]], ...]:
+    """What the lifespan must release on shutdown.
+
+    A JWKS verifier holds one HTTP client for the process; nothing else does. The
+    application lifespan owns it, so it is created once and closed once rather
+    than per request.
+    """
+    if isinstance(delegate, ClosableVerifier):
+        return (delegate.aclose,)
+    return ()
 
 
 class RemoteHttpApp:
@@ -318,9 +374,16 @@ class RemoteHttpApp:
     configuration, two enforcement points — never two policies.
     """
 
-    def __init__(self, *, mcp_app: Starlette, config: RemoteHttpConfig) -> None:
+    def __init__(
+        self,
+        *,
+        mcp_app: Starlette,
+        config: RemoteHttpConfig,
+        closers: tuple[Callable[[], Awaitable[None]], ...] = (),
+    ) -> None:
         self.mcp_app = mcp_app
         self.config = config
+        self._closers = closers
         #: The SDK's own validator, over the same settings the transport holds.
         self._security = TransportSecurityMiddleware(config.transport_security())
         self._metadata_path = urlparse(config.resource_metadata_url).path
@@ -331,11 +394,14 @@ class RemoteHttpApp:
         return (HEALTH_PATH,)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "lifespan":
+            # Delegated, not reimplemented: the SDK application still owns the
+            # Streamable HTTP session manager, which must start exactly once for
+            # the process — not per request, and not in this wrapper. The only
+            # thing added is releasing what the verifier holds, on the way out.
+            await self.mcp_app(scope, receive, self._closing_send(send))
+            return
         if scope["type"] != "http":
-            # Lifespan passes straight through, unexamined. The SDK application
-            # owns the Streamable HTTP session manager's lifecycle, and it must
-            # start exactly once for the process — not once per request, and not
-            # once per wrapper.
             await self.mcp_app(scope, receive, send)
             return
 
@@ -349,6 +415,26 @@ class RemoteHttpApp:
             return
 
         await self.mcp_app(_without_authorization(scope, self._metadata_path), receive, send)
+
+    def _closing_send(self, send: Send) -> Send:
+        """Run the shutdown closers just before the application reports done.
+
+        Before rather than after, so the process does not report a clean shutdown
+        while a socket is still open. A closer that raises is logged by type and
+        swallowed: a failure to release a client must not turn an orderly
+        shutdown into a crash.
+        """
+
+        async def wrapped(message: Message) -> None:
+            if message["type"] == "lifespan.shutdown.complete":
+                for close in self._closers:
+                    try:
+                        await close()
+                    except Exception as error:
+                        _LOGGER.warning("shutdown close failed: %s", type(error).__name__)
+            await send(message)
+
+        return wrapped
 
     async def _preflight(self, scope: Scope, receive: Receive) -> Response | None:
         """The SDK's own Host/Origin/content-type check, run first.
