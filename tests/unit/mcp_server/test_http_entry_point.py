@@ -412,12 +412,24 @@ def test_the_production_decode_enables_the_minimum_key_length_check() -> None:
     assert enforced == [True]
 
 
-def test_the_pyjwt_floor_excludes_the_unpatched_crit_handling() -> None:
-    """TI Recon relies on PyJWT to reject unknown critical header extensions.
+def test_the_pyjwt_floor_is_the_hardened_security_baseline() -> None:
+    """The remote verifier delegates real security decisions to PyJWT.
 
-    Releases before 2.10.1 accepted them. The lock resolves to 2.13, but a lock
-    is regenerated and a floor is what actually constrains: the specifier must
-    not admit a version missing security behaviour this repository depends on.
+    Three of them: PyJWK binding a key to the algorithm it was published for,
+    ``enforce_minimum_key_length`` turning an undersized RSA modulus into an
+    error rather than a warning, and rejection of unknown critical (``crit``)
+    header extensions. TI Recon deliberately does not reimplement any of them,
+    so the library version *is* part of the security contract.
+
+    2.13 is the baseline those behaviours were validated against here — not
+    merely what today's lockfile happens to resolve to. A lock is regenerated;
+    the specifier is what actually constrains an install, and an older release
+    would quietly move these checks back into the library's permissive defaults
+    while every test in this repository still passed.
+
+    Both halves matter. The floor must exclude anything below 2.13, and the
+    ceiling must stay open within 2.x so compatible security updates remain
+    installable rather than requiring a manifest edit.
     """
     import re
 
@@ -425,11 +437,21 @@ def test_the_pyjwt_floor_excludes_the_unpatched_crit_handling() -> None:
     match = re.search(r'"pyjwt\[crypto\]([^"]*)"', manifest)
     assert match is not None
     specifier = match.group(1)
+
     floor = re.search(r">=(\d+)\.(\d+)", specifier)
-    assert floor is not None
-    assert (int(floor.group(1)), int(floor.group(2))) >= (2, 10)
-    # And still open to compatible security updates rather than pinned exactly.
-    assert "<3" in specifier
+    assert floor is not None, specifier
+    assert (int(floor.group(1)), int(floor.group(2))) >= (2, 13), specifier
+    assert "<3" in specifier, specifier
+    # Not pinned to one release: `==` would refuse the next security patch.
+    assert "==" not in specifier, specifier
+
+    # And the resolved environment actually satisfies it, so the constraint and
+    # the lock cannot drift apart unnoticed.
+    import importlib.metadata
+
+    installed = importlib.metadata.version("pyjwt")
+    major, minor = (int(part) for part in installed.split(".")[:2])
+    assert (major, minor) >= (2, 13), installed
 
 
 def test_cryptography_is_not_declared_separately() -> None:

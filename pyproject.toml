@@ -23,10 +23,16 @@ dependencies = [
     # than an ImportError in production. The `crypto` extra is what supplies
     # asymmetric (RS256/PS256/ES256) verification; without it PyJWT can only do
     # HMAC, which this repository refuses for a resource server.
-    # Floor at 2.10.1: earlier releases accepted unknown `crit` header
-    # extensions, which TI Recon relies on PyJWT to reject. Not pinned exactly,
-    # so compatible security updates stay installable.
-    "pyjwt[crypto]>=2.10.1,<3",
+    # Floored at 2.13 for security behaviour the remote verifier delegates to
+    # the library rather than reimplementing: PyJWK binding a key to the
+    # algorithm it was published for, `enforce_minimum_key_length` turning an
+    # undersized RSA modulus into an error instead of a warning, and rejection
+    # of unknown critical (`crit`) header extensions. This is the baseline the
+    # verifier's security tests were written and run against; an older release
+    # would silently move checks TI Recon depends on back into the library's
+    # permissive defaults. Not pinned exactly, so compatible 2.x security
+    # updates stay installable.
+    "pyjwt[crypto]>=2.13,<3",
     "uvicorn>=0.34,<1",
 ]
 
