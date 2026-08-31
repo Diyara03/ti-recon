@@ -37,7 +37,12 @@ from fixtures.investigation.stack import InvestigationStack, ScriptedProvider
 from fixtures.mcp_server.auth import access_token, auth_config
 from ti_recon.application.composition import CredentialLoadReport
 from ti_recon.application.service import InvestigationApplication
-from ti_recon.mcp_server.http import MCP_PATH, RemoteHttpConfig, build_remote_http_app
+from ti_recon.mcp_server.http import (
+    MCP_PATH,
+    RemoteHttpApp,
+    RemoteHttpConfig,
+    build_remote_http_app,
+)
 from ti_recon.mcp_server.limits import TenantInvestigationLimiter
 from ti_recon.mcp_server.runtime import McpRuntime, RemotePrincipalSource
 from ti_recon.providers.adapter import ProviderAdapter
@@ -293,3 +298,92 @@ async def initialize_legacy(
     }
     async with harness.client() as client:
         return await client.post(MCP_PATH, content=json.dumps(body), headers=headers)
+
+
+@dataclass
+class CountingVerifier:
+    """Records only *how many times* it was asked, never what it was handed.
+
+    A counter rather than a log of bearer strings, because a fixture that
+    accumulated tokens would be the one place in the test suite holding them.
+    """
+
+    calls: int = 0
+    result: AccessToken | None = None
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        del token
+        self.calls += 1
+        return self.result
+
+
+@dataclass
+class RefusingVerifier:
+    """Fails loudly if it is ever reached.
+
+    Stronger than a counter for the rejection cases: a counter proves a number,
+    this proves the code path. If ordering regresses, the test fails inside the
+    verifier with the reason written on it rather than on an assertion three
+    frames away.
+    """
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        del token
+        msg = "verifier must not be called"
+        raise AssertionError(msg)
+
+
+@asynccontextmanager
+async def gated_app(
+    delegate: Any, *, config: RemoteHttpConfig | None = None
+) -> AsyncIterator[RemoteHttpApp]:
+    """The real remote app over a chosen verifier, with its lifespan running.
+
+    No engine underneath: these tests are about what happens *before* a request
+    could reach one, so a runtime that would explode if entered is the honest
+    stand-in — and proves nothing below the gate ran.
+    """
+    settings = http_config() if config is None else config
+    auth = auth_config(issuer=settings.issuer_url, resource=settings.resource_url)
+    stack = InvestigationStack(providers=[])
+    runtime = McpRuntime(
+        application=InvestigationApplication(orchestrator=stack.orchestrator),
+        credentials=CredentialLoadReport(),
+        connections=stack.connections,
+        principals=RemotePrincipalSource(auth),
+        adapters=(),
+        investigations=TenantInvestigationLimiter(),
+    )
+    app = build_remote_http_app(runtime, config=settings, auth=auth, delegate=delegate)
+    async with _lifespan(app):
+        yield app
+
+
+async def raw(
+    app: RemoteHttpApp,
+    method: str,
+    path: str,
+    *,
+    headers: dict[str, str] | None = None,
+    body: str | None = None,
+) -> httpx.Response:
+    """One HTTP request against the gate, with the headers exactly as given."""
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url=f"https://{HOST}"
+    ) as client:
+        return await client.request(method, path, headers=headers, content=body)
+
+
+def remote_token(**overrides: Any) -> AccessToken:
+    """A verified token for *this* deployment's issuer, resource and scope.
+
+    One helper, so a test cannot accidentally build a token for the auth
+    fixture's resource while driving an app configured for a different one — a
+    mismatch the strict verifier is right to refuse and which reads as an
+    unrelated failure.
+    """
+    overrides.setdefault("issuer", ISSUER)
+    overrides.setdefault("resource", RESOURCE)
+    overrides.setdefault("scopes", [SCOPE])
+    overrides.setdefault("subject", "alice")
+    return access_token(**overrides)

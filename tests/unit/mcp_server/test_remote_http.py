@@ -588,17 +588,20 @@ async def test_health_is_public_fixed_and_says_nothing_about_the_deployment() ->
 async def test_health_is_the_only_route_this_repository_adds_unauthenticated() -> None:
     """Everything else on the app is either protected or SDK-required metadata.
 
-    Enumerated from the app's own routing table rather than asserted in prose, so
-    a future custom route cannot quietly join the public set.
+    Enumerated from the real routing tables rather than asserted in prose, so a
+    future route cannot quietly join the public set. Two tables now: the gate
+    answers ``/health`` itself, and the SDK application holds the rest.
     """
     async with remote_harness([_provider()]) as harness:
-        paths = {getattr(route, "path", None) for route in harness.app.routes}
+        inner = {getattr(route, "path", None) for route in harness.app.mcp_app.routes}
+        outer = set(harness.app.public_paths)
 
-    assert paths == {
-        MCP_PATH,
-        HEALTH_PATH,
-        "/.well-known/oauth-protected-resource/mcp",
-    }
+    assert outer == {HEALTH_PATH}
+    assert inner == {MCP_PATH, "/.well-known/oauth-protected-resource/mcp"}
+    # The gate serves health, so the SDK application no longer carries a custom
+    # route for it — one implementation, in the one place that can keep it
+    # outside the app-level authentication middleware.
+    assert HEALTH_PATH not in inner
 
 
 @pytest.mark.asyncio

@@ -619,3 +619,73 @@ def test_no_remote_console_script_is_published() -> None:
     assert "uvicorn" not in manifest
     for path, source in _sources():
         assert "--workers" not in source, path.name
+
+
+def test_nothing_below_the_boundary_imports_the_http_gate() -> None:
+    """The preflight gate is transport composition and stays above the engine.
+
+    It knows HTTP and configuration; it must never learn that providers,
+    executors or reasoning exist, and nothing in the engine may reach up to it.
+    """
+    for path, source in _engine_sources():
+        assert "RemoteHttpApp" not in source, path
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                assert "mcp_server" not in node.module, f"{path} imports {node.module}"
+
+
+def test_the_http_gate_knows_only_transport_configuration() -> None:
+    """No adapter, no executor, no credential loader, no reasoning engine."""
+    tree = ast.parse((MCP_PACKAGE / "http.py").read_text(encoding="utf-8"))
+    forbidden = (
+        "ti_recon.providers",
+        "ti_recon.execution",
+        "ti_recon.reasoning",
+        "ti_recon.planning",
+        "ti_recon.correlation",
+        "ti_recon.investigation",
+    )
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            assert not node.module.startswith(forbidden), node.module
+    for name in ("ProviderExecutor", "CredentialResolver", "load_environment_credentials"):
+        assert name not in (MCP_PACKAGE / "http.py").read_text(encoding="utf-8"), name
+
+
+def test_no_sdk_class_is_monkeypatched_or_reached_into_privately() -> None:
+    """Ordering is arranged by ASGI composition, not by rewriting the SDK.
+
+    A global replacement of ``BearerAuthBackend`` or a patched
+    ``AuthenticationMiddleware`` would work in tests and be invisible to anybody
+    reading the deployment.
+    """
+    tree = ast.parse((MCP_PACKAGE / "http.py").read_text(encoding="utf-8"))
+    # Symbols, not prose: the module's docstring explains the SDK's composition
+    # at length, and it should. What matters is what the code touches.
+    symbols = frozenset({"BearerAuthBackend", "AuthenticationMiddleware", "setattr"})
+    privates = frozenset(
+        {"_lowlevel_server", "_session_manager", "_custom_starlette_routes", "__dict__"}
+    )
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                assert alias.name not in symbols, alias.name
+        if isinstance(node, ast.Name):
+            assert node.id not in symbols, node.id
+        if isinstance(node, ast.Attribute):
+            assert node.attr not in symbols | privates, node.attr
+
+
+def test_the_gate_adds_no_security_configuration_flag() -> None:
+    """These are mandatory semantics, not options somebody can turn off."""
+    source = (MCP_PACKAGE / "http.py").read_text(encoding="utf-8")
+    for banned in (
+        "pre_auth_enabled",
+        "health_skip_auth",
+        "bypass_verifier",
+        "pre_auth_allowed_hosts",
+        "mcp_allowed_hosts",
+        "skip_transport_security",
+    ):
+        assert banned not in source, banned
