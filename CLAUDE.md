@@ -152,9 +152,11 @@ Implemented (Jira Tasks 1-19):
   over the validated issuer and subject; `ExecutionContext` is request-scoped and
   `provider_status` principal-scoped, over one shared application.
   `build_remote_http_app` produces an OAuth-protected Streamable HTTP ASGI app
-  with an explicit Host/Origin policy, `stateless_http`, a two-tool surface
-  without `investigate_file`, both schema resources, a public `/health`, and one
-  concurrent investigation per tenant. **Still a factory, not a service**: no
+  behind a `RemoteHttpApp` preflight gate — Host, Origin and POST content type
+  are checked, and `/health` answered, before the SDK's authentication
+  middleware is entered — with `stateless_http`, a two-tool surface without
+  `investigate_file`, both schema resources and one concurrent investigation per
+  tenant. **Still a factory, not a service**: no
   console entry point, no bundled ASGI server, no deployment, and no token
   verifier — one needs an identity platform, which the next phase chooses.
 
@@ -1662,15 +1664,61 @@ about it.
      sticky routing is needed, but shared execution state is Task 24's and until
      it exists a deployer runs exactly one worker.
 
-149. **`/health` is public and says one thing.** The SDK's custom routes are
-     unauthenticated by design, so this must be safe to serve to the internet: no
-     token verification, no credential lookup, no provider request, no dataset
-     enumeration, and no version, issuer, resource URL, provider count, tenant
-     count, uptime or cache state. It is not called *readiness* — Task 18 owns
-     that word for coverage adequacy, and one term meaning two things is how
-     somebody acts on the wrong one. A test enumerates the app's routing table so
-     `/mcp`, `/health` and the SDK's protected-resource metadata stay the only
-     paths and a future custom route cannot quietly join the public set.
+149. **`/health` is public, verifier-free and says one thing.** Answered by the
+     preflight gate *before* the SDK application is entered — an SDK custom route
+     is unauthenticated but still sits behind the app-level authentication
+     middleware, so a bearer sent to it was verified anyway. From the gate there
+     is no middleware to sit behind: no `BearerAuthBackend`, no verifier, no
+     principal resolver, no credential store, no executor, and the test uses a
+     verifier that *raises* rather than one that counts. It still obeys the
+     transport policy, carries no JSON requirement on a `GET`, and reveals no
+     version, issuer, resource URL, provider count, tenant count, uptime or cache
+     state. It is not called *readiness* — Task 18 owns that word for coverage
+     adequacy, and one term meaning two things is how somebody acts on the wrong
+     one. Tests enumerate both routing tables so a future route cannot quietly
+     join the public set.
+
+150. **Cheap transport checks run before token verification, and the order is
+     TI Recon's to arrange.** The SDK installs `AuthenticationMiddleware` at the
+     *application* level while `TransportSecurityMiddleware` runs inside the
+     Streamable HTTP handler, so an untrusted `Host`, an untrusted `Origin` and a
+     wrong POST content type each had their bearer verified first — and answered
+     `401` rather than `421`/`403`, because the token was consulted before the
+     host was. Verification is the most expensive thing in the path; for an
+     introspection delegate it is a network call to the identity provider, so
+     unauthenticated traffic must not be able to drive it. `RemoteHttpApp` hoists
+     the checks in front of the whole SDK application:
+     `Host -> Origin -> content type -> public route -> OAuth -> scope -> tool`.
+
+151. **The gate reuses the SDK's transport semantics and reimplements no OAuth.**
+     It delegates to the SDK's own `TransportSecurityMiddleware` rather than
+     carrying a second wildcard parser, and both enforcement points are built
+     from the same `RemoteHttpConfig` — one configuration, never two policies,
+     and no `pre_auth_*` or `*_skip_auth` flag, because these are mandatory
+     semantics rather than options. The inner check stays enabled as defence in
+     depth, so a mistake in the gate cannot silently disable the SDK's; a test
+     drives the inner application directly to prove it still refuses. The gate
+     parses no `Authorization` header, reads no bearer, understands no scope,
+     builds no `WWW-Authenticate` and generates no metadata: it decides only
+     whether a request is *eligible* to reach the authenticated application.
+
+152. **Public metadata stays the SDK's, and the bearer is dropped rather than
+     verified.** RFC 9728 metadata is unconditionally public — a client reads it
+     because it was refused — so a token sent there is meaningless, and the gate
+     removes the header on that exact path instead of letting the SDK verify one.
+     Nothing is copied, rebuilt or re-routed; the document is byte-identical with
+     and without a bearer. The path match is exact and fails safe: matching too
+     broadly would strip a bearer from a protected path, which becomes a `401`
+     rather than access. TI Recon builds no OAuth document of its own.
+
+153. **The gate is a raw ASGI wrapper, and lifespan ownership does not move.**
+     Not a `Mount`: lifespan events pass through unexamined to the SDK
+     application, which keeps owning the Streamable HTTP session manager —
+     `run()` refuses a second call on one instance, so it must start exactly once
+     per process, never per request and never in a wrapper. A test builds the app
+     with no lifespan at all and asserts `/mcp` raises while `/health` still
+     answers, so no other test in that file can be passing because a fixture
+     started something a real ASGI server would not.
 
 
 ## Security rules
@@ -1835,6 +1883,12 @@ about it.
   transport's `_apply_auth`, and nothing below `mcp_server/` can reach an access
   token at all. A runtime regression drives the real seam with a planted token
   and asserts it reaches no provider request, report, result, log or exception.
+- **A rejected transport request never reaches the token verifier.** An
+  untrusted `Host` or `Origin`, a wrong POST content type and every request to
+  `/health` are answered before the SDK's authentication middleware is entered.
+  Verification is the one step that may make a network call to an identity
+  provider, so unauthenticated traffic must not be able to drive it — and the
+  tests prove it with a verifier that raises rather than a counter.
 - **A raw subject never travels below the MCP layer, and neither does a raw
   issuer.** What crosses is a keyed `tenant-v1:` HMAC, so a subject that is an
   email address or an employee number never reaches a cache key, a cooldown key,
@@ -1978,8 +2032,8 @@ src/ti_recon/
                      derivation), limits (one investigation per tenant), tools
                      (the three implementations and the error policy), server
                      (the two deployment profiles, annotations and resources),
-                     http (the ASGI app, its fail-closed configuration and
-                     /health), main (stdio process)
+                     http (the preflight gate, the ASGI app, its fail-closed
+                     configuration and /health), main (stdio process)
   cli/               Task 20: the `ti-recon` command. parser (argparse; no
                      credential or provider flags), main (streams, exit codes),
                      runtime (the one composition root a local invocation uses)

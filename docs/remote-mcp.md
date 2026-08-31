@@ -12,9 +12,13 @@ HTTP surface that identity protects**.
 > server is `ti-recon-mcp` over stdio, documented in [mcp.md](mcp.md).
 
 ```
-HTTPS ingress -> ASGI app -> Host/Origin check -> bearer auth
-              -> RemotePrincipal -> request-scoped ExecutionContext
-              -> Task 20 -> 19 -> 13 -> 6 -> providers
+HTTPS ingress
+  -> transport preflight   Host, Origin, POST content type
+  -> public routing        /health answered here, never below
+  -> OAuth verification    the delegate, then the strict wrapper
+  -> scope enforcement     ti-recon:investigate
+  -> RemotePrincipal -> request-scoped ExecutionContext
+  -> Task 20 -> 19 -> 13 -> 6 -> providers
 ```
 
 ## The role TI Recon plays
@@ -296,6 +300,48 @@ can be added beside it rather than by redefining this one.
 Scope is enforced by the SDK's middleware, before any handler runs. No tool
 contains a scope check; one policy, in one place.
 
+### Cheap checks come first
+
+`build_remote_http_app` returns a `RemoteHttpApp` — a thin ASGI gate over the
+SDK's Starlette application — rather than the SDK application itself. That is
+not decoration: the order matters, and the SDK cannot arrange it from inside.
+
+The SDK installs `AuthenticationMiddleware(BearerAuthBackend)` as Starlette
+*application* middleware, so it wraps the whole routing table, while
+`TransportSecurityMiddleware` runs inside the Streamable HTTP transport handler —
+after routing and after `RequireAuthMiddleware`. Measured before the gate
+existed:
+
+| request | status | verifier calls |
+| --- | --- | --- |
+| bad `Host` + invalid bearer | 401 | **1** |
+| bad `Origin` + invalid bearer | 401 | **1** |
+| `text/plain` POST + invalid bearer | 401 | **1** |
+| `GET /health` + garbage bearer | 200 | **1** |
+| metadata + garbage bearer | 200 | **1** |
+
+None of those leaked anything — the eventual answers were correct. But all of
+them let unauthenticated traffic drive the most expensive thing in the request
+path, which for an introspection-based delegate is a network call to the identity
+provider. And the first three never reached the Host check at all: the invalid
+bearer answered first, so a rebinding probe was being told "bad token" rather
+than "wrong host".
+
+The gate hoists the cheap checks in front of the whole SDK application. All five
+rows are now **0**.
+
+It parses no `Authorization` header, reads no bearer, understands no scope,
+builds no `WWW-Authenticate` and generates no metadata — OAuth stays entirely
+inside the SDK. It decides only whether a request is *eligible* to reach the
+authenticated application.
+
+It also invents no Host or Origin rules. Validation is delegated to the SDK's own
+`TransportSecurityMiddleware`, built from the same `RemoteHttpConfig` the inner
+transport receives: **one configuration, two enforcement points, never two
+policies.** The inner check stays enabled as defence in depth, so a mistake in
+the gate cannot silently disable the SDK's protection — a test drives the inner
+application directly to prove it still refuses an untrusted Host.
+
 ### The flow a client sees
 
 | Step | Result |
@@ -313,12 +359,10 @@ publish in protected-resource metadata — so this is an interoperability note
 rather than a defect, and it is pinned by a test rather than patched. Revisit only
 if real Claude Code OAuth fails.
 
-**A second one.** Starlette's authentication middleware sits *outside* the route,
-so the bearer is verified before the Host check. A rebinding request with a stolen
-token can therefore cause one token verification before its `421`. Nothing else
-runs — no handler, no credential lookup, no provider call — so this is a
-rate-limiting consideration for the ingress rather than a disclosure. Also pinned
-by a test.
+**A second one, since fixed.** Starlette's authentication middleware sits outside
+the route, so the bearer used to be verified before the Host check. That is what
+the preflight gate above now prevents; the SDK behaviour is unchanged and still
+visible if the inner application is driven directly.
 
 ### The remote tool surface
 
@@ -380,6 +424,19 @@ and there is no proxy middleware to configure. TLS terminates at the ingress; th
 internal bind may be plain HTTP, and the public scheme is configured rather than
 sniffed.
 
+### Lifespan ownership
+
+The gate is a raw ASGI wrapper, not a Starlette `Mount`. Lifespan events pass
+straight through to the SDK application, which keeps owning the Streamable HTTP
+session manager — `run()` refuses a second call on one instance, so ownership has
+to stay in one place.
+
+Two tests hold that down: one drives several requests plus a health probe through
+a single lifespan, and one builds the app with *no* lifespan and asserts `/mcp`
+raises while `/health` still answers. The second matters most — without it, every
+other test here could be proving something about a fixture that starts a session
+manager a real ASGI server would not.
+
 ### Sessions and protocol eras
 
 `stateless_http=True`, `json_response=True`.
@@ -416,14 +473,27 @@ process, one analyst, one conversation, nothing to collide.
 
 ### `/health`
 
-`GET /health` -> `{"status": "ok"}`. Public, because the SDK's custom routes are
-documented as unauthenticated and a health check is the use it names.
+`GET /health` -> `{"status": "ok"}`. Answered by the gate, before the SDK
+application is entered.
 
-It performs zero token verification, zero credential lookup, zero provider
-request and zero dataset enumeration, and reveals nothing about the deployment:
-no version, issuer, resource URL, provider count, tenant count, uptime or cache
-state. Each of those is a small gift to somebody deciding whether this host is
-worth attacking, and none of them helps a load balancer.
+That placement is the point. It was an SDK custom route, which the SDK documents
+as unauthenticated — but a custom route still sits *behind* the app-level
+authentication middleware, so `Authorization: Bearer garbage` on a public
+endpoint drove a token verification. Served from the gate there is no middleware
+to sit behind: no `AuthenticationMiddleware`, no `BearerAuthBackend`, no
+verifier, no `RemotePrincipalSource`, no credential resolver, no executor. The
+test uses a verifier that *raises* if called, so this is a proof about the code
+path rather than about a counter.
+
+It still respects the transport policy, because the gate applies globally: an
+allowed Host with no Origin or an allowed one gives `200`, an untrusted Host
+gives `421` and an untrusted present Origin gives `403`. A `GET` carries no JSON
+content-type requirement, and a write method gives `405`.
+
+It reveals nothing about the deployment: no version, issuer, resource URL,
+provider count, tenant count, uptime or cache state. Each of those is a small
+gift to somebody deciding whether this host is worth attacking, and none of them
+helps a load balancer.
 
 Deliberately **not** called readiness. Task 18 owns that word for whether the
 intelligence collected was adequate, and one term meaning two things in one system
@@ -431,9 +501,27 @@ is how somebody eventually acts on the wrong one. A deployment readiness probe
 waits for Task 24, where there will be a credential backend whose reachability is
 worth reporting.
 
-A test enumerates the app's routing table and asserts the only paths are `/mcp`,
-`/health` and the SDK's protected-resource metadata — so a future custom route
-cannot quietly join the public set.
+Tests enumerate both routing tables — the gate's `public_paths` and the SDK
+application's `routes` — and assert they are exactly `/health` and
+`{/mcp, /.well-known/oauth-protected-resource/mcp}`, so a future route cannot
+quietly join the public set.
+
+### The metadata endpoint is public, and now verifier-free
+
+RFC 9728 protected-resource metadata is unconditionally public — a client reads
+it precisely *because* it was refused — so a bearer sent there is meaningless.
+The SDK verified one anyway, for the same app-level-middleware reason.
+
+The gate drops the `Authorization` header on that exact path before handing the
+request onwards. That is enough to skip verification and changes nothing else:
+the route was unauthenticated either way and still answers with the SDK's own
+document, byte for byte. **Nothing is copied, rebuilt or re-routed** — the
+metadata stays the SDK's, and this repository builds no OAuth document of its
+own.
+
+The path comparison is exact and fails in the safe direction: matching too
+broadly would strip a bearer from a *protected* path, which becomes a `401`
+rather than access. A test pins that `/mcp` still receives its bearer.
 
 ### No authorization server
 
