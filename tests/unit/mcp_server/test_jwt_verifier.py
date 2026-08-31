@@ -18,10 +18,12 @@ import hashlib
 import hmac
 import json
 import time
+import warnings
 from typing import Any
 
 import httpx
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from fixtures.mcp_server.jwks import (
     CLIENT_ID,
@@ -33,6 +35,7 @@ from fixtures.mcp_server.jwks import (
     SigningKey,
     default_claims,
     generate_ec_key,
+    sign_raw,
     verifier_config,
 )
 from ti_recon.mcp_server.jwt_auth import (
@@ -870,3 +873,473 @@ def test_no_identity_provider_appears_in_code_rather_than_prose() -> None:
         if isinstance(node, ast.Name | ast.Attribute):
             label = (node.id if isinstance(node, ast.Name) else node.attr).lower()
             assert not any(name in label for name in vendors), label
+
+
+# --------------------------------------------------------------------------- #
+# JWKS freshness and revocation
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_a_revoked_key_stops_being_trusted_once_the_cache_expires(
+    signing_key: SigningKey, second_key: SigningKey
+) -> None:
+    """The control that makes revocation mean anything.
+
+    Before the cached set had a lifetime, a ``kid`` once seen was trusted for the
+    life of the process: an authorization server could retire a compromised key
+    and this server would keep accepting freshly forged tokens signed with it
+    indefinitely. Token ``exp`` is no help — whoever holds the private key mints
+    new ones.
+
+    Remove the expiry check and this test accepts a key a full lifetime after it
+    was withdrawn.
+    """
+    endpoint = JwksEndpoint(keys=[signing_key])
+    now = [1000.0]
+    verifier = JwtJwksTokenVerifier(
+        verifier_config(), client=endpoint.client(), monotonic=lambda: now[0]
+    )
+
+    assert await verifier.verify_token(signing_key.sign()) is not None
+
+    # The authorization server retires the key.
+    endpoint.keys = [second_key]
+
+    # Still inside the freshness window: the cached key is used, deliberately.
+    now[0] += 60.0
+    assert await verifier.verify_token(signing_key.sign()) is not None
+    assert endpoint.requests == 1
+
+    # Past it: the set is discarded, refetched, and the key is simply gone.
+    now[0] += 300.0
+    assert await verifier.verify_token(signing_key.sign()) is None
+    assert endpoint.requests == 2
+    assert await verifier.verify_token(second_key.sign()) is not None
+
+
+@pytest.mark.asyncio
+async def test_an_expired_cache_plus_an_outage_authenticates_nobody(
+    signing_key: SigningKey,
+) -> None:
+    """Fail closed, and never renew freshness on a failed attempt.
+
+    Availability is not worth indefinite trust in a key that may have been
+    revoked precisely because it was compromised.
+    """
+    endpoint = JwksEndpoint(keys=[signing_key])
+    now = [1000.0]
+    verifier = JwtJwksTokenVerifier(
+        verifier_config(), client=endpoint.client(), monotonic=lambda: now[0]
+    )
+
+    assert await verifier.verify_token(signing_key.sign()) is not None
+
+    endpoint.failing = True
+    now[0] += 301.0
+    assert await verifier.verify_token(signing_key.sign()) is None
+
+    # And it stays closed: a failed fetch starts no new freshness window, so the
+    # discarded keys never come back on their own.
+    now[0] += 3600.0
+    assert await verifier.verify_token(signing_key.sign()) is None
+
+    # Recovery is still subject to the anti-flood floor, so the next attempt
+    # comes after it — which is the floor doing its job, not the outage lingering.
+    endpoint.failing = False
+    now[0] += 31.0
+    assert await verifier.verify_token(signing_key.sign()) is not None
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_refresh_after_expiry_does_not_restore_stale_keys(
+    signing_key: SigningKey,
+) -> None:
+    """Only a document that parsed creates a new freshness window."""
+    endpoint = JwksEndpoint(keys=[signing_key])
+    now = [1000.0]
+    verifier = JwtJwksTokenVerifier(
+        verifier_config(), client=endpoint.client(), monotonic=lambda: now[0]
+    )
+
+    assert await verifier.verify_token(signing_key.sign()) is not None
+    endpoint.body = b"<html>the identity provider is having a day</html>"
+    now[0] += 301.0
+
+    assert await verifier.verify_token(signing_key.sign()) is None
+    now[0] += 301.0
+    assert await verifier.verify_token(signing_key.sign()) is None
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_refresh_while_still_fresh_leaves_the_cache_intact(
+    signing_key: SigningKey,
+) -> None:
+    """An optional unknown-kid refresh must not destroy keys that work."""
+    endpoint = JwksEndpoint(keys=[signing_key])
+    verifier = _verifier(endpoint)
+
+    assert await verifier.verify_token(signing_key.sign()) is not None
+    endpoint.body = b"nonsense"
+    stranger = SigningKey.generate("unknown")
+
+    assert await verifier.verify_token(stranger.sign()) is None
+    assert await verifier.verify_token(signing_key.sign()) is not None
+
+
+@pytest.mark.asyncio
+async def test_many_requests_at_expiry_cause_one_refresh(
+    signing_key: SigningKey,
+) -> None:
+    """No thundering herd, and no split brain.
+
+    Everyone waiting observes the same atomically validated replacement, so
+    nobody is served a stale key because they raced.
+    """
+    endpoint = JwksEndpoint(keys=[signing_key])
+    now = [1000.0]
+    verifier = JwtJwksTokenVerifier(
+        verifier_config(), client=endpoint.client(), monotonic=lambda: now[0]
+    )
+
+    assert await verifier.verify_token(signing_key.sign()) is not None
+    now[0] += 301.0
+
+    results = await asyncio.gather(*(verifier.verify_token(signing_key.sign()) for _ in range(12)))
+
+    assert all(item is not None for item in results)
+    assert endpoint.requests == 2
+
+
+@pytest.mark.asyncio
+async def test_a_flood_of_unknown_kids_is_bounded_in_fetches_and_memory(
+    signing_key: SigningKey,
+) -> None:
+    """Attacker-chosen key ids must not become an amplifier or a memory leak.
+
+    No negative cache, no per-kid entry, no per-kid timer: an unknown ``kid`` is
+    looked up, missed, and forgotten.
+    """
+    endpoint = JwksEndpoint(keys=[signing_key])
+    verifier = _verifier(endpoint)
+
+    for index in range(64):
+        stranger = SigningKey(kid=f"forged-{index}", private=signing_key.private)
+        assert await verifier.verify_token(stranger.sign()) is None
+
+    assert endpoint.requests == 1
+    assert set(verifier._keys) == {signing_key.kid}
+
+
+@pytest.mark.asyncio
+async def test_a_pre_published_next_key_works_without_a_refresh(
+    signing_key: SigningKey, second_key: SigningKey
+) -> None:
+    """The normal shape of rotation: publish, then start signing.
+
+    Both keys are already in the cached set, so the switchover costs no fetch.
+    """
+    endpoint = JwksEndpoint(keys=[signing_key, second_key])
+    verifier = _verifier(endpoint)
+
+    assert await verifier.verify_token(signing_key.sign()) is not None
+    assert await verifier.verify_token(second_key.sign()) is not None
+    assert endpoint.requests == 1
+
+
+def test_a_lifetime_shorter_than_the_refresh_floor_is_refused() -> None:
+    """Otherwise the anti-flood floor could delay repopulating an expired set.
+
+    Failing closed while it did would be safe but needlessly unavailable, and the
+    interaction is worth refusing outright rather than reasoning about per
+    deployment.
+    """
+    with pytest.raises(ValueError, match="cache_lifetime_seconds"):
+        verifier_config(cache_lifetime_seconds=10.0, minimum_refresh_interval_seconds=30.0)
+    with pytest.raises(ValueError, match="cache_lifetime_seconds"):
+        verifier_config(cache_lifetime_seconds=0)
+
+
+# --------------------------------------------------------------------------- #
+# JWK metadata
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("label", "overrides"),
+    [
+        ("signing only", {"key_ops": ["sign"]}),
+        ("encryption only", {"key_ops": ["encrypt"]}),
+        ("decryption only", {"key_ops": ["decrypt"]}),
+        ("empty operations", {"key_ops": []}),
+        ("a bare string", {"key_ops": "verify"}),
+        ("a non-string member", {"key_ops": ["verify", 7]}),
+        ("duplicate operations", {"key_ops": ["verify", "verify"]}),
+        ("inconsistent with use", {"use": "enc", "key_ops": ["verify"]}),
+        ("use forbids it", {"use": "enc"}),
+    ],
+)
+async def test_a_key_not_published_for_verification_verifies_nothing(
+    signing_key: SigningKey, label: str, overrides: dict[str, Any]
+) -> None:
+    """RFC 7517 §4.3: ``key_ops`` says what a key may do, and ``verify`` is the
+    operation signature checking needs.
+
+    A publisher who wrote "signing only" or "encryption only" said so on purpose.
+    Before this, ``key_ops`` was not read at all and a key marked ``["sign"]``
+    happily verified tokens.
+    """
+    del label
+    endpoint = JwksEndpoint(keys=[signing_key])
+    endpoint.body = json.dumps({"keys": [signing_key.jwk(**overrides)]}).encode()
+
+    assert await _verifier(endpoint).verify_token(signing_key.sign()) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "overrides",
+    [{}, {"use": None}, {"key_ops": ["verify"]}, {"use": "sig", "key_ops": ["sign", "verify"]}],
+)
+async def test_a_key_published_for_verification_is_used(
+    signing_key: SigningKey, overrides: dict[str, Any]
+) -> None:
+    """Absent metadata means unrestricted, which is how most servers publish."""
+    endpoint = JwksEndpoint(keys=[signing_key])
+    endpoint.body = json.dumps({"keys": [signing_key.jwk(**overrides)]}).encode()
+
+    assert await _verifier(endpoint).verify_token(signing_key.sign()) is not None
+
+
+@pytest.mark.asyncio
+async def test_an_ineligible_twin_does_not_create_a_duplicate_kid_conflict(
+    signing_key: SigningKey,
+) -> None:
+    """Filtering happens before uniqueness is judged.
+
+    A set holding an encryption key and a signing key under one ``kid`` is
+    ordinary; refusing it would let irrelevant encryption material deny all
+    authentication. Two *eligible* keys sharing a ``kid`` is the ambiguity worth
+    refusing, and still is.
+    """
+    encryption = SigningKey.generate(signing_key.kid)
+    endpoint = JwksEndpoint(keys=[signing_key])
+    endpoint.body = json.dumps({"keys": [encryption.jwk(use="enc"), signing_key.jwk()]}).encode()
+
+    assert await _verifier(endpoint).verify_token(signing_key.sign()) is not None
+
+    ambiguous = JwksEndpoint(keys=[signing_key, SigningKey.generate(signing_key.kid)])
+    assert await _verifier(ambiguous).verify_token(signing_key.sign()) is None
+
+
+# --------------------------------------------------------------------------- #
+# Key strength and JOSE headers
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_an_undersized_rsa_key_verifies_nothing(signing_key: SigningKey) -> None:
+    """PyJWT only *warns* about this by default, and a warning is not a control.
+
+    ``enforce_minimum_key_length`` turns NIST SP 800-131A's 2048-bit floor into an
+    error. Before it was set, a 1024-bit key authenticated normally with a
+    warning nobody would see in production.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        weak = SigningKey(
+            kid="weak",
+            private=rsa.generate_private_key(public_exponent=65537, key_size=1024),
+        )
+        endpoint = JwksEndpoint(keys=[weak])
+        assert await _verifier(endpoint).verify_token(weak.sign()) is None
+
+
+@pytest.mark.asyncio
+async def test_a_normal_two_thousand_forty_eight_bit_key_still_works(
+    signing_key: SigningKey,
+) -> None:
+    """The floor must not reject what every authorization server actually issues."""
+    endpoint = JwksEndpoint(keys=[signing_key])
+
+    assert signing_key.private.key_size == 2048
+    assert await _verifier(endpoint).verify_token(signing_key.sign()) is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("label", "headers"),
+    [
+        ("unknown extension", {"crit": ["x-unknown"], "x-unknown": "value"}),
+        ("empty list", {"crit": []}),
+        ("a bare string", {"crit": "x-unknown"}),
+        ("duplicates", {"crit": ["x-dup", "x-dup"], "x-dup": 1}),
+        ("names an absent header", {"crit": ["x-missing"]}),
+    ],
+)
+async def test_a_critical_header_extension_is_never_silently_ignored(
+    signing_key: SigningKey, label: str, headers: dict[str, Any]
+) -> None:
+    """``crit`` means "reject if you do not understand this".
+
+    PyJWT 2.13 handles it; earlier releases had a flaw here, which is exactly why
+    this is pinned rather than assumed — a dependency bump that regressed it
+    would fail here rather than in production.
+    """
+    del label
+    endpoint = JwksEndpoint(keys=[signing_key])
+
+    assert await _verifier(endpoint).verify_token(signing_key.sign(headers=headers)) is None
+
+
+@pytest.mark.asyncio
+async def test_a_detached_payload_token_is_not_an_access_token(
+    signing_key: SigningKey,
+) -> None:
+    """``b64: false`` is a JWS signing mode, not an OAuth access token.
+
+    This verifier reads bearer tokens; detached-payload semantics are not
+    supported and must not be accepted as if they were.
+    """
+    endpoint = JwksEndpoint(keys=[signing_key])
+    header = _part({"alg": "RS256", "kid": signing_key.kid, "b64": False, "crit": ["b64"]})
+    payload = _part(default_claims())
+
+    assert await _verifier(endpoint).verify_token(f"{header}.{payload}.AAAA") is None
+
+
+@pytest.mark.asyncio
+async def test_no_header_can_supply_or_locate_verification_material(
+    signing_key: SigningKey, second_key: SigningKey
+) -> None:
+    """``jku``, ``x5u``, ``jwk`` and ``x5c`` are all ignored.
+
+    An embedded key would let a token bring its own; a URL would let it name a
+    host the attacker controls. Keys come from configuration, so a token signed
+    by the *published* key is accepted while its embedded suggestions are simply
+    not looked at — and a token signed by the embedded key is refused.
+    """
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(
+            200,
+            content=json.dumps({"keys": [signing_key.jwk()]}).encode(),
+            headers={"content-type": "application/json"},
+        )
+
+    smuggled = second_key.jwk()
+    smuggled["kid"] = signing_key.kid
+    headers = {
+        "jku": "https://attacker.example.invalid/jwks.json",
+        "x5u": "https://attacker.example.invalid/chain.pem",
+        "jwk": smuggled,
+        "x5c": ["QUFBQQ=="],
+    }
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    verifier = JwtJwksTokenVerifier(verifier_config(), client=client)
+    honest = await verifier.verify_token(signing_key.sign(headers=headers))
+    forged = await verifier.verify_token(
+        second_key.sign(headers={**headers, "kid": signing_key.kid})
+    )
+    await client.aclose()
+
+    assert honest is not None
+    assert forged is None
+    assert seen == ["https://idp.example.invalid/.well-known/jwks.json"]
+
+
+@pytest.mark.asyncio
+async def test_an_oversized_bearer_is_refused_before_anything_expensive(
+    signing_key: SigningKey,
+) -> None:
+    """An ``Authorization`` header is not bounded by the MCP body limit.
+
+    A megabyte of attacker-chosen header — including its ``kid``, which becomes an
+    in-memory lookup — should not reach base64, JSON or a key fetch. The limit is
+    never reported: an error naming it would be an oracle for tuning around.
+    """
+    endpoint = JwksEndpoint(keys=[signing_key])
+    huge = signing_key.sign(headers={"kid": "z" * 1_000_000})
+
+    assert await _verifier(endpoint).verify_token(huge) is None
+    assert endpoint.requests == 0
+    assert await _verifier(endpoint).verify_token(signing_key.sign()) is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("label", "claims"),
+    [
+        ("issuer not a string", {"iss": 7}),
+        ("subject not a string", {"sub": {"id": "alice"}}),
+        ("audience an object", {"aud": {"resource": RESOURCE}}),
+        ("audience list with a non-string", {"aud": [RESOURCE, 7]}),
+        ("expiry a string", {"exp": "9999999999"}),
+        ("expiry a boolean", {"exp": True}),
+        ("not-before a string", {"nbf": "0"}),
+        ("issued-at an object", {"iat": {"when": 1}}),
+        ("scope a list", {"scope": ["a", "b"]}),
+        ("scope an object", {"scope": {"a": True}}),
+    ],
+)
+async def test_a_malformed_claim_type_is_refused_rather_than_coerced(
+    signing_key: SigningKey, label: str, claims: dict[str, Any]
+) -> None:
+    """Nothing here turns a wrong type into a right one.
+
+    Signed at the JWS layer, because ``jwt.encode`` refuses to build several of
+    these — helpful for honest callers, and no evidence at all about what a
+    consumer accepts. Three of these were accepted before this audit: PyJWT
+    coerces a string ``exp`` and ``nbf`` through ``int()``, and an object ``iat``
+    raised a bare ``TypeError`` that escaped the verifier entirely.
+    """
+    del label
+    endpoint = JwksEndpoint(keys=[signing_key])
+
+    assert await _verifier(endpoint).verify_token(sign_raw(signing_key, **claims)) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("claim", ["client_id", "jti", "iat"])
+async def test_rfc9068_mandatory_claims_must_have_the_right_type(
+    signing_key: SigningKey, claim: str
+) -> None:
+    endpoint = JwksEndpoint(keys=[signing_key])
+    verifier = _verifier(endpoint, profile=TokenProfile.RFC9068)
+    token = sign_raw(signing_key, **{claim: {"nested": True}})
+    header, payload, signature = token.split(".")
+    del header, payload, signature
+
+    assert await verifier.verify_token(token) is None
+
+
+@pytest.mark.asyncio
+async def test_an_id_token_for_the_oauth_client_cannot_substitute(
+    signing_key: SigningKey,
+) -> None:
+    """Cross-JWT confusion, from the same issuer and the same signing key.
+
+    An ID token is audienced to the OAuth *client*, not to this resource, so it
+    fails on audience — and under the RFC 9068 profile on ``typ`` as well.
+    """
+    endpoint = JwksEndpoint(keys=[signing_key])
+    id_token = signing_key.sign(headers={"typ": "JWT"}, aud=CLIENT_ID, scope=None, azp=CLIENT_ID)
+
+    assert await _verifier(endpoint).verify_token(id_token) is None
+    assert await _verifier(endpoint, profile=TokenProfile.RFC9068).verify_token(id_token) is None
+
+
+@pytest.mark.asyncio
+async def test_expiry_and_not_before_have_no_leeway(signing_key: SigningKey) -> None:
+    """``leeway=0``. No clock skew is invented before an interoperability need."""
+    endpoint = JwksEndpoint(keys=[signing_key])
+    verifier = _verifier(endpoint)
+    now = int(time.time())
+
+    assert await verifier.verify_token(signing_key.sign(exp=now - 1)) is None
+    assert await verifier.verify_token(signing_key.sign(nbf=now + 60)) is None
+    assert await verifier.verify_token(signing_key.sign(nbf=now - 1, exp=now + 60)) is not None

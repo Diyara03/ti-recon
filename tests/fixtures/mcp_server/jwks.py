@@ -182,3 +182,25 @@ def verifier_config(**overrides: Any) -> Any:
 def generate_ec_key(kid: str) -> SigningKey:
     """An EC key, for the algorithm-allowlist tests."""
     return SigningKey(kid=kid, private=ec.generate_private_key(ec.SECP256R1()), algorithm="ES256")
+
+
+def sign_raw(key: SigningKey, **overrides: Any) -> str:
+    """Sign arbitrary claims, bypassing PyJWT's own encoder validation.
+
+    ``jwt.encode`` refuses to build a token whose ``iss`` is not a string, which
+    is helpful for honest callers and useless as evidence about a consumer: an
+    attacker is not constrained by our encoder. Signing at the JWS layer produces
+    the malformed-but-genuinely-signed tokens a verifier has to refuse on its
+    own merits.
+    """
+    from jwt.api_jws import PyJWS
+
+    claims = default_claims()
+    claims.update(overrides)
+    claims = {name: value for name, value in claims.items() if value is not None}
+    return PyJWS().encode(
+        json.dumps(claims).encode(),
+        key.private,
+        algorithm=key.algorithm,
+        headers={"kid": key.kid},
+    )

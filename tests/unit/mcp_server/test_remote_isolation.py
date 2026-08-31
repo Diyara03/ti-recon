@@ -18,7 +18,7 @@ from collections.abc import Iterator
 
 import httpx
 import pytest
-from pydantic import SecretStr
+from pydantic import SecretBytes
 
 from fixtures.investigation.stack import ScriptedProvider, claim_evidence, spec
 from fixtures.mcp_server.auth import FAKE_TENANT_SECRET
@@ -55,7 +55,7 @@ SUBJECT_CAROL = "carol.analyst@example.invalid"
 
 def tenant(subject: str) -> str:
     return derive_tenant_id(
-        issuer=ISSUER, subject=subject, tenant_key=SecretStr(FAKE_TENANT_SECRET)
+        issuer=ISSUER, subject=subject, tenant_key=SecretBytes(FAKE_TENANT_SECRET)
     )
 
 
@@ -203,7 +203,7 @@ async def test_the_tenant_id_from_the_bearer_is_what_keys_task_6() -> None:
             assert f"|{expected}|" in key
             assert SUBJECT_ALICE not in key
             assert ALICE_BEARER not in key
-            assert FAKE_TENANT_SECRET not in key
+            assert FAKE_TENANT_SECRET.decode() not in key
 
 
 @pytest.mark.asyncio
@@ -307,7 +307,7 @@ async def test_provider_status_leaks_no_credential_material_over_http() -> None:
         connection.secret_reference.key,
         SUBJECT_ALICE,
         ALICE_BEARER,
-        FAKE_TENANT_SECRET,
+        FAKE_TENANT_SECRET.decode(),
         tenant(SUBJECT_ALICE),
     ):
         assert secret not in body
@@ -428,7 +428,7 @@ async def _assert_bearer_stops_here(
     for text in surfaces:
         assert FAKE_BEARER not in text
         assert SUBJECT_ALICE not in text
-        assert FAKE_TENANT_SECRET not in text
+        assert FAKE_TENANT_SECRET.decode() not in text
         assert ALICE_KEY not in text
         assert tenant(SUBJECT_ALICE) not in text
 

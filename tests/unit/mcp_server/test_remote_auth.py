@@ -14,7 +14,7 @@ import dataclasses
 import pytest
 from mcp.server.auth.middleware.auth_context import auth_context_var
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
-from pydantic import SecretStr
+from pydantic import SecretBytes
 
 from fixtures.mcp_server.auth import (
     CLIENT_ID,
@@ -55,7 +55,8 @@ def test_a_remote_deployment_cannot_be_configured_without_its_three_answers() ->
     for kwargs in (
         {"issuer": ""},
         {"resource": ""},
-        {"tenant_key": ""},
+        {"tenant_key": b""},
+        {"tenant_key": b"too-short"},
     ):
         with pytest.raises(ValueError):
             auth_config(**kwargs)  # type: ignore[arg-type]
@@ -65,7 +66,7 @@ def test_the_tenant_key_is_not_rendered_by_repr() -> None:
     """Not the value, and not its length, prefix or digest either."""
     text = repr(CONFIG)
 
-    assert FAKE_TENANT_SECRET not in text
+    assert FAKE_TENANT_SECRET.decode() not in text
     assert str(len(FAKE_TENANT_SECRET)) not in text
     assert ISSUER in text and RESOURCE in text
 
@@ -255,7 +256,13 @@ async def test_a_rejection_reveals_nothing_about_the_token(caplog) -> None:
     assert await verifier.verify_token(FAKE_MCP_TOKEN) is None
     logged = caplog.text
     assert TokenRejection.ISSUER_MISMATCH.value in logged
-    for secret in (FAKE_MCP_TOKEN, FAKE_SUBJECT, OTHER_ISSUER, RESOURCE, FAKE_TENANT_SECRET):
+    for secret in (
+        FAKE_MCP_TOKEN,
+        FAKE_SUBJECT,
+        OTHER_ISSUER,
+        RESOURCE,
+        FAKE_TENANT_SECRET.decode(),
+    ):
         assert secret not in logged
 
 
@@ -265,9 +272,9 @@ async def test_a_rejection_reveals_nothing_about_the_token(caplog) -> None:
 
 
 def _tenant(
-    *, issuer: str = ISSUER, subject: str = FAKE_SUBJECT, key: str = FAKE_TENANT_SECRET
+    *, issuer: str = ISSUER, subject: str = FAKE_SUBJECT, key: bytes = FAKE_TENANT_SECRET
 ) -> str:
-    return derive_tenant_id(issuer=issuer, subject=subject, tenant_key=SecretStr(key))
+    return derive_tenant_id(issuer=issuer, subject=subject, tenant_key=SecretBytes(key))
 
 
 def test_the_tenant_id_is_deterministic() -> None:
@@ -295,7 +302,7 @@ def test_the_same_issuer_with_two_subjects_is_two_tenants() -> None:
 
 def test_a_different_deployment_key_is_a_different_tenant() -> None:
     """Which is why the key is durable configuration, not a startup nonce."""
-    assert _tenant() != _tenant(key="a-different-deployment-key")
+    assert _tenant() != _tenant(key=b"a-different-deployment-key-of-adequate-length")
 
 
 def test_the_encoding_is_unambiguous_across_the_issuer_subject_boundary() -> None:
@@ -311,7 +318,7 @@ def test_nothing_about_the_subject_or_the_key_survives_into_the_tenant_id() -> N
     """The identifier is the prefix and hex, and nothing else."""
     tenant = _tenant()
     assert FAKE_SUBJECT not in tenant
-    assert FAKE_TENANT_SECRET not in tenant
+    assert FAKE_TENANT_SECRET.decode() not in tenant
     assert ISSUER not in tenant
     digest = tenant.removeprefix(TENANT_ID_PREFIX)
     assert len(digest) == 64
@@ -388,7 +395,7 @@ def test_a_refusal_says_nothing_about_the_token() -> None:
         resolve_remote_principal(CONFIG)
 
     message = str(raised.value)
-    for secret in (FAKE_MCP_TOKEN, FAKE_SUBJECT, ISSUER, RESOURCE, FAKE_TENANT_SECRET):
+    for secret in (FAKE_MCP_TOKEN, FAKE_SUBJECT, ISSUER, RESOURCE, FAKE_TENANT_SECRET.decode()):
         assert secret not in message
 
 

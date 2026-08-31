@@ -24,7 +24,7 @@ import pytest
 from mcp.server.auth.middleware.auth_context import auth_context_var
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from mcp.server.mcpserver.exceptions import ToolError
-from pydantic import SecretStr
+from pydantic import SecretBytes
 
 from fixtures.investigation.stack import InvestigationStack, ScriptedProvider, claim_evidence, spec
 from fixtures.mcp_server.auth import (
@@ -79,7 +79,7 @@ FAKE_KEY_B = "PROVIDER_KEY_FOR_BOB_BBB"
 
 def tenant(subject: str, *, issuer: str = ISSUER) -> str:
     return derive_tenant_id(
-        issuer=issuer, subject=subject, tenant_key=SecretStr(FAKE_TENANT_SECRET)
+        issuer=issuer, subject=subject, tenant_key=SecretBytes(FAKE_TENANT_SECRET)
     )
 
 
@@ -333,7 +333,7 @@ async def test_the_tenant_id_is_what_reaches_every_task_6_key() -> None:
     for key in keys:
         assert f"|{expected}|" in key
         assert FAKE_SUBJECT not in key
-        assert FAKE_TENANT_SECRET not in key
+        assert FAKE_TENANT_SECRET.decode() not in key
     assert expected.startswith(f"user|{tenant(ALICE)}|")
     # The same string keys the cooldown, quota, concurrency and single-flight
     # stores, so one assertion covers all five key spaces.
@@ -537,7 +537,7 @@ async def test_the_mcp_access_token_never_reaches_a_provider() -> None:
     for text in haystacks:
         assert FAKE_MCP_TOKEN not in text
         assert FAKE_SUBJECT not in text
-        assert FAKE_TENANT_SECRET not in text
+        assert FAKE_TENANT_SECRET.decode() not in text
         assert ISSUER not in text
     # And the provider secret does not travel back out either.
     for text in (result.model_dump_json(), report.model_dump_json(), captured.getvalue()):  # type: ignore[attr-defined]
@@ -631,5 +631,5 @@ async def test_an_unauthenticated_call_is_refused_without_describing_the_token()
             await call
         message = str(raised.value)
         assert "not authenticated" in message
-        for secret in (FAKE_MCP_TOKEN, FAKE_SUBJECT, ISSUER, FAKE_TENANT_SECRET):
+        for secret in (FAKE_MCP_TOKEN, FAKE_SUBJECT, ISSUER, FAKE_TENANT_SECRET.decode()):
             assert secret not in message

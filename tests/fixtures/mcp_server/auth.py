@@ -18,13 +18,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from mcp.server.auth.provider import AccessToken
-from pydantic import SecretStr
+from pydantic import SecretBytes
 
 from ti_recon.mcp_server.auth import RemoteAuthConfig
 
 #: Unmistakable, so a match anywhere in an output cannot be a coincidence.
 FAKE_MCP_TOKEN = "SUPER_SECRET_MCP_ACCESS_TOKEN_123"
-FAKE_TENANT_SECRET = "SUPER_SECRET_TENANT_DERIVATION_KEY_123"
+FAKE_TENANT_SECRET = b"SUPER_SECRET_TENANT_DERIVATION_KEY_123"
 FAKE_PROVIDER_TOKEN = "SUPER_SECRET_PROVIDER_API_KEY_789"
 
 #: A deliberately identifying subject, so "did the raw subject leak?" is a
@@ -41,10 +41,10 @@ def auth_config(
     *,
     issuer: str = ISSUER,
     resource: str = RESOURCE,
-    tenant_key: str = FAKE_TENANT_SECRET,
+    tenant_key: bytes = FAKE_TENANT_SECRET,
 ) -> RemoteAuthConfig:
     """The deployment configuration a remote runtime is built from."""
-    return RemoteAuthConfig(issuer=issuer, resource=resource, tenant_key=SecretStr(tenant_key))
+    return RemoteAuthConfig(issuer=issuer, resource=resource, tenant_key=SecretBytes(tenant_key))
 
 
 def access_token(

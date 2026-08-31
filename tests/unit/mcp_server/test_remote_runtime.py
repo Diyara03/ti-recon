@@ -15,7 +15,7 @@ import json
 from typing import Any
 
 import pytest
-from pydantic import SecretStr
+from pydantic import SecretBytes
 
 from fixtures.investigation.stack import (
     InvestigationStack,
@@ -24,7 +24,9 @@ from fixtures.investigation.stack import (
     spec,
 )
 from fixtures.mcp_server.jwks import (
+    CLIENT_ID,
     ISSUER,
+    JWKS_URL,
     RESOURCE,
     SUBJECT,
     JwksEndpoint,
@@ -52,7 +54,7 @@ from ti_recon.mcp_server.runtime import McpRuntime, RemotePrincipalSource
 from ti_recon.reasoning.claims.models import ClaimSemantic
 
 OBSERVABLE = "1.2.3.4"
-TENANT_KEY = "a-deployment-tenant-derivation-key-of-adequate-length"
+TENANT_KEY = b"a-deployment-tenant-derivation-key-of-adequate-length"
 METADATA_PATH = "/.well-known/oauth-protected-resource/mcp"
 PROVIDER_KEY = "PROVIDER_KEY_FOR_THIS_TENANT"
 
@@ -78,13 +80,13 @@ def _provider() -> ScriptedProvider:
 
 
 def _tenant() -> str:
-    return derive_tenant_id(issuer=ISSUER, subject=SUBJECT, tenant_key=SecretStr(TENANT_KEY))
+    return derive_tenant_id(issuer=ISSUER, subject=SUBJECT, tenant_key=SecretBytes(TENANT_KEY))
 
 
 async def _deployment(endpoint: JwksEndpoint, providers: list[ScriptedProvider]) -> Any:
     """The real application, wired to a local JWKS endpoint."""
     config = _config()
-    auth = RemoteAuthConfig(issuer=ISSUER, resource=RESOURCE, tenant_key=SecretStr(TENANT_KEY))
+    auth = RemoteAuthConfig(issuer=ISSUER, resource=RESOURCE, tenant_key=SecretBytes(TENANT_KEY))
     stack = InvestigationStack(providers=providers)
     runtime = McpRuntime(
         application=InvestigationApplication(orchestrator=stack.orchestrator),
@@ -182,7 +184,7 @@ async def test_no_part_of_the_token_survives_into_the_report_or_the_engine(
         keys = list(stack.executor._cache._entries)
 
     body = response.text
-    for secret in (token, SUBJECT, TENANT_KEY, "Very Identifying Person", PROVIDER_KEY):
+    for secret in (token, SUBJECT, TENANT_KEY.decode(), "Very Identifying Person", PROVIDER_KEY):
         assert secret not in body
     assert keys
     for key in keys:
@@ -312,7 +314,7 @@ async def test_the_lifespan_closes_the_verifiers_http_client() -> None:
     endpoint = JwksEndpoint(keys=[])
     verifier = JwtJwksTokenVerifier(verifier_config())
     config = _config()
-    auth = RemoteAuthConfig(issuer=ISSUER, resource=RESOURCE, tenant_key=SecretStr(TENANT_KEY))
+    auth = RemoteAuthConfig(issuer=ISSUER, resource=RESOURCE, tenant_key=SecretBytes(TENANT_KEY))
     stack = InvestigationStack(providers=[])
     runtime = McpRuntime(
         application=InvestigationApplication(orchestrator=stack.orchestrator),
@@ -334,7 +336,7 @@ async def test_the_lifespan_closes_the_verifiers_http_client() -> None:
 async def test_the_factory_refuses_a_verifier_configured_for_another_resource() -> None:
     """Three values naming one resource are three chances for two to drift."""
     stack = InvestigationStack(providers=[])
-    auth = RemoteAuthConfig(issuer=ISSUER, resource=RESOURCE, tenant_key=SecretStr(TENANT_KEY))
+    auth = RemoteAuthConfig(issuer=ISSUER, resource=RESOURCE, tenant_key=SecretBytes(TENANT_KEY))
     runtime = McpRuntime(
         application=InvestigationApplication(orchestrator=stack.orchestrator),
         credentials=CredentialLoadReport(),
@@ -357,3 +359,109 @@ async def test_the_factory_refuses_a_verifier_configured_for_another_resource() 
 def _headers(token: str) -> dict[str, str]:
     headers = modern_headers("tools/call", bearer=token, name="investigate_observable")
     return headers
+
+
+@pytest.mark.asyncio
+async def test_public_routes_answer_while_the_key_cache_is_expired_and_the_idp_is_down(
+    signing_key: SigningKey,
+) -> None:
+    """The worst combination, and the one a probe must survive.
+
+    An expired key cache plus an unreachable identity provider is exactly when a
+    deployment is most likely to be restarted by an over-eager health check. So
+    liveness and discovery answer, and only authentication fails.
+    """
+    endpoint = JwksEndpoint(keys=[signing_key])
+    now = [1000.0]
+    verifier = JwtJwksTokenVerifier(
+        verifier_config(), client=endpoint.client(), monotonic=lambda: now[0]
+    )
+    config = _config()
+    auth = RemoteAuthConfig(issuer=ISSUER, resource=RESOURCE, tenant_key=SecretBytes(TENANT_KEY))
+    stack = InvestigationStack(providers=[])
+    runtime = McpRuntime(
+        application=InvestigationApplication(orchestrator=stack.orchestrator),
+        credentials=CredentialLoadReport(),
+        connections=stack.connections,
+        principals=RemotePrincipalSource(auth),
+        investigations=TenantInvestigationLimiter(),
+    )
+    app = build_remote_http_app(runtime, config=config, auth=auth, delegate=verifier)
+
+    async with _lifespan(app):
+        # Warm the cache, then let it expire while the endpoint goes away.
+        assert (
+            await raw(
+                app,
+                "POST",
+                MCP_PATH,
+                headers=modern_headers("tools/list", bearer=signing_key.sign()),
+                body=json.dumps(modern_request("tools/list")),
+            )
+        ).status_code == 200
+        endpoint.failing = True
+        now[0] += 301.0
+
+        before = endpoint.requests
+        assert (await raw(app, "GET", HEALTH_PATH)).status_code == 200
+        assert (await raw(app, "GET", METADATA_PATH)).status_code == 200
+        assert endpoint.requests == before
+
+        assert (
+            await raw(
+                app,
+                "POST",
+                MCP_PATH,
+                headers=modern_headers("tools/list", bearer=signing_key.sign()),
+                body=json.dumps(modern_request("tools/list")),
+            )
+        ).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_no_auth_or_key_detail_reaches_the_analyst_contract(
+    signing_key: SigningKey,
+) -> None:
+    """Auth internals are deployment concerns, not analytical output.
+
+    A report that carried the signing ``kid``, the issuer or the OAuth client id
+    would be leaking who authenticated and how into something an analyst copies
+    into a ticket.
+    """
+    provider = _provider()
+    endpoint = JwksEndpoint(keys=[signing_key])
+    app, stack, _ = await _deployment(endpoint, [provider])
+
+    async with _lifespan(app):
+        await stack.manager.create_connection(
+            user_id=_tenant(),
+            provider_id="reputation_remote",
+            secret=PROVIDER_KEY,
+            auth_type=AuthType.API_KEY,
+            status=CredentialStatus.ACTIVE,
+        )
+        report = await raw(
+            app,
+            "POST",
+            MCP_PATH,
+            headers=_headers(signing_key.sign()),
+            body=json.dumps(
+                modern_request(
+                    "tools/call",
+                    {"name": "investigate_observable", "arguments": {"observable": OBSERVABLE}},
+                )
+            ),
+        )
+        status = await raw(
+            app,
+            "POST",
+            MCP_PATH,
+            headers=modern_headers("tools/call", bearer=signing_key.sign(), name="provider_status"),
+            body=json.dumps(
+                modern_request("tools/call", {"name": "provider_status", "arguments": {}})
+            ),
+        )
+
+    for body in (report.text, status.text):
+        for leak in (ISSUER, JWKS_URL, signing_key.kid, "at+jwt", "rfc9068", CLIENT_ID):
+            assert leak not in body
