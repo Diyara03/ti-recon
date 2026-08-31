@@ -156,9 +156,13 @@ Implemented (Jira Tasks 1-19):
   are checked, and `/health` answered, before the SDK's authentication
   middleware is entered — with `stateless_http`, a two-tool surface without
   `investigate_file`, both schema resources and one concurrent investigation per
-  tenant. **Still a factory, not a service**: no
-  console entry point, no bundled ASGI server, no deployment, and no token
-  verifier — one needs an identity platform, which the next phase chooses.
+  tenant. `JwtJwksTokenVerifier` is the production delegate — asymmetric
+  signature verification against an authorization server's published JWKS, exact
+  issuer and audience, bounded and cached key retrieval — and
+  `ti-recon-mcp-http` runs the whole thing on one worker from
+  `TI_RECON`-prefixed environment configuration. **Nothing is deployed and no
+  identity provider has been contacted**; a staging OAuth acceptance test is the
+  next phase.
 
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Task 13 chooses what
@@ -288,15 +292,17 @@ about it.
 - PostgreSQL, production secret vault, Kafka, Celery, Neo4j
 - Claude connector, web frontend
 - Active actions: URL/file submission, rescan, sandboxing, sample download
-- A remote console entry point (`ti-recon-mcp-http`), a bundled ASGI server
-  (uvicorn, hypercorn), a `--workers` option, a `/ready` route, and any deployed
-  service. Running one needs a real token verifier, and the only ones
-  constructible without an identity platform are the three that must never
-  exist — a static-token verifier, an unsigned-JWT verifier, and a
-  "development" verifier reachable from production
-- A vendor-specific `TokenVerifier` (Entra, Auth0, Okta, Keycloak, Cognito), a
-  JWKS client or an introspection client. The delegate is injected; the next
-  phase chooses one for this repository's own deployment
+- A `--workers` option, `WEB_CONCURRENCY`, a second ASGI server, a `/ready`
+  route, and any deployed service. Remote TI Recon is single-worker until Task 24
+  gives Task 6's process-local state a shared backend
+- A vendor-specific `TokenVerifier` (Entra, Auth0, Okta, Keycloak, Cognito) or a
+  vendor settings class. `JwtJwksTokenVerifier` is configured with an issuer, a
+  JWKS URL, a resource and an algorithm allowlist, and contains no provider name
+- An RFC 7662 introspection verifier, OIDC discovery, and a permissive or
+  "development" verifier of any kind. The delegate seam stays open for a future
+  introspection implementation; what must never exist is a static-token verifier,
+  an unsigned-JWT verifier, or anything reachable from production that decodes
+  without proving a signature
 - Any authorization server inside TI Recon: a user/password database, a login
   page, password reset, MFA, client registration (DCR or CIMD), token issuance.
   TI Recon verifies tokens an external IdP issued and never becomes a login
@@ -1711,6 +1717,55 @@ about it.
      broadly would strip a bearer from a protected path, which becomes a `401`
      rather than access. TI Recon builds no OAuth document of its own.
 
+154. **The production verifier trusts a token only after its signature, and never
+     a key URL the token names.** `alg` comes from the configured allowlist, so
+     `alg: none` and every unlisted algorithm are refused before a key is looked
+     up; `jku` and `x5u` are never read, so a token cannot point key retrieval at
+     a host it controls. Asymmetric only — HS256 is not configurable at all,
+     because a resource server should verify with the authorization server's
+     *public* key and never hold its signing secret, and HS256 beside RS256 is
+     the key-confusion attack. Issuer and audience are exact; a token may carry
+     other audiences as long as ours is among them. No JWT library option that
+     skips a verification appears anywhere in production source, and a static
+     test reads the AST to keep it that way.
+
+155. **Only four values cross from a verified token into the request context.**
+     Issuer, subject, scopes, expiry. Not the raw JWT — nothing in the SDK's
+     resource-server path reads `AccessToken.token`, so a placeholder goes there
+     — and not the decoded payload, because an access token routinely carries a
+     name, an email and an organization that have no business in a ContextVar
+     later code can read. Scopes come from the standard space-delimited `scope`
+     claim alone; a provider-specific permissions claim is never merged in.
+     `client_id`/`azp` names the OAuth *client* and is never human identity.
+
+156. **Key retrieval is bounded, cached, coordinated and fails closed.** Only the
+     configured `jwks_url`, redirects disabled, system CA verification, bounded
+     timeout, response-size ceiling, key-count limit and content-type check — an
+     external document must not be able to allocate arbitrary memory or move the
+     endpoint. An unknown `kid` triggers one refresh that concurrent requests
+     share, behind a floor that stops forged key ids amplifying requests at the
+     identity provider; the cost is that rotation is visible within that interval
+     rather than instantly, which is why authorization servers publish a key
+     before signing with it. A malformed refresh never replaces working keys, and
+     an unreachable JWKS endpoint authenticates nobody.
+
+157. **Startup contacts no identity provider, and neither do the public routes.**
+     Keys arrive with the first authenticated request, so `/health` and the RFC
+     9728 metadata endpoint keep answering during an IdP outage while
+     authentication fails closed. Deployment liveness is not identity-provider
+     reachability, and a probe that failed on an IdP hiccup would take a working
+     server out of rotation for something it does not need to be alive.
+
+158. **The remote process fails closed before it listens.** A missing or short
+     tenant derivation key, an `http://` resource, a path other than `/mcp`, a
+     wildcard host or origin, a symmetric algorithm — each refuses to start
+     rather than starting degraded. The tenant key is never generated at startup:
+     a fresh one would give every analyst a new identity on every restart and
+     orphan whatever Task 23 stored. Configuration is `TI_RECON`-prefixed
+     environment only; nothing generic is read, and no provider credential is
+     read at all. The public resource URL and the internal bind are separate, and
+     the OAuth audience is always the former.
+
 153. **The gate is a raw ASGI wrapper, and lifespan ownership does not move.**
      Not a `Mount`: lifespan events pass through unexamined to the SDK
      application, which keeps owning the Streamable HTTP session manager —
@@ -2033,7 +2088,10 @@ src/ti_recon/
                      (the three implementations and the error policy), server
                      (the two deployment profiles, annotations and resources),
                      http (the preflight gate, the ASGI app, its fail-closed
-                     configuration and /health), main (stdio process)
+                     configuration and /health), jwt_auth (the production
+                     JWT/JWKS verifier, vendor-neutral), http_main (the
+                     single-worker remote process and its environment
+                     configuration), main (stdio process)
   cli/               Task 20: the `ti-recon` command. parser (argparse; no
                      credential or provider flags), main (streams, exit codes),
                      runtime (the one composition root a local invocation uses)

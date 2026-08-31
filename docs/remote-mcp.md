@@ -5,11 +5,11 @@ TI Recon serves MCP over local stdio, and — through
 describes both halves of the remote work: **who a request belongs to**, and **the
 HTTP surface that identity protects**.
 
-> **This is an application factory, not a running service.** There is no
-> `ti-recon-mcp-http` command, no bundled ASGI server and nothing deployed. A
-> runnable process needs a real token verifier, and that means choosing an
-> identity platform — the next phase does both together. Today the only *running*
-> server is `ti-recon-mcp` over stdio, documented in [mcp.md](mcp.md).
+> **Nothing is deployed, and no identity provider has been contacted.** The
+> `ti-recon-mcp-http` process exists and starts; pointing it at a real
+> authorization server and completing a Claude Code OAuth login is the next
+> phase. The local `ti-recon-mcp` stdio server is unchanged — see
+> [mcp.md](mcp.md).
 
 ```
 HTTPS ingress
@@ -245,6 +245,128 @@ Task 21's unexpected-exception sanitisation is unchanged: the type is logged, th
 message is not, and `CancelledError` propagates untouched.
 
 ## The HTTP surface
+
+### Running one
+
+```bash
+export TI_RECON_MCP_RESOURCE_URL=https://mcp.example.com/mcp
+export TI_RECON_AUTH_ISSUER_URL=https://idp.example.com/
+export TI_RECON_AUTH_JWKS_URL=https://idp.example.com/.well-known/jwks.json
+export TI_RECON_TENANT_DERIVATION_KEY=...          # >= 32 chars, from your secret store
+export TI_RECON_MCP_ALLOWED_HOSTS=mcp.example.com
+ti-recon-mcp-http
+```
+
+Optional: `TI_RECON_MCP_ALLOWED_ORIGINS` (empty by default),
+`TI_RECON_AUTH_ALGORITHMS` (`RS256`), `TI_RECON_AUTH_TOKEN_PROFILE`
+(`generic_jwt` or `rfc9068`), `TI_RECON_MCP_BIND_HOST` (`127.0.0.1`),
+`TI_RECON_MCP_BIND_PORT` (`8000`), `TI_RECON_LOG_LEVEL`.
+
+Nothing generic is read — no bare `API_KEY`, `TOKEN` or `SECRET` — and **no
+provider credential is read at all**. Startup fails before the socket opens if
+anything is missing or unsafe: no tenant key, a short one, an `http://` resource,
+a path that is not `/mcp`, a wildcard host, a symmetric algorithm. A remote
+server that started in a degraded, unauthenticated mode would be worse than one
+that did not start.
+
+**The public resource and the internal bind are different things.** A container
+binds `0.0.0.0:8000` behind an ingress terminating TLS at
+`https://mcp.example.com/mcp`; the canonical OAuth resource is always the
+configured public HTTPS URL, never the socket.
+
+**The tenant derivation key must come from the deployment's secret store and stay
+stable.** It is never generated at startup: a fresh key would give every analyst
+a new identity on every restart and orphan whatever Task 23 stored under the old
+one.
+
+### Verifying a token
+
+`JwtJwksTokenVerifier` is the production delegate. An authorization server signs
+an access token with its private key and publishes the public half at a JWKS
+endpoint; the verifier fetches that key once, caches it, and thereafter validates
+locally.
+
+| Checked | How |
+| --- | --- |
+| signature | asymmetric only — RS/PS/ES. **HS256 cannot be configured**, so an RSA public key can never be abused as an HMAC secret |
+| `alg` | from the configured allowlist, never from the token header. `alg: none` is refused before a key is looked up |
+| key | by `kid` from the configured JWKS URL. **`jku` and `x5u` are never read**, so a token cannot point key retrieval at a host it controls |
+| `iss` | exact string comparison against configuration |
+| `aud` | must contain the configured resource; a string or a list, and the token may legitimately have other audiences too |
+| `sub` | present, a string, non-empty |
+| `exp` / `nbf` | through the library's registered-claim validation, no leeway, no invented maximum age |
+| `typ` | only under the `rfc9068` profile, which also requires `client_id`, `iat` and `jti` |
+
+Scopes come from the standard space-delimited `scope` claim, deduplicated and
+order-preserving; a provider-specific permissions claim is deliberately not
+merged in, because two vocabularies quietly unioned is how a permission granted
+in one system becomes a scope in another. `client_id` (or `azp`) is recorded as
+the OAuth *client* and is never treated as human identity — the tenant is still
+derived from issuer and subject.
+
+**Only four values cross into the request context**: the issuer, the subject, the
+scopes and the expiry. Not the raw JWT — nothing in the SDK's resource-server
+path reads it, so a placeholder goes there instead. Not the decoded payload
+either: an access token routinely carries a name, an email and an organization,
+and none of that belongs in a ContextVar later code can read.
+
+### Fetching keys
+
+Only the configured `jwks_url`. **Redirects are disabled** — a JWKS endpoint that
+moves is a deployment change, not a runtime hop, and following one would let
+whoever controls that hostname supply keys. Normal system CA verification, never
+relaxed. Bounded timeouts, a response-size ceiling checked before parsing, a key
+count limit, and a content-type check.
+
+One HTTP client for the process, created on first use and closed by the
+application lifespan. It is deliberately *not* a provider client: a provider
+client's retry, quota and metric semantics mean something else entirely.
+
+Keys are cached. An unknown `kid` triggers **one** coordinated refresh that
+concurrent requests share; a floor between fetches stops a stream of forged key
+ids becoming a request amplifier pointed at the identity provider. That floor has
+a cost, stated rather than hidden: a key published immediately after a fetch
+becomes visible on the next fetch the floor allows, up to
+`minimum_refresh_interval_seconds` later. In practice authorization servers
+publish a new key before signing with it, and this default is far tighter than
+PyJWT's own five-minute key cache. A malformed refresh never replaces working
+keys.
+
+**Startup contacts no identity provider.** Keys arrive with the first
+authenticated request, so `/health` keeps answering during a brief IdP outage —
+deployment liveness is not identity-provider reachability — while authentication
+fails closed until keys can be loaded. `/health` and the RFC 9728 metadata
+endpoint never trigger a JWKS fetch at all.
+
+Externally every failure is the same `401`. Internally the categories are
+distinguished for logs — `invalid_signature`, `issuer_mismatch`,
+`audience_mismatch`, `token_expired`, `key_not_found`, `jwks_unavailable`,
+`malformed_jwks` and the rest — and never carry a claim, a key, a hostname or a
+raw token. No JWT is logged at any level.
+
+### Example authorization server configuration
+
+TI Recon bundles no identity provider and issues no login token. Any OAuth 2.1
+server that issues signed JWT access tokens works; **Auth0 is what the next phase
+will use for a staging acceptance test, and it is not tested yet.** There is no
+`Auth0TokenVerifier`, no vendor settings class and no vendor branch — the code
+contains no provider name at all.
+
+For that staging run, the authorization server needs:
+
+| Setting | Value |
+| --- | --- |
+| API identifier / audience | the **exact** TI Recon MCP resource URL |
+| API permission | `ti-recon:investigate` |
+| signing algorithm | RS256 initially |
+| JWT profile | evaluate RFC 9068 (`at+jwt`); the generic profile also works |
+| resource parameter | must accept RFC 8707 `resource`, which MCP clients send |
+| client registration | prefer CIMD; DCR still works but is deprecated in MCP 2026 |
+
+TI Recon depends on none of that machinery. It publishes `authorization_servers`
+in its protected-resource metadata and Claude Code arranges registration with
+that server directly, so the resource server stays registration-mechanism
+neutral.
 
 ### Building one
 
@@ -552,9 +674,10 @@ Task 24 gives that state a shared backend.
 
 ## Still to come
 
-**Task 22, next phase** — a deployment token verifier and the process entry point,
-added together, plus real Claude Code OAuth interoperability against a chosen
-authorization server.
+**Task 22, next phase — staging IdP acceptance.** Point the process at a real
+authorization server, complete a Claude Code OAuth login end to end, and confirm
+discovery, consent, token audience and scope against a live tenant. Nothing in
+that flow has been exercised against a real identity provider yet.
 
 **Task 23** — secure provider credential management: durable encrypted per-user
 storage, an authenticated out-of-band provisioning path, rotation, revocation and
