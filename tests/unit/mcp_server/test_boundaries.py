@@ -267,20 +267,35 @@ def _sources() -> list[tuple[Path, str]]:
     return [(path, path.read_text(encoding="utf-8")) for path in sorted(MCP_PACKAGE.rglob("*.py"))]
 
 
+#: The one module here allowed an HTTP client, and why.
+#:
+#: Fetching a JWKS document is authorization infrastructure: it talks to the
+#: deployment's identity provider at a configured URL, and it is the only way a
+#: resource server can hold public signing keys. That is a different thing from
+#: intelligence traffic, which still may not originate here — ``jwt_auth.py``
+#: imports no provider adapter and no provider client, and its only destination
+#: is ``JwtVerifierConfig.jwks_url``.
+_HTTP_CLIENT_EXEMPT = "jwt_auth.py"
+
+
 def test_the_server_imports_no_provider_adapter_or_transport() -> None:
     """Execution belongs to Task 13 and Task 6.
 
     ``runtime.py`` may import the *catalogue*, which is a composition root. No
-    module here may import an individual adapter, an HTTP client or a socket.
+    module here may import an individual adapter or open a socket, and only the
+    JWKS verifier may hold an HTTP client.
     """
     for path, source in _sources():
+        banned = {"socket", "ssl", "requests"}
+        if path.name != _HTTP_CLIENT_EXEMPT:
+            banned.add("httpx")
         tree = ast.parse(source)
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    assert alias.name not in {"socket", "httpx", "ssl", "requests"}, path.name
+                    assert alias.name not in banned, path.name
             if isinstance(node, ast.ImportFrom) and node.module:
-                assert node.module not in {"socket", "httpx", "ssl", "requests"}, path.name
+                assert node.module not in banned, path.name
                 assert not node.module.startswith("ti_recon.providers.") or node.module.endswith(
                     (".catalog", ".adapter")
                 ), f"{path.name} imports {node.module}"
@@ -337,7 +352,10 @@ def test_the_reusable_factory_does_not_reconfigure_logging() -> None:
     embedding application's handlers — the lesson Task 20 already learned once.
     """
     for path, source in _sources():
-        if path.name == "main.py":
+        # The two process entry points own logging for their own process. Every
+        # other module here is a library somebody may embed, and reconfiguring
+        # the package logger would silently replace their handlers.
+        if path.name in {"main.py", "http_main.py"}:
             continue
         assert "basicConfig" not in source, path.name
         assert ".handlers =" not in source, path.name
@@ -607,18 +625,27 @@ def test_no_permissive_token_verifier_ships() -> None:
     assert factory.args.kw_defaults[index] is None, "delegate must have no default"
 
 
-def test_no_remote_console_script_is_published() -> None:
-    """Running a remote server needs a real verifier, and that needs an IdP.
+def test_the_remote_entry_point_cannot_run_more_than_one_worker() -> None:
+    """The entry point exists now, and offers no way to scale it wrongly.
 
-    Shipping an entry point today would mean shipping something for it to
-    construct, and the only candidates are the three verifiers that must never
-    exist. The next phase adds both together.
+    Task 6's cache, cooldown, quota and single-flight stores are process-local,
+    and so is the tenant limiter. A second worker enforces each of them a second
+    time independently, so the worker count is not a tuning knob — it is a
+    correctness constraint until Task 24 gives that state a shared backend.
+
+    Read from the AST rather than the text: the module docstring explains the
+    policy at length and should.
     """
     manifest = Path("pyproject.toml").read_text(encoding="utf-8")
-    assert "ti-recon-mcp-http" not in manifest
-    assert "uvicorn" not in manifest
-    for path, source in _sources():
-        assert "--workers" not in source, path.name
+    assert "ti-recon-mcp-http = " in manifest
+
+    tree = ast.parse((MCP_PACKAGE / "http_main.py").read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            for keyword in node.keywords:
+                assert keyword.arg != "workers", "the entry point must not request workers"
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            assert node.value not in {"--workers", "workers", "WEB_CONCURRENCY"}, node.value
 
 
 def test_nothing_below_the_boundary_imports_the_http_gate() -> None:

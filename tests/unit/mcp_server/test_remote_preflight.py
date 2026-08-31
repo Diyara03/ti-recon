@@ -514,3 +514,59 @@ async def test_a_transport_rejection_consumes_no_investigation_slot() -> None:
 
     # Nothing was tracked, because nothing got as far as an investigation.
     assert app.mcp_app is not None
+
+
+@pytest.mark.asyncio
+async def test_a_non_http_non_lifespan_scope_is_passed_straight_through() -> None:
+    """A websocket is not this gate's business, and it invents no answer for one."""
+    async with gated_app(RefusingVerifier()) as app:
+        received: list[str] = []
+
+        async def receive() -> dict[str, str]:
+            return {"type": "websocket.connect"}
+
+        async def send(message: dict[str, str]) -> None:
+            received.append(message["type"])
+
+        with pytest.raises(Exception):  # noqa: B017 - the SDK app decides, not the gate
+            await app({"type": "websocket", "path": "/mcp"}, receive, send)
+
+
+@pytest.mark.asyncio
+async def test_a_closer_that_fails_does_not_break_shutdown(caplog) -> None:
+    """Releasing a client is best effort; a crash on the way out helps nobody."""
+    from fixtures.investigation.stack import InvestigationStack
+    from fixtures.mcp_server.auth import auth_config
+    from fixtures.mcp_server.remote import http_config
+    from ti_recon.application.composition import CredentialLoadReport
+    from ti_recon.application.service import InvestigationApplication
+    from ti_recon.mcp_server.http import build_remote_http_app
+    from ti_recon.mcp_server.runtime import McpRuntime, RemotePrincipalSource
+
+    class _Exploding:
+        async def verify_token(self, token: str) -> None:
+            return None
+
+        async def aclose(self) -> None:
+            msg = "the client refused to close"
+            raise RuntimeError(msg)
+
+    caplog.set_level("WARNING")
+    config = http_config()
+    auth = auth_config(issuer=config.issuer_url, resource=config.resource_url)
+    stack = InvestigationStack(providers=[])
+    runtime = McpRuntime(
+        application=InvestigationApplication(orchestrator=stack.orchestrator),
+        credentials=CredentialLoadReport(),
+        connections=stack.connections,
+        principals=RemotePrincipalSource(auth),
+    )
+    app = build_remote_http_app(runtime, config=config, auth=auth, delegate=_Exploding())
+
+    from fixtures.mcp_server.remote import _lifespan
+
+    async with _lifespan(app):
+        assert (await raw(app, "GET", HEALTH_PATH)).status_code == 200
+
+    assert "RuntimeError" in caplog.text
+    assert "the client refused to close" not in caplog.text
