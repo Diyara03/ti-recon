@@ -142,6 +142,7 @@ class JwtRejection(StrEnum):
     MISSING_CLAIM = "missing_claim"
     MISSING_SUBJECT = "missing_subject"
     MALFORMED_SCOPE = "malformed_scope"
+    WEAK_KEY = "weak_key"
     WRONG_TOKEN_TYPE = "wrong_token_type"
 
 
@@ -176,6 +177,29 @@ class JwtVerifierConfig:
     profile: TokenProfile = TokenProfile.GENERIC_JWT
     #: Bounded, so an unreachable identity provider cannot hold a request open.
     fetch_timeout_seconds: float = 5.0
+    #: How long a successfully loaded key set stays trusted.
+    #:
+    #: The control that bounds *revocation*. When an authorization server retires
+    #: a compromised key it disappears from the JWKS document — but a resource
+    #: server that kept trusting an already-known ``kid`` would keep accepting
+    #: newly forged tokens for as long as the process lived. Token ``exp`` does
+    #: not help: whoever holds the private key can mint fresh ones.
+    #:
+    #: So a set expires, and an expired set is *discarded* rather than used while
+    #: a refresh is attempted. Five minutes matches PyJWT's own JWKS lifetime and
+    #: is the window within which a revoked key stops being accepted.
+    #:
+    #: Distinct from :attr:`minimum_refresh_interval_seconds`, which is a
+    #: different control for a different threat — see there.
+    cache_lifetime_seconds: float = 300.0
+    #: The largest bearer this verifier will look at, before any decoding.
+    #:
+    #: An HTTP ``Authorization`` header is not bounded by the MCP body limit, and
+    #: a deployment's proxy may not bound it either. Real OAuth access tokens are
+    #: one to four kilobytes; this leaves room for a generous one while stopping
+    #: a megabyte of attacker-chosen header — including its ``kid`` — from
+    #: reaching base64, JSON or an in-memory lookup.
+    max_token_bytes: int = 8 * 1024
     #: The floor between two JWKS fetches. An unknown ``kid`` triggers one
     #: refresh; without a floor, a stream of forged key ids would become a
     #: request amplifier pointed at the identity provider — and since an attacker
@@ -219,8 +243,18 @@ class JwtVerifierConfig:
             if getattr(self, name) <= 0:
                 msg = f"{name} must be positive"
                 raise ValueError(msg)
-        if self.max_jwks_bytes < 1 or self.max_jwks_keys < 1:
-            msg = "JWKS bounds must be positive"
+        if self.max_jwks_bytes < 1 or self.max_jwks_keys < 1 or self.max_token_bytes < 1:
+            msg = "JWKS and token bounds must be positive"
+            raise ValueError(msg)
+        if self.cache_lifetime_seconds <= 0:
+            msg = "cache_lifetime_seconds must be positive"
+            raise ValueError(msg)
+        if self.cache_lifetime_seconds <= self.minimum_refresh_interval_seconds:
+            # Otherwise the anti-flood floor could routinely delay repopulating a
+            # set that has just expired. Failing closed while it did would be
+            # safe but needlessly unavailable, and the ambiguity is worth
+            # refusing outright rather than reasoning about per deployment.
+            msg = "cache_lifetime_seconds must exceed minimum_refresh_interval_seconds"
             raise ValueError(msg)
 
     @property
@@ -257,7 +291,12 @@ class JwtJwksTokenVerifier:
         self._keys: dict[str, PyJWK] = {}
         self._unkeyed: PyJWK | None = None
         self._lock = asyncio.Lock()
+        #: When a fetch was last *attempted*. Drives the anti-flood floor.
         self._last_fetch: float | None = None
+        #: When the current set was last *successfully loaded*. Drives freshness.
+        #: Two timestamps because they answer different questions, and a failed
+        #: fetch must never extend the life of the keys already held.
+        self._loaded_at: float | None = None
 
     @property
     def expected_issuer(self) -> str:
@@ -293,6 +332,10 @@ class JwtJwksTokenVerifier:
     # -- verification ------------------------------------------------------ #
 
     async def _verify(self, token: str) -> AccessToken:
+        if len(token.encode("utf-8", "surrogatepass")) > self._config.max_token_bytes:
+            # Before base64, before JSON, before any lookup. The size is never
+            # reported: an error naming the limit is an oracle for tuning around.
+            raise _Rejected(JwtRejection.MALFORMED_TOKEN)
         header = _header_of(token)
         algorithm = header.get("alg")
         if not isinstance(algorithm, str) or algorithm not in self._config.algorithms:
@@ -335,6 +378,11 @@ class JwtJwksTokenVerifier:
                     "verify_nbf": True,
                     "verify_aud": True,
                     "verify_iss": True,
+                    # Off by default in PyJWT, where an undersized RSA key only
+                    # raises a warning and still verifies. A warning is not a
+                    # security control: on it becomes an InvalidKeyError, so a
+                    # 1024-bit key authenticates nobody.
+                    "enforce_minimum_key_length": True,
                     "require": list(self._config.required_claims),
                 },
             )
@@ -352,10 +400,22 @@ class JwtJwksTokenVerifier:
             raise _Rejected(JwtRejection.INVALID_SIGNATURE) from error
         except jwt.InvalidAlgorithmError as error:
             raise _Rejected(JwtRejection.UNSUPPORTED_ALGORITHM) from error
+        except jwt.InvalidKeyError as error:
+            # Includes an RSA modulus below NIST SP 800-131A's 2048-bit floor.
+            raise _Rejected(JwtRejection.WEAK_KEY) from error
         except jwt.InvalidTokenError as error:
             # The catch-all stays last so the specific categories above keep
             # their meaning; the message is never forwarded.
             raise _Rejected(JwtRejection.MALFORMED_TOKEN) from error
+        except (TypeError, ValueError) as error:
+            # Not every malformed claim reaches PyJWT as a JWT error: an `iat`
+            # holding an object raises a bare TypeError from inside its
+            # validation. Left alone that escapes the verifier entirely, and an
+            # unexpected exception out of an authentication path is exactly what
+            # must not happen — the SDK would log a traceback and the caller
+            # would get something other than a clean 401.
+            raise _Rejected(JwtRejection.MALFORMED_TOKEN) from error
+        _require_numeric_dates(decoded)
         return decoded
 
     def _access_token(self, claims: Mapping[str, Any]) -> AccessToken:
@@ -369,6 +429,12 @@ class JwtJwksTokenVerifier:
         organization, and none of that has any business reaching a ContextVar
         that later code can read.
         """
+        if self._config.profile is TokenProfile.RFC9068 and not _is_text(claims.get("client_id")):
+            # RFC 9068 §2.2 makes `client_id` mandatory, and `require` only
+            # checks that a key is present. Without this a token carrying an
+            # object there passes and silently becomes "unknown-client".
+            raise _Rejected(JwtRejection.MISSING_CLAIM)
+
         subject = claims.get("sub")
         if not isinstance(subject, str) or not subject:
             raise _Rejected(JwtRejection.MISSING_SUBJECT)
@@ -399,6 +465,7 @@ class JwtJwksTokenVerifier:
         if kid is not None and not isinstance(kid, str):
             raise _Rejected(JwtRejection.MALFORMED_TOKEN)
 
+        self._expire_stale_keys()
         key = self._cached(kid)
         if key is not None:
             return key
@@ -407,6 +474,27 @@ class JwtJwksTokenVerifier:
         if key is None:
             raise _Rejected(JwtRejection.KEY_NOT_FOUND)
         return key
+
+    def _expire_stale_keys(self) -> None:
+        """Discard the key set once it is older than its lifetime.
+
+        Discarded rather than merely marked, which is what makes the failure mode
+        right: after this, an expired key simply is not in the cache, so the
+        ordinary "unknown key" path runs and a failed refresh leaves nothing to
+        fall back on. There is no branch anywhere that can serve a stale key
+        because a refresh did not work.
+
+        The alternative — keep the old set and try to refresh before using it —
+        needs every caller to remember that the keys in hand may be dead. One
+        forgotten check there is a revoked key accepted indefinitely.
+        """
+        if self._loaded_at is None:
+            return
+        if self._monotonic() - self._loaded_at < self._config.cache_lifetime_seconds:
+            return
+        self._keys = {}
+        self._unkeyed = None
+        self._loaded_at = None
 
     def _cached(self, kid: str | None) -> PyJWK | None:
         if kid is not None:
@@ -428,6 +516,10 @@ class JwtJwksTokenVerifier:
         recent attempt, an unknown ``kid`` is simply unknown.
         """
         async with self._lock:
+            # Re-checked inside the lock: whoever held it may have just loaded
+            # the key this caller wants, which is what collapses a burst at
+            # expiry or after a rotation into one physical fetch.
+            self._expire_stale_keys()
             if self._cached(kid) is not None:
                 return
             now = self._monotonic()
@@ -439,10 +531,13 @@ class JwtJwksTokenVerifier:
             self._last_fetch = now
             document = await self._fetch()
             keyed, unkeyed = _parse_jwks(document, self._config)
-            # Replaced atomically, and only once the document parsed: a
-            # malformed refresh must not corrupt keys that already work.
+            # Replaced atomically, and only once the document parsed and
+            # validated: a malformed refresh must neither corrupt keys that
+            # already work nor start a new freshness window over old data. Only
+            # a good document sets ``_loaded_at``.
             self._keys = keyed
             self._unkeyed = unkeyed
+            self._loaded_at = self._monotonic()
 
     async def _fetch(self) -> Mapping[str, Any]:
         """Read the configured JWKS URL, and only that.
@@ -503,6 +598,31 @@ class _Rejected(Exception):
     reason: JwtRejection
 
 
+def _require_numeric_dates(claims: Mapping[str, Any]) -> None:
+    """``exp``, ``nbf`` and ``iat`` must be numbers, as RFC 7519 defines them.
+
+    PyJWT coerces: it accepts ``"9999999999"`` for an expiry and ``"0"`` for a
+    not-before, because it calls ``int()`` on whatever is there. That is not an
+    authentication bypass — the coerced value is still compared — but a NumericDate
+    is a number, and a verifier that quietly accepts other shapes is one a token
+    can be written against in ways nobody modelled.
+
+    ``bool`` is excluded explicitly: it is a subclass of ``int``, so ``True``
+    would otherwise read as the epoch second 1.
+    """
+    for name in ("exp", "nbf", "iat"):
+        value = claims.get(name)
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise _Rejected(JwtRejection.MALFORMED_TOKEN)
+
+
+def _is_text(value: object) -> bool:
+    """A present, non-empty string."""
+    return isinstance(value, str) and bool(value)
+
+
 def _header_of(token: str) -> Mapping[str, Any]:
     """The unverified JOSE header, read only to learn what was *claimed*.
 
@@ -558,6 +678,26 @@ def _client_id_of(claims: Mapping[str, Any]) -> str:
     return "unknown-client"
 
 
+def _permits_verification(key_ops: object) -> bool:
+    """Whether a JWK's declared operations allow signature verification.
+
+    Absent means unrestricted, which is how most authorization servers publish.
+    Present means authoritative: it must be a non-empty list of distinct strings
+    containing ``verify``. Anything else — a bare string, a duplicate entry, an
+    empty list, a non-string member — is a JWK this layer will not interpret, and
+    an uninterpretable key is not a key to verify a token with.
+    """
+    if key_ops is None:
+        return True
+    if not isinstance(key_ops, list) or not key_ops:
+        return False
+    if not all(isinstance(item, str) for item in key_ops):
+        return False
+    if len(set(key_ops)) != len(key_ops):
+        return False
+    return "verify" in key_ops
+
+
 def _parse_jwks(
     document: Mapping[str, Any], config: JwtVerifierConfig
 ) -> tuple[dict[str, PyJWK], PyJWK | None]:
@@ -582,6 +722,14 @@ def _parse_jwks(
         if entry.get("use") not in (None, "sig"):
             # An encryption key is not a signing key. Skipped rather than
             # refused: a set may legitimately hold both.
+            continue
+        if not _permits_verification(entry.get("key_ops")):
+            # RFC 7517 §4.3: `key_ops` states what the key may be used for, and
+            # `verify` is the operation signature checking needs. A key whose
+            # publisher said "signing only" or "encryption only" must not verify
+            # anything, and RFC 7517 §4.3 also requires `use` and `key_ops` to
+            # agree — which they do here, because both have to permit
+            # verification before a key becomes a candidate.
             continue
         try:
             key = PyJWK(entry)
