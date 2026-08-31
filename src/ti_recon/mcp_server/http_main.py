@@ -50,6 +50,7 @@ probe — deployment liveness is not identity-provider reachability.
 from __future__ import annotations
 
 import argparse
+import base64
 import logging
 import os
 import sys
@@ -57,10 +58,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final
 
-from pydantic import SecretStr
+from pydantic import SecretBytes
 
 from ti_recon import __version__
-from ti_recon.mcp_server.auth import RemoteAuthConfig
+from ti_recon.mcp_server.auth import MINIMUM_TENANT_KEY_BYTES, RemoteAuthConfig
 from ti_recon.mcp_server.http import RemoteHttpApp, RemoteHttpConfig, build_remote_http_app
 from ti_recon.mcp_server.jwt_auth import (
     DEFAULT_ALGORITHMS,
@@ -72,6 +73,7 @@ from ti_recon.mcp_server.runtime import build_remote_runtime
 
 __all__ = [
     "ENVIRONMENT",
+    "TENANT_KEY_VARIABLE",
     "RemoteDeployment",
     "build_remote_application",
     "load_deployment",
@@ -86,7 +88,9 @@ ENVIRONMENT: Final[Mapping[str, str]] = {
     "TI_RECON_MCP_RESOURCE_URL": "canonical public MCP resource, e.g. https://mcp.example.com/mcp",
     "TI_RECON_AUTH_ISSUER_URL": "authorization server issuer, exactly as it appears in `iss`",
     "TI_RECON_AUTH_JWKS_URL": "where that server publishes its public signing keys",
-    "TI_RECON_TENANT_DERIVATION_KEY": "deployment secret for pseudonymous tenant identity",
+    "TI_RECON_TENANT_DERIVATION_KEY_B64": (
+        "base64url-encoded random key, >= 32 decoded bytes, for tenant identity"
+    ),
     "TI_RECON_MCP_ALLOWED_HOSTS": "comma-separated exact Host values this server answers to",
 }
 
@@ -103,9 +107,14 @@ _LEVEL = "TI_RECON_LOG_LEVEL"
 _DEFAULT_BIND_HOST: Final[str] = "127.0.0.1"
 _DEFAULT_BIND_PORT: Final[int] = 8000
 
-#: HMAC-SHA-256's block-size-equivalent security floor. A short deployment secret
-#: is a guessable one, and every tenant identifier in the deployment depends on it.
-MINIMUM_TENANT_KEY_LENGTH: Final[int] = 32
+#: The variable holding the tenant derivation key, named for its encoding.
+#:
+#: The ``_B64`` suffix is the contract stated where an operator reads it. The
+#: value is key *material*, not a passphrase, and an operator who sees a bare
+#: "key" name will reasonably type a memorable string — which would make every
+#: tenant identifier in the deployment as strong as that string. Renamed while
+#: nothing is deployed and there is nobody to migrate.
+TENANT_KEY_VARIABLE: Final[str] = "TI_RECON_TENANT_DERIVATION_KEY_B64"
 
 
 @dataclass(frozen=True)
@@ -149,17 +158,7 @@ def load_deployment(environment: Mapping[str, str] | None = None) -> RemoteDeplo
     resource_url = source["TI_RECON_MCP_RESOURCE_URL"].strip()
     issuer_url = source["TI_RECON_AUTH_ISSUER_URL"].strip()
     jwks_url = source["TI_RECON_AUTH_JWKS_URL"].strip()
-    tenant_key = source["TI_RECON_TENANT_DERIVATION_KEY"]
-
-    if len(tenant_key) < MINIMUM_TENANT_KEY_LENGTH:
-        # Never generated here. A random key per start would give every analyst a
-        # new identity on every restart and orphan whatever Task 23 stored under
-        # the old one.
-        msg = (
-            f"TI_RECON_TENANT_DERIVATION_KEY must be at least "
-            f"{MINIMUM_TENANT_KEY_LENGTH} characters"
-        )
-        raise ValueError(msg)
+    tenant_key = _tenant_key(source[TENANT_KEY_VARIABLE])
 
     http = RemoteHttpConfig(
         resource_url=resource_url,
@@ -167,9 +166,7 @@ def load_deployment(environment: Mapping[str, str] | None = None) -> RemoteDeplo
         allowed_hosts=_values(source["TI_RECON_MCP_ALLOWED_HOSTS"]),
         allowed_origins=_values(source.get(_ALLOWED_ORIGINS, "")),
     )
-    auth = RemoteAuthConfig(
-        issuer=issuer_url, resource=resource_url, tenant_key=SecretStr(tenant_key)
-    )
+    auth = RemoteAuthConfig(issuer=issuer_url, resource=resource_url, tenant_key=tenant_key)
     verifier = JwtVerifierConfig(
         issuer=issuer_url,
         jwks_url=jwks_url,
@@ -278,6 +275,48 @@ def _configure_logging() -> None:
         logger.handlers = [handler]
         logger.propagate = False
         logger.setLevel(os.environ.get(_LEVEL, "INFO").upper())
+
+
+def _tenant_key(raw: str) -> SecretBytes:
+    """Decode the tenant derivation key, strictly.
+
+    One representation: base64url, padding optional, nothing else. Strict
+    decoding, so an invalid character is an error rather than something silently
+    dropped — a key that decoded differently on two deployments would give the
+    same analyst two identities.
+
+    Never generated here, and never stretched from a passphrase. A random key per
+    start would give every analyst a new identity on every restart and orphan
+    whatever Task 23 stored under the old one; silently stretching a human string
+    would hide that the deployment's tenant identifiers are only as strong as
+    somebody's choice of words.
+
+    Generate one with, for example::
+
+        python -c "import base64, secrets; \
+                   print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
+    """
+    value = raw.strip()
+    padded = value + "=" * (-len(value) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(
+            padded.encode("ascii"),
+        )
+    except (ValueError, UnicodeEncodeError) as error:
+        msg = f"{TENANT_KEY_VARIABLE} must be valid base64url"
+        raise ValueError(msg) from error
+    # `b64decode` without `validate=True` ignores stray characters; re-encoding
+    # and comparing is what actually rejects them.
+    if base64.urlsafe_b64encode(decoded).decode("ascii").rstrip("=") != value.rstrip("="):
+        msg = f"{TENANT_KEY_VARIABLE} must be valid base64url"
+        raise ValueError(msg)
+    if len(decoded) < MINIMUM_TENANT_KEY_BYTES:
+        msg = (
+            f"{TENANT_KEY_VARIABLE} must decode to at least "
+            f"{MINIMUM_TENANT_KEY_BYTES} bytes of key material"
+        )
+        raise ValueError(msg)
+    return SecretBytes(decoded)
 
 
 def _values(raw: str) -> tuple[str, ...]:

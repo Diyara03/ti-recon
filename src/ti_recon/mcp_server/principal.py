@@ -41,7 +41,7 @@ import hashlib
 import hmac
 from dataclasses import dataclass
 
-from pydantic import SecretStr
+from pydantic import SecretBytes
 
 __all__ = [
     "TENANT_ID_PREFIX",
@@ -76,7 +76,7 @@ class RemotePrincipal:
     tenant_id: str
 
 
-def derive_tenant_id(*, issuer: str, subject: str, tenant_key: SecretStr) -> str:
+def derive_tenant_id(*, issuer: str, subject: str, tenant_key: SecretBytes) -> str:
     """The pseudonymous tenant identifier for one validated principal.
 
     Deterministic: the same issuer, subject and deployment key always produce the
@@ -86,13 +86,16 @@ def derive_tenant_id(*, issuer: str, subject: str, tenant_key: SecretStr) -> str
     Both inputs must come from a *verified* token. Deriving from an unvalidated
     bearer string would let anybody mint any tenant they liked, which is the
     whole isolation boundary.
+
+    ``tenant_key`` is raw key bytes, already decoded. HMAC-SHA-256 takes a key,
+    not a passphrase: handing it a human-chosen string would make the security of
+    every tenant identifier in the deployment equal to the guessability of that
+    string, and a resource server has no business stretching a password.
     """
     message = b"".join(
         _framed(part) for part in (_TENANT_DOMAIN, issuer.encode("utf-8"), subject.encode("utf-8"))
     )
-    digest = hmac.new(
-        tenant_key.get_secret_value().encode("utf-8"), message, hashlib.sha256
-    ).hexdigest()
+    digest = hmac.new(tenant_key.get_secret_value(), message, hashlib.sha256).hexdigest()
     return f"{TENANT_ID_PREFIX}{digest}"
 
 
