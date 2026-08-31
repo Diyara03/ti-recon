@@ -252,7 +252,7 @@ message is not, and `CancelledError` propagates untouched.
 export TI_RECON_MCP_RESOURCE_URL=https://mcp.example.com/mcp
 export TI_RECON_AUTH_ISSUER_URL=https://idp.example.com/
 export TI_RECON_AUTH_JWKS_URL=https://idp.example.com/.well-known/jwks.json
-export TI_RECON_TENANT_DERIVATION_KEY=...          # >= 32 chars, from your secret store
+export TI_RECON_TENANT_DERIVATION_KEY_B64=...      # see below
 export TI_RECON_MCP_ALLOWED_HOSTS=mcp.example.com
 ti-recon-mcp-http
 ```
@@ -274,10 +274,26 @@ binds `0.0.0.0:8000` behind an ingress terminating TLS at
 `https://mcp.example.com/mcp`; the canonical OAuth resource is always the
 configured public HTTPS URL, never the socket.
 
-**The tenant derivation key must come from the deployment's secret store and stay
-stable.** It is never generated at startup: a fresh key would give every analyst
-a new identity on every restart and orphan whatever Task 23 stored under the old
-one.
+**The tenant derivation key is base64url-encoded random bytes**, at least 32 of
+them decoded, generated once by something cryptographically secure:
+
+```bash
+python -c "import base64, secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
+```
+
+The `_B64` in the variable name is the contract. HMAC-SHA-256 takes a key, not a
+passphrase — a memorable 32-character string would make every tenant identifier
+in the deployment only as strong as somebody's choice of words, and a resource
+server has no business stretching a password into key material. Decoding is
+strict: an invalid character, a short result or the standard (non-URL) base64
+alphabet all refuse to start, and padding is optional.
+
+**It must come from the deployment's secret store and stay stable.** It is never
+generated at startup, and changing it changes every pseudonymous tenant
+identifier — after Task 23 that would disconnect analysts from their stored
+provider credentials. Back it up with the rest of the deployment's secrets and do
+not rotate it casually; a safe migration is Task 23's to design if it is ever
+needed. There is exactly one key, and no support for a second.
 
 ### Verifying a token
 
@@ -290,7 +306,12 @@ locally.
 | --- | --- |
 | signature | asymmetric only — RS/PS/ES. **HS256 cannot be configured**, so an RSA public key can never be abused as an HMAC secret |
 | `alg` | from the configured allowlist, never from the token header. `alg: none` is refused before a key is looked up |
-| key | by `kid` from the configured JWKS URL. **`jku` and `x5u` are never read**, so a token cannot point key retrieval at a host it controls |
+| key | by `kid` from the configured JWKS URL. **`jku`, `x5u`, `jwk` and `x5c` are never read**, so a token can neither bring its own key nor point retrieval at a host it controls |
+| key strength | `enforce_minimum_key_length`, so an RSA modulus under 2048 bits is an error rather than PyJWT's default warning |
+| key purpose | a JWK whose `use` is not `sig`, or whose `key_ops` omits `verify`, is never a candidate (RFC 7517 §4.3) |
+| `crit` | unknown critical header extensions are rejected by PyJWT, pinned by regression |
+| claim types | `exp`, `nbf` and `iat` must be numbers as RFC 7519 defines them — PyJWT would otherwise coerce a string through `int()` |
+| size | a bearer over 8 KiB is refused before decoding, since an `Authorization` header is not bounded by the MCP body limit |
 | `iss` | exact string comparison against configuration |
 | `aud` | must contain the configured resource; a string or a list, and the token may legitimately have other audiences too |
 | `sub` | present, a string, non-empty |
@@ -322,15 +343,36 @@ One HTTP client for the process, created on first use and closed by the
 application lifespan. It is deliberately *not* a provider client: a provider
 client's retry, quota and metric semantics mean something else entirely.
 
-Keys are cached. An unknown `kid` triggers **one** coordinated refresh that
-concurrent requests share; a floor between fetches stops a stream of forged key
-ids becoming a request amplifier pointed at the identity provider. That floor has
-a cost, stated rather than hidden: a key published immediately after a fetch
-becomes visible on the next fetch the floor allows, up to
-`minimum_refresh_interval_seconds` later. In practice authorization servers
-publish a new key before signing with it, and this default is far tighter than
-PyJWT's own five-minute key cache. A malformed refresh never replaces working
-keys.
+Keys are cached, and **the cache has a finite lifetime** — five minutes, matching
+PyJWT's own. Two separate controls, for two different threats:
+
+| Control | Default | Bounds |
+| --- | --- | --- |
+| `cache_lifetime_seconds` | 300 s | how long a **revoked** key keeps being accepted |
+| `minimum_refresh_interval_seconds` | 30 s | how often attacker-chosen key ids can trigger a fetch |
+
+The lifetime is the one that makes revocation mean anything. When an
+authorization server retires a compromised key it disappears from the JWKS
+document — but a resource server that kept trusting an already-known `kid` would
+accept freshly forged tokens for as long as the process lived, and token `exp`
+does not help because whoever holds the private key mints new ones. So an expired
+set is **discarded**, not merely refreshed-before-use: after expiry the key is
+simply not there, and a failed refresh leaves nothing to fall back on.
+
+**An expired cache plus an unreachable identity provider fails closed.** There is
+no stale-key grace period. Availability is not worth indefinite trust in a key
+that may have been revoked precisely because it was compromised. Only a document
+that fetched *and parsed* starts a new freshness window, so a malformed refresh
+neither corrupts working keys nor extends the life of old ones.
+
+An unknown `kid` triggers **one** coordinated refresh that concurrent requests
+share, and so does expiry — a burst at either produces one fetch, and everyone
+waiting sees the same atomically validated replacement. The floor's cost is
+stated rather than hidden: a key published immediately after a fetch becomes
+visible on the next fetch it allows. In practice authorization servers publish a
+new key before signing with it, so a pre-published next key works from the cached
+set with no fetch at all. A lifetime shorter than the floor is refused at
+construction rather than left ambiguous.
 
 **Startup contacts no identity provider.** Keys arrive with the first
 authenticated request, so `/health` keeps answering during a brief IdP outage —
@@ -359,7 +401,7 @@ For that staging run, the authorization server needs:
 | API identifier / audience | the **exact** TI Recon MCP resource URL |
 | API permission | `ti-recon:investigate` |
 | signing algorithm | RS256 initially |
-| JWT profile | evaluate RFC 9068 (`at+jwt`); the generic profile also works |
+| JWT profile | RFC 9068 (`at+jwt`) is what the next phase will configure via `TI_RECON_AUTH_TOKEN_PROFILE=rfc9068`; the generic profile also works |
 | resource parameter | must accept RFC 8707 `resource`, which MCP clients send |
 | client registration | prefer CIMD; DCR still works but is deprecated in MCP 2026 |
 
