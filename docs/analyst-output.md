@@ -60,6 +60,45 @@ second opinion formed here would eventually disagree with the first.
 | `related_observables` | Task 14 graph edges | called indicators |
 | `source_checks` | Task 13 attempts | counted as votes |
 
+## The schema is where the meaning lives
+
+Field descriptions are part of the contract, not decoration. An MCP client
+receives this model as a tool's `outputSchema` and has nothing else to read it
+by: no repository, no documentation site, and — as the next section explains —
+not necessarily any Skill. So the fields whose values are easy to misread carry
+their vocabulary inline, in the schema:
+
+| Field | Carries |
+| --- | --- |
+| `assessment.verdict` | what each of the four verdicts claims, including that `inconclusive` is not clean |
+| `assessment.confidence` / `confidence_stix` | confidence in the *assessment*, never a probability of maliciousness |
+| `readiness.status` | evidence adequacy, never authorization to act |
+| `coverage[].information_yield` | `no_data` / `none` / `unattributed` kept apart |
+| `source_checks[].status` | `not_configured` as *not checked*, distinct from a source that answered and held nothing |
+| `source_checks[].cache_hit` | a real check that made no new request |
+| `related_observables[].assessed` | `false` means a relationship, not an indicator |
+| `*.source_family` | provenance, never a vote |
+
+Adding a description is not a semantic change and does not move
+`ANALYST_REPORT_SCHEMA_VERSION`: no field is added, removed, renamed or
+redefined, and the report payload is byte-identical. What changes is how much a
+consumer has to already know to read one correctly.
+
+## Interpretation must not depend on a Skill
+
+`.claude/skills/ti-recon-analyst/` is a filesystem artifact of *this repository*.
+A client that merely connects the MCP server — Claude Web with the hosted
+connector, most obviously — does not receive it, and a future plugin bundling a
+connector with a Skill would be a distribution convenience rather than the
+dependency model.
+
+So every semantic rule an analyst must not get wrong lives in the MCP contract:
+the server instructions, the tool descriptions, and the schema descriptions
+above. The Skill reinforces them, organises a response, supplies worked cases
+and adds workflow judgement. It may not be what makes an otherwise ambiguous
+contract correct, and a test exercises the exposed contract with the Skill files
+untouched to keep it that way.
+
 ## Distinctions the report must preserve
 
 **Confidence is not a probability.** `confidence_stix` carries the canonical STIX
@@ -95,6 +134,32 @@ check. That is also true of every threat nobody has caught yet.
 **`UNATTRIBUTED` is not `NO_DATA`.** One call answered two capabilities and the
 record cannot say which returned what. Rendering it as `NO_DATA` would assert the
 source held nothing.
+
+**`NOT_CONFIGURED` is not a provider failure, and not a check.** It says the
+source was *not consulted*, because no usable credential was available for that
+caller. It does not mean the source was contacted, that it was offline or
+unreachable, that a key was rejected, or that it looked and found nothing. It is
+also never an authorization failure: a fully authenticated caller with no
+provider credentials receives a valid report in which those sources report
+`NOT_CONFIGURED` and Task 18 records what that cost the coverage.
+
+**A cache hit is a completed check that made no request.** `cache_hit` means the
+result was reused from that caller's own scoped cache; `called_provider` is what
+says a source was physically contacted. Both facts are true at once and a
+renderer must not describe a cached check as a fresh query — or as a missing one.
+
+**`source_checks` is the authority for what was consulted.** Being shipped by the
+installation, being applicable to the observable, and being configured for the
+caller are three separate states, and none of them is having been asked. A source
+with no entry was not queried in that investigation. "Which sources did you use?"
+is answered here; "which are available?" is answered by the MCP
+`provider_status` diagnostic, and the second is never evidence for the first.
+
+**A reader's own knowledge is not in this report.** A consumer may independently
+know that a range is reserved documentation space or who operates an ASN. That is
+legitimate context and it is not something TI Recon collected: it must be labelled
+as the consumer's own, kept out of the basis, the opposing evidence, the coverage
+and the provenance, and it changes no verdict, confidence or coverage status.
 
 **An explanation covers linked evidence and nothing else.** Only a Task 16
 alternative explanation with an `EXPLAINS` link appears, and the evidence ids

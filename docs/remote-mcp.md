@@ -201,6 +201,22 @@ directly. A fully authenticated analyst with no provider credentials still gets 
 valid report — local sources answer, remote ones report `NOT_CONFIGURED`, and
 Task 18 records what that cost the coverage.
 
+### What a hosted caller must be told, and what they must not
+
+There is **no self-service provider credential setup in this version**, and the
+hosted MCP surface says so rather than leaving the gap for a plausible guess.
+
+Left unstated, a client fills it with the local model it already knows — "add the
+key to the server's environment and reconnect" — which was observed in live use
+and is wrong twice over: a hosted caller has no server environment to edit and no
+process to restart. `REMOTE_INSTRUCTIONS` and the hosted `provider_status`
+description therefore say the check did not happen, that self-service setup is
+unavailable, and that no provider API key may ever be pasted into a conversation,
+a tool argument, a prompt or a header. `STDIO_INSTRUCTIONS` keeps the local
+advice, because over stdio it is true.
+
+Nothing here promises Task 23. The absence is stated; no route is implied.
+
 ## Authenticated is not provider-configured
 
 Two independent states, and collapsing them would be a real product error:
@@ -231,7 +247,8 @@ DNS, no socket, and no call back to an authorization server beyond the
 authentication the current request already completed.
 
 Stdio behaviour is functionally unchanged: the environment load still happens once
-at startup, so **changing a credential still requires restarting the server**.
+at startup, so **changing a credential still requires restarting the server**. That
+sentence is about stdio and must never be repeated to a hosted caller.
 
 ## Errors reveal nothing
 
@@ -713,6 +730,37 @@ hold four investigation slots.
 No `--workers` option exists because no runnable entry point exists. A deployer
 running the ASGI app through their own server must run exactly one worker until
 Task 24 gives that state a shared backend.
+
+## Analyst-output acceptance, once real provider data is available
+
+The interpretation contract is asserted deterministically against scripted
+providers. That proves the *contract* states the right things; it cannot prove an
+analyst reading a real result reaches the right conclusion, because no shipped
+provider has answered through the hosted deployment yet — the remote profile
+reads no credentials from the environment, by design, and per-analyst credential
+storage is Task 23.
+
+So this matrix is an acceptance requirement held open, not optional polish. None
+of it has been run, and nothing below is implemented behaviour.
+
+| # | Case | Sources likely to answer | What the analyst must be able to see |
+| --- | --- | --- | --- |
+| 1 | Known-malicious file hash | GTI, MalwareBazaar, Hybrid Analysis | which evidence was decisive, and that it was specific rather than numerous |
+| 2 | Legitimate file with noisy detections | GTI, Hybrid Analysis | detection noise explained, expected behaviour distinguished from malicious, and a benign conclusion resting on positive reasoning rather than a low count |
+| 3 | Malicious URL or domain | urlscan, URLhaus, GTI, ThreatFox | current state distinguished from historical, and related infrastructure not promoted to an assessed indicator |
+| 4 | Scanner / background-noise address | GreyNoise, Censys, GTI | scanning behaviour distinguished from targeting, and the false-positive context stated plainly |
+| 5 | Conflicting intelligence | any two independent origins | supporting and opposing evidence separate, the conflict retained, and confidence reflecting evidence quality rather than a majority |
+| 6 | EICAR or another expected test artifact | GTI, MISP warninglists | malicious-looking detections explained as expected test behaviour, with no operational malware conclusion |
+| 7 | Low-information observable | whatever applies | inconclusive explained, what was checked, what was not, and what would materially improve the assessment |
+
+For every case a SOC analyst should be able to answer, quickly: what is this,
+what is the verdict, what does that verdict actually mean, why, how strong is the
+judgement, which evidence is independent, what conflicts, what was checked, what
+was not, and what could change the conclusion.
+
+Case 5 additionally has to hold under real provenance rather than scripted
+families: three abuse.ch datasets agreeing must not read as three confirmations,
+and a relayed finding must not read as an independent one.
 
 ## Still to come
 

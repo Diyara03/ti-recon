@@ -1808,6 +1808,48 @@ about it.
      never stretched, and changing it changes every tenant identifier — which,
      after Task 23, disconnects analysts from their stored provider credentials.
 
+163. **The interpretive contract travels with the protocol, never with a Skill.**
+     `.claude/skills/ti-recon-analyst/` is a filesystem artifact of this
+     repository; a client that merely connects the server — Claude Web through
+     the hosted connector — receives the server `instructions`, the tool
+     `description`s and the report's `outputSchema`, and nothing else. So every
+     rule whose loss produces a *confidently wrong* answer lives in those three:
+     `INCONCLUSIVE` is not clean, `not_configured` is a check that never ran
+     rather than one that found nothing, `no_data` is not safety, a `cache_hit`
+     is a completed check that made no request, `configured` is not validated,
+     confidence is not a probability of maliciousness, readiness is not
+     permission to act, `source_checks` is the authority for what was consulted,
+     `assessed=false` is a relationship rather than an indicator, and a client's
+     own knowledge must be labelled as its own rather than presented as TI Recon
+     evidence. Field `description`s are contract, not decoration — they are the
+     only per-value vocabulary an MCP client has. The Skill reinforces, organises
+     and illustrates; if deleting it would make MCP-only interpretation wrong or
+     ambiguous, the *contract* is incomplete. A test asserts the whole of it over
+     a live protocol session and opens no Skill file.
+
+164. **Provider credential setup is deployment-specific, and stated rather than
+     implied.** "Configure it locally and reconnect" is true over stdio, where
+     the analyst owns the process and the environment it reads once at startup.
+     It is nonsense addressed to a hosted caller, who has no server to edit and
+     no process to restart — and left unsaid, a client supplies exactly that
+     local model from general knowledge, which is what happened in live use. So
+     `STDIO_INSTRUCTIONS` keeps the local advice and `REMOTE_INSTRUCTIONS` says
+     the check did not happen, that self-service provider credential setup is not
+     available in this version, and that no provider API key may reach a
+     conversation, a tool argument, a prompt or a header. Neither promises
+     Task 23. The analyst *report* carries no setup advice at all, in either
+     deployment, because one rendering serves both.
+
+165. **A plain sentence precedes every internal identifier, and replaces none.**
+     The text renderer prints the machine verdict and coverage value *and* a
+     fixed sentence saying what each claims, keyed on the enum value so a verdict
+     without one is impossible, and glosses the three run statuses a reader turns
+     into reassurance or into an outage. Restatement, never derivation: no
+     ranking, no weighing, nothing the layer that owns the decision did not
+     already say. Dropping the machine value in favour of prose would make the
+     text disagree with the JSON about what the engine concluded, which is worse
+     than the ambiguity it fixes.
+
 153. **The gate is a raw ASGI wrapper, and lifespan ownership does not move.**
      Not a `Mount`: lifespan events pass through unexamined to the SDK
      application, which keeps owning the Streamable HTTP session manager —
