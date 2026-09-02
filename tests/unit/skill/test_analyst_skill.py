@@ -25,6 +25,16 @@ REFERENCES = SKILL_DIR / "references"
 TOOLS = ("investigate_observable", "investigate_file", "provider_status")
 
 
+def flat(text: str) -> str:
+    """Markdown as sentences rather than as lines.
+
+    The Skill is hard-wrapped, so a phrase a test looks for is routinely split
+    by a newline nobody reading it would see. Collapsing whitespace asserts what
+    was written rather than where the margin happened to fall.
+    """
+    return " ".join(text.split()).lower()
+
+
 @pytest.fixture(scope="module")
 def skill() -> str:
     return SKILL_FILE.read_text(encoding="utf-8")
@@ -240,7 +250,83 @@ def test_no_credential_is_ever_requested_in_chat(corpus: str) -> None:
     """A key pasted into a conversation is a key in a transcript."""
     lowered = corpus.lower()
     assert "paste" in lowered
-    assert "reconnect" in lowered
+    assert "never ask" in lowered
+
+
+# --------------------------------------------------------------------------- #
+# Setup advice is deployment-specific
+# --------------------------------------------------------------------------- #
+
+
+def test_local_credential_setup_is_never_stated_as_the_universal_case(corpus: str) -> None:
+    """The correction, in the artifact that got it wrong.
+
+    "Configure it locally and reconnect the server" is accurate over stdio and
+    is nonsense addressed to somebody using a hosted deployment: they have no
+    server to edit and no process to restart. The Skill previously stated the
+    local model unconditionally, and a Claude Code session reading it repeated
+    that to a hosted caller.
+
+    So every mention of local configuration must be *qualified* by the
+    deployment it belongs to. Asserted by requiring the hosted case to be named
+    wherever the local one is.
+    """
+    lowered = flat(corpus)
+    assert "hosted" in lowered
+    assert "stdio" in lowered or "local stdio" in lowered
+    # The unqualified instructions the live output produced, verbatim.
+    assert "say to configure it locally per the repository docs" not in lowered
+    assert "not configured locally. configuring it is a local setup step" not in lowered
+
+
+def test_the_hosted_case_claims_no_credential_onboarding(corpus: str) -> None:
+    """No promise of a Task 23 capability that does not exist yet.
+
+    A hosted analyst with no provider credentials must be told the check did not
+    happen and nothing more. Offering a route that is not built would send them
+    looking for a setting, and inventing one would send them looking for a way
+    to hand over a key.
+    """
+    lowered = flat(corpus)
+    assert "not available in this version" in lowered
+    assert "no credential is available for" in lowered or "no credential for" in lowered
+
+
+def test_a_cache_hit_is_not_described_as_a_fresh_query(corpus: str) -> None:
+    """A reused answer is a real check that made no new request."""
+    lowered = flat(corpus)
+    assert "cache" in lowered
+    assert "not contacted again" in lowered or "wasn't contacted again" in lowered
+
+
+def test_configured_is_distinguished_from_working(corpus: str) -> None:
+    """A stored credential is not a validated, entitled, in-quota, healthy one."""
+    lowered = flat(corpus)
+    assert "not that it works" in lowered or "never that it works" in lowered
+    assert "quota" in lowered
+
+
+def test_the_model_must_label_its_own_knowledge(corpus: str) -> None:
+    """Host-model context is legitimate and is not TI Recon evidence.
+
+    Unlabelled, it enters the answer indistinguishable from a provider finding,
+    and a reader cannot then tell which sentences the engine stands behind.
+    """
+    lowered = flat(corpus)
+    assert "not from ti recon" in lowered
+    assert "assessment basis" in lowered or "assessment_basis" in lowered
+
+
+def test_the_skill_defers_to_the_mcp_contract(corpus: str) -> None:
+    """The Skill reinforces the semantics; it does not own them.
+
+    A client that has only the MCP server must reach the same reading, so the
+    Skill has to say which artifact is authoritative — otherwise a future edit
+    here quietly becomes the place a rule lives, and most clients lose it.
+    """
+    lowered = flat(corpus)
+    assert "output schema" in lowered or "outputschema" in lowered
+    assert "server contract" in lowered
 
 
 def test_the_skill_contains_no_secret_shaped_value(corpus: str) -> None:

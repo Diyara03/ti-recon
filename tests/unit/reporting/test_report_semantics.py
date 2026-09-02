@@ -34,11 +34,53 @@ from ti_recon.investigation import InvestigationRequest
 from ti_recon.reasoning.claims.models import ClaimSemantic
 from ti_recon.reporting import AnalystInvestigationReport, build_analyst_report, render_text
 from ti_recon.reporting.models import ANALYST_REPORT_SCHEMA_VERSION
+from ti_recon.reporting.text import COVERAGE_MEANING, STATUS_MEANING, VERDICT_MEANING
 
 REPUTATION = ProviderCapability.REPUTATION
 INTELLIGENCE = ProviderCapability.MALWARE_INTELLIGENCE
 DIGEST = "a" * 64
 CONTACTED = "contacted.example"
+
+#: English words that reassure, and must never be asserted about an observable.
+#:
+#: The renderer is allowed to *deny* each of them — "not a finding of clean,
+#: safe or not malicious" is the opposite of reassurance, and the plain-language
+#: verdict lines exist precisely to stop a reader supplying the affirmative on
+#: their own. So a bare substring search is the wrong test: it forbids the
+#: sentence that does the work.
+#:
+#: "benign" is deliberately absent: it is a canonical machine value
+#: (``LIKELY_BENIGN``, ``benign_reputation``) that a report may legitimately
+#: print. A test whose report should contain no benign value at all adds it.
+REASSURING = ("safe", "clean", "harmless", "trusted", "no threat")
+
+#: The exact phrases the renderer is allowed to use them in.
+#:
+#: Every plain-language verdict, coverage and status sentence, and nothing else.
+#: Each is a *denial* — "not a finding of clean", "not evidence of safety" — and
+#: the point of listing them is that a reassuring word appearing anywhere else
+#: still fails, which is what these tests were always for.
+SANCTIONED: tuple[str, ...] = tuple(
+    value.lower()
+    for value in (*VERDICT_MEANING.values(), *COVERAGE_MEANING.values(), *STATUS_MEANING.values())
+)
+
+
+def _reassuring_lines(rendered: str, words: tuple[str, ...] = REASSURING) -> list[str]:
+    """Every rendered line claiming safety, once the sanctioned denials are removed.
+
+    The denials are deleted from the text rather than matched whole-line,
+    because some of them are a suffix on a source-check line rather than a line
+    of their own. What is left is any *other* place the renderer used the word.
+    """
+    remaining = rendered.lower()
+    for phrase in SANCTIONED:
+        remaining = remaining.replace(phrase, " ")
+    return [
+        stripped
+        for line in remaining.splitlines()
+        if (stripped := line.strip()) and any(word in stripped for word in words)
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -119,7 +161,11 @@ async def test_a_benign_verdict_and_incomplete_coverage_stay_separate() -> None:
     assert "LIKELY_BENIGN" in rendered
     # The coverage line reads as coverage, not as a response decision.
     assert "TI coverage: Needs more data" in rendered
-    assert "safe" not in rendered.lower()
+    # The verdict spelling itself is the machine value; the only English about
+    # safety is the sanctioned denial under it.
+    assert _reassuring_lines(rendered) == []
+    assert VERDICT_MEANING["likely_benign"] in rendered
+    assert "not a guarantee of safety" in rendered.lower()
 
 
 # --------------------------------------------------------------------------- #
@@ -270,11 +316,15 @@ async def test_a_source_that_held_nothing_is_not_rendered_as_benign() -> None:
     caught yet.
     """
     _, report = await inconclusive_report()
-    rendered = render_text(report).lower()
+    rendered = render_text(report)
 
-    assert "benign" not in rendered
-    assert "clean" not in rendered
+    # "benign" included here: an inconclusive report has no benign verdict and
+    # no benign claim, so the word has no legitimate reason to appear at all.
+    assert _reassuring_lines(rendered, (*REASSURING, "benign")) == []
     assert report.assessment.verdict is Verdict.INCONCLUSIVE
+    # And the reader is told so rather than left to guess: inconclusive is the
+    # verdict most often read as "nothing found, therefore fine".
+    assert "not a finding of clean, safe or not malicious" in rendered.lower()
 
 
 @pytest.mark.asyncio

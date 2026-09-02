@@ -9,8 +9,10 @@ the ones a model can act on.
 
 from __future__ import annotations
 
+import ast
 import logging
 import sys
+from pathlib import Path
 
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
@@ -83,6 +85,28 @@ def test_the_console_entry_point_is_importable_and_callable() -> None:
     worst place to discover it.
     """
     assert callable(entry_point.main)
+
+
+def test_the_stdio_process_serves_the_local_profile() -> None:
+    """Read from the AST, because the difference is invisible at runtime here.
+
+    ``build_mcp_server`` defaults to the deployment-neutral instructions — the
+    honest default for a caller that has not said which profile it is, and the
+    wrong thing for a process that knows. The stdio entry point has to reach the
+    profile builder by name, or the shipped local server silently drops the
+    paragraph describing how a credential is configured on this machine.
+    """
+    source = Path(entry_point.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    called = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "build_stdio_server" in called
+    assert "build_mcp_server" not in called
+    assert "build_remote_server" not in called
 
 
 # --------------------------------------------------------------------------- #

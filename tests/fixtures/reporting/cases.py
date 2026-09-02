@@ -81,6 +81,66 @@ async def benign_report() -> tuple[InvestigationResult, AnalystInvestigationRepo
     return result, report_for(result)
 
 
+async def unconfigured_report() -> tuple[InvestigationResult, AnalystInvestigationReport]:
+    """A source that would have covered this, with no credential to reach it.
+
+    The stack's credentials are deliberately **not** created, so Task 6 answers
+    ``NOT_CONFIGURED`` — the state a remote analyst with no provider keys sees
+    for every remote source. It is not a provider failure, not an authorization
+    failure, and not a check that came back empty: nothing was contacted.
+    """
+    repo = ScriptedProvider(
+        spec("repo", family="fam_repo", capabilities=frozenset({INTELLIGENCE, REPUTATION})),
+        {DIGEST: claim_evidence(ClaimSemantic.MALWARE_SAMPLE_IDENTITY)},
+    )
+    stack = InvestigationStack(providers=[repo])
+    request = InvestigationRequest(root=file_root(DIGEST))
+    result = await stack.orchestrator.investigate(request, stack.context())
+    return result, report_for(result)
+
+
+async def cached_report() -> tuple[InvestigationResult, AnalystInvestigationReport]:
+    """The second identical investigation, answered from Task 6's cache.
+
+    Two runs against one stack, so the second reuses the first's cached result:
+    a completed check that made no new request. Both halves matter to a reader —
+    the answer stands, and the source was not contacted again for it.
+    """
+    repo = ScriptedProvider(
+        spec("repo", family="fam_repo", capabilities=frozenset({INTELLIGENCE, REPUTATION})),
+        {DIGEST: claim_evidence(ClaimSemantic.MALWARE_SAMPLE_IDENTITY)},
+    )
+    stack = InvestigationStack(providers=[repo])
+    await stack.add_credentials()
+    request = InvestigationRequest(root=file_root(DIGEST))
+    await stack.orchestrator.investigate(request, stack.context())
+    result = await stack.orchestrator.investigate(request, stack.context())
+    return result, report_for(result)
+
+
+async def conflicted_report() -> tuple[InvestigationResult, AnalystInvestigationReport]:
+    """Two independent origins asserting opposite things about one proposition.
+
+    Same subject, same semantic, same scope, opposite directions. Task 17
+    preserves the disagreement rather than averaging it or picking a winner, and
+    caps the confidence band by name.
+    """
+    adverse = ScriptedProvider(
+        spec("adverse", family="fam_adverse", capabilities=frozenset({REPUTATION})),
+        {DIGEST: claim_evidence(ClaimSemantic.MALICIOUS_REPUTATION)},
+    )
+    favourable = ScriptedProvider(
+        spec("favourable", family="fam_favourable", capabilities=frozenset({REPUTATION})),
+        {
+            DIGEST: claim_evidence(
+                ClaimSemantic.MALICIOUS_REPUTATION, effect=EvidenceEffect.SUPPORTS_BENIGN
+            )
+        },
+    )
+    result = await _run([adverse, favourable])
+    return result, report_for(result)
+
+
 def scripted_application(providers: list[ScriptedProvider]) -> InvestigationStack:
     """A stack whose orchestrator an application service can be built on."""
     return InvestigationStack(providers=providers)
@@ -105,10 +165,13 @@ __all__ = [
     "REPUTATION",
     "application_for",
     "benign_report",
+    "cached_report",
+    "conflicted_report",
     "hash_request",
     "inconclusive_report",
     "malicious_report",
     "report_for",
     "scripted_application",
     "suspicious_report",
+    "unconfigured_report",
 ]
