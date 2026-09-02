@@ -348,6 +348,12 @@ def _register_tools(
         probability of maliciousness; the readiness fields describe how adequate
         the collection was, and never whether to act. Every field's exact meaning
         is in this tool's output schema.
+
+        Anything you add from your own knowledge rather than from this report is
+        yours, not TI Recon's. Label it as your own, and never present it as TI
+        Recon evidence, coverage or provenance, or fold it into the assessment
+        basis — a reader has to be able to tell which statements the engine
+        stands behind.
         """
         return await tools.investigate_observable(
             runtime,
