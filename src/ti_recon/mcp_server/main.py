@@ -21,7 +21,7 @@ import os
 import sys
 
 from ti_recon.mcp_server.runtime import build_stdio_runtime
-from ti_recon.mcp_server.server import build_mcp_server
+from ti_recon.mcp_server.server import build_stdio_server
 
 __all__ = ["main"]
 
@@ -57,7 +57,14 @@ def main() -> None:
     Building contacts nothing — adapters create their clients lazily — so a
     server starts cleanly on a machine with no keys and reports what is missing
     through ``provider_status`` and through coverage.
+
+    Built through :func:`build_stdio_server` rather than the generic factory, so
+    the process serves the *local* profile: all three tools, and instructions
+    that describe how a credential is configured on this machine. The generic
+    factory defaults to the deployment-neutral core, which is the honest default
+    for a caller that has not said which profile it is — and the wrong thing for
+    a process that knows.
     """
     _configure_logging()
     runtime = asyncio.run(build_stdio_runtime())
-    build_mcp_server(runtime).run()
+    build_stdio_server(runtime).run()
