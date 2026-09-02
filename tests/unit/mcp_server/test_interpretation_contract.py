@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -105,6 +106,8 @@ async def _surface(*, hosted: bool) -> dict[str, Any]:
         "instructions": instructions,
         "tools": tools,
         "text": _flatten(instructions, tools),
+        # The same surface with the optional discovery document removed.
+        "without_instructions": _without_instructions(tools),
     }
 
 
@@ -127,7 +130,19 @@ def _flatten(instructions: str, tools: dict[str, Any]) -> str:
     than "this particular field says it". Where a specific *location* matters,
     the test looks there instead.
     """
-    parts = [" ".join(instructions.split())]
+    return "\n".join([" ".join(instructions.split()), _without_instructions(tools)]).lower()
+
+
+def _without_instructions(tools: dict[str, Any]) -> str:
+    """What a client gets having ignored the optional discovery path.
+
+    Server ``instructions`` arrive with ``initialize``, and a 2026-07-28 client
+    may send a self-contained ``tools/call`` without ever asking for them. So
+    they are reinforcement, never the sole carrier: whatever a reader must not
+    get wrong has to survive here, in the tool descriptions and the schemas a
+    client receives with the tools themselves.
+    """
+    parts: list[str] = []
     for tool in tools.values():
         parts.append(_prose(tool.description))
         parts.append(json.dumps(tool.input_schema, sort_keys=True))
@@ -599,3 +614,204 @@ async def test_the_instructions_stay_within_a_practical_budget(hosted: bool) -> 
     """
     surface = await _surface(hosted=hosted)
     assert len(surface["instructions"].encode()) < 4096
+
+
+# --------------------------------------------------------------------------- #
+# The contract survives a client that never reads the instructions
+# --------------------------------------------------------------------------- #
+
+#: Every reading that would be *confidently wrong*, and where it is denied.
+#:
+#: Each entry is a misinterpretation an analyst could act on, paired with
+#: phrases that must appear somewhere a client receives *with the tools* — not
+#: in the server instructions, which a 2026-07-28 client may never fetch.
+MISREADINGS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "INCONCLUSIVE means clean",
+        ("cannot justify either direction", "not mean clean, safe"),
+    ),
+    (
+        "NOT_CONFIGURED means checked and empty",
+        ("not checked", "offline", "unreachable", "found nothing"),
+    ),
+    (
+        "NO_DATA means benign",
+        ("never clean, safe", "not evidence of safety"),
+    ),
+    (
+        "confidence_stix is a probability of maliciousness",
+        ("not a percentage likelihood", "not the probability"),
+    ),
+    (
+        "a cache hit means the source was contacted again",
+        ("not contacted again", "freshly queried"),
+    ),
+    (
+        "configured means the credential works",
+        ("not that it is valid", "authentication would succeed", "quota remains"),
+    ),
+    (
+        "a related observable with assessed=false is a confirmed indicator",
+        (
+            "no verdict about it is implied",
+            "not an indicator",
+            "must not be described as malicious",
+        ),
+    ),
+    (
+        "counting providers is corroboration",
+        ("never a vote", "cannot corroborate each other"),
+    ),
+    (
+        "coverage readiness authorises an action",
+        ("not permission to", "never means safe"),
+    ),
+    (
+        "a catalogued or configured source was queried",
+        ("authority for what was actually consulted",),
+    ),
+    (
+        "opposing evidence is part of the reason",
+        ("argued against the verdict", "kept apart from the basis"),
+    ),
+    (
+        "one explanation clears the investigation",
+        ("and nothing else", "does not explain the investigation"),
+    ),
+    (
+        "a conflict was resolved for you",
+        ("preserved", "averaged"),
+    ),
+    (
+        "UNATTRIBUTED is NO_DATA",
+        ("unattributed", "cannot say which"),
+    ),
+    (
+        "the model's own knowledge is TI Recon evidence",
+        ("from your own knowledge", "never present it as ti recon evidence"),
+    ),
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hosted", [False, True], ids=["stdio", "hosted"])
+@pytest.mark.parametrize(("misreading", "denials"), MISREADINGS, ids=lambda v: None)
+async def test_the_contract_denies_each_misreading_without_the_instructions(
+    hosted: bool, misreading: str, denials: tuple[str, ...]
+) -> None:
+    """Server instructions are reinforcement, never the sole carrier.
+
+    ``instructions`` arrive with ``initialize``. A 2026-07-28 client may issue a
+    self-contained ``tools/call`` and never ask for them, so a rule that lived
+    only there would be absent for exactly the clients the remote profile
+    serves. This asserts every one of them survives in the tool descriptions and
+    the schemas — the documents a client receives *with the tools*.
+
+    The audit that added this found one rule failing it: labelling the model's
+    own knowledge as its own lived in the instructions alone.
+    """
+    surface = await _surface(hosted=hosted)
+    text = surface["without_instructions"]
+    assert "reporting the result, in plain language" not in text, (
+        "the instructions must not be part of this surface"
+    )
+    missing = [phrase for phrase in denials if phrase not in text]
+    assert not missing, f"{misreading!r} is not denied without instructions; missing {missing}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hosted", [False, True], ids=["stdio", "hosted"])
+async def test_the_hosted_credential_limit_survives_without_the_instructions(
+    hosted: bool,
+) -> None:
+    """The deployment-specific rule has to reach a client that skipped discovery too.
+
+    A hosted caller told nothing about credentials gets the local model from the
+    client's general knowledge, which is the failure this whole correction
+    exists for — and it would return the moment the rule depended on a document
+    the client never fetched.
+    """
+    surface = await _surface(hosted=hosted)
+    text = surface["without_instructions"]
+    assert "never ask for a provider api key" in text
+    if hosted:
+        assert "not available in this version" in text
+        assert "do not advise configuring a credential locally" in text
+    else:
+        assert "not available in this version" not in text
+
+
+# --------------------------------------------------------------------------- #
+# What the published contract must not carry
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hosted", [False, True], ids=["stdio", "hosted"])
+async def test_no_published_document_names_an_internal_task_number(hosted: bool) -> None:
+    """ "Task 17" means nothing to a client, and this contract is what they get.
+
+    Pydantic publishes a model's class docstring as the schema ``description``,
+    so prose written for repository readers travels to every MCP client. The
+    roadmap numbering is the clearest case: an integrator reading
+    "Task 17's conclusion" learns nothing and is invited to go looking for a
+    Task 17 they cannot see.
+
+    The explanations themselves stay — only the internal label goes. What each
+    layer decides is exactly what a reader needs; which numbered task decided it
+    is not.
+    """
+    surface = await _surface(hosted=hosted)
+    documents = [surface["without_instructions"], surface["instructions"]]
+    for tool in surface["tools"].values():
+        if tool.output_schema is not None:
+            documents.append(json.dumps(tool.output_schema))
+        documents.append(json.dumps(tool.input_schema))
+
+    offenders = [
+        match.group()
+        for document in documents
+        for match in re.finditer(r"task \d+", document, re.IGNORECASE)
+    ]
+    assert offenders == [], f"internal task numbers reach the published contract: {offenders}"
+
+
+def test_the_schema_resources_name_no_internal_task_number() -> None:
+    """The same rule for the two documents served as resources.
+
+    A consumer integrating against TI Recon validates against these, and may
+    well paste them into their own documentation.
+    """
+    from ti_recon.reporting.schema import request_json_schema
+
+    for label, document in (("report", report_schema()), ("request", request_json_schema())):
+        rendered = json.dumps(document)
+        assert not re.search(r"task \d+", rendered, re.IGNORECASE), label
+
+
+def test_the_schema_descriptions_are_distinct_and_bounded() -> None:
+    """Descriptions are contract, and contract that repeats itself is padding.
+
+    Every one of them is carried in ``tools/list`` for the life of a
+    conversation, so a duplicated paragraph is a cost paid on every request. A
+    cap is asserted rather than a total, because the right total is whatever the
+    distinctions actually need.
+    """
+    collected: list[str] = []
+
+    def walk(node: object) -> None:
+        if isinstance(node, dict):
+            described = node.get("description")
+            if isinstance(described, str):
+                collected.append(described)
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(report_schema())
+    assert collected, "the report schema must carry field descriptions"
+    assert len(collected) == len(set(collected)), "a description is duplicated"
+    longest = max(collected, key=len)
+    assert len(longest.encode()) < 800, f"a description grew past a paragraph: {longest[:120]!r}"
