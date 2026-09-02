@@ -35,7 +35,14 @@ from ti_recon.reporting.models import (
     ReportSection,
 )
 
-__all__ = ["MAX_TEXT_FIELD", "render_text", "safe_text"]
+__all__ = [
+    "COVERAGE_MEANING",
+    "MAX_TEXT_FIELD",
+    "STATUS_MEANING",
+    "VERDICT_MEANING",
+    "render_text",
+    "safe_text",
+]
 
 #: How much of any single untrusted value reaches the terminal.
 #:
@@ -75,6 +82,51 @@ def _is_unsafe(char: str) -> bool:
     handled the same way as the ones that are already known to be dangerous.
     """
     return unicodedata.category(char) in {"Cc", "Cf", "Zl", "Zp"}
+
+
+#: One plain sentence per verdict, printed under the verdict itself.
+#:
+#: The machine spelling is not self-explanatory to somebody triaging at speed,
+#: and the two readings that cost the most are both silent: ``inconclusive``
+#: taken for clean, and ``likely_benign`` taken for cleared. A reader should not
+#: have to already know the policy to avoid either.
+#:
+#: Presentation, and a restatement rather than an addition — every sentence here
+#: is Task 17's own rule in words. Nothing is derived, ranked or weighed, and the
+#: keys are the enum values so a verdict without a sentence is impossible.
+VERDICT_MEANING: dict[str, str] = {
+    "malicious": ("The collected intelligence supports a malicious assessment of this observable."),
+    "suspicious": (
+        "There is meaningful adverse evidence, short of what this engine "
+        "requires for a malicious verdict."
+    ),
+    "likely_benign": (
+        "The evidence supports a likely-benign assessment. Not a guarantee of "
+        "safety and not an allowlisting decision."
+    ),
+    "inconclusive": (
+        "The available intelligence does not justify either direction. This is "
+        "not a finding of clean, safe or not malicious."
+    ),
+}
+
+#: One plain sentence per coverage status, printed under it.
+#:
+#: All four say the same thing in different amounts: this is about the *search*,
+#: never about permission to act on what it found.
+COVERAGE_MEANING: dict[str, str] = {
+    "ready": "No material intelligence gap remains for triage.",
+    "ready_with_limitations": (
+        "Adequate for triage; the limitations below remain and are not material to the assessment."
+    ),
+    "needs_more_data": (
+        "A material intelligence gap remains, and further permitted collection "
+        "could still address it."
+    ),
+    "unresolved": (
+        "A material intelligence gap remains that external intelligence cannot resolve from here."
+    ),
+}
 
 
 def render_text(report: AnalystInvestigationReport) -> str:
@@ -137,6 +189,13 @@ def _assessment(report: AnalystInvestigationReport) -> list[str]:
     assessment, readiness = report.assessment, report.readiness
     lines = _heading("Assessment")
     lines.append(f"  Verdict: {assessment.verdict.value.upper()}")
+    # Every machine value gets a sentence, because reading the spelling is not
+    # the same as knowing what it claims. `.get` rather than `[]`: a verdict
+    # added later must degrade to no sentence, never to a traceback in a
+    # renderer.
+    meaning = VERDICT_MEANING.get(assessment.verdict.value)
+    if meaning is not None:
+        lines.append(f"    {meaning}")
     # The band alone. The canonical STIX integer stays in the JSON contract,
     # where a consumer that wants it knows what it means — printed here beside
     # a verdict it reads as "50% likely malicious", which is a different claim
@@ -148,6 +207,9 @@ def _assessment(report: AnalystInvestigationReport) -> list[str]:
     # READY" can take it for ready to close, ready to block, or incident-ready —
     # none of which this engine says or could say.
     lines.append(f"  TI coverage: {_label(readiness.status)}")
+    coverage_meaning = COVERAGE_MEANING.get(readiness.status)
+    if coverage_meaning is not None:
+        lines.append(f"    {coverage_meaning}")
     lines.append(f"  Verdict rule: {safe_text(assessment.verdict_rule_id)}")
     if assessment.confidence_caps:
         capped = ", ".join(safe_text(item, limit=60) for item in assessment.confidence_caps)
@@ -242,6 +304,7 @@ def _coverage(report: AnalystInvestigationReport) -> list[str]:
     beside the completion rather than instead of it.
     """
     lines = _heading("Coverage")
+    lines.append("  (how adequate the intelligence was — not a decision about what to do)")
     lines.append(
         f"  Adequacy: {report.readiness.coverage_adequacy}"
         f" | continuation: {report.readiness.continuation_state}"
@@ -278,7 +341,10 @@ def _related(report: AnalystInvestigationReport) -> list[str]:
     if not section.items:
         return []
     lines = _heading("Related observables")
-    lines.append("  (relationships observed or reported; not assessments of these objects)")
+    lines.append(
+        "  (relationships observed or reported; not indicators, and not "
+        "assessments of these objects)"
+    )
     for item in section.items:
         lines.append(f"  - {item.object_type.value}: {safe_text(item.canonical_value)}")
         lines.append(
@@ -290,10 +356,35 @@ def _related(report: AnalystInvestigationReport) -> list[str]:
     return lines + _omitted(section)
 
 
+#: What a run status means, for the three that are read wrongly by default.
+#:
+#: ``not_configured`` is the one this exists for: printed bare beside a provider
+#: name it reads as an outage or a rejected key, when the source was never
+#: contacted at all. ``no_data`` and ``partial`` are the other two an analyst can
+#: turn into reassurance without noticing.
+#:
+#: The rest are printed unannotated — ``success``, ``error``, ``quota_exceeded``
+#: and the others say what they mean, and a gloss on every line would bury the
+#: three that need one.
+STATUS_MEANING: dict[str, str] = {
+    "not_configured": "not checked; no credential is available for this account",
+    "no_data": "checked; held nothing applicable (not evidence of safety)",
+    "not_supported": "does not answer this kind of observable",
+    "partial": "answered in part",
+}
+
+
 def _sources(report: AnalystInvestigationReport) -> list[str]:
-    """Who was asked, as provenance. Never a count of who agreed."""
+    """Who was asked, as provenance. Never a count of who agreed.
+
+    The authoritative answer to "which sources did you use?". A source absent
+    from this section was not consulted, whatever the installation ships and
+    whatever the caller has configured — so the heading says so rather than
+    leaving a reader to infer it from a list they cannot tell is exhaustive.
+    """
     section = report.source_checks
     lines = _heading("Source checks")
+    lines.append("  (the sources actually consulted; anything not listed was not asked)")
     if not section.items:
         lines += _empty("No source was consulted.")
         return lines
@@ -301,6 +392,14 @@ def _sources(report: AnalystInvestigationReport) -> list[str]:
         detail = f"  - {safe_text(item.provider_id, limit=64)} / {item.capability}: {item.status}"
         if item.error_category:
             detail = f"{detail} ({item.error_category})"
+        meaning = STATUS_MEANING.get(item.status)
+        if meaning is not None:
+            detail = f"{detail} — {meaning}"
+        if item.cache_hit:
+            # A cached answer is a real check and not a fresh disclosure. Both
+            # halves matter: the result stands, and the source was not contacted
+            # again for it.
+            detail = f"{detail} [cached; source not contacted again]"
         lines.append(detail)
     return lines + _omitted(section)
 
