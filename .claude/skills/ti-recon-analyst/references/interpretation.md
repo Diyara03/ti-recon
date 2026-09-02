@@ -89,7 +89,7 @@ Each check carries a completion *and* a yield, and they answer different things.
 | `NO_DATA` | The source was consulted and held nothing applicable. | Clean, safe, benign, trusted. It is equally true of every threat nobody has caught yet. |
 | `NOT_ATTEMPTED` | Nobody asked. | The same as `NO_DATA`. |
 | `UNATTRIBUTED` | One call answered several capabilities and the record cannot say which returned what. | `NO_DATA`, absence, or benign evidence. |
-| `NOT_CONFIGURED` | Not checked, because its credential is not set up locally. | Offline, unreachable, or a rejected key. |
+| `NOT_CONFIGURED` | **Not checked**, because no usable credential is available for this account. | Offline, unreachable, a rejected key, or a source that was asked and found nothing. |
 | `PARTIAL` | Something was learned, short of the whole check. | A failure. |
 
 ## Related observables
@@ -108,6 +108,41 @@ blocklist.
 Neither says anything about maliciousness. Preserve the distinction where it
 matters and never flatten "observed contact" into "malicious connection".
 
+## Provider credentials
+
+`NOT_CONFIGURED` says a check did not happen. What to say *next* depends on the
+deployment, and the server's own instructions state which one you are connected
+to — read them rather than assuming.
+
+**Hosted / remote.** Say the source was not checked because no credential is
+available for this account, and stop there. Self-service provider credential
+setup is not available in this version. Do not describe local configuration, a
+server environment variable, a `.env` file or reconnecting: none of them is
+something a hosted caller can do, and suggesting it sends somebody to edit a
+server they do not run.
+
+**Local stdio.** Configuration is a genuine local step documented in the
+repository, read once at server startup, so a newly added credential appears
+after a restart or reconnect.
+
+Both, without exception: **no provider API key is ever pasted into a
+conversation, a tool argument, a prompt or a header.** No tool accepts one, and
+a secret sent that way is in the transcript permanently.
+
+## Your knowledge is not TI Recon's
+
+You may independently know things a report does not contain — that a range is
+reserved documentation space, who operates an ASN, what a malware family
+typically does. That is useful and allowed, and it is **not evidence TI Recon
+collected**.
+
+Label it as yours ("not from TI Recon", "for context, from general knowledge")
+and keep it out of the assessment basis, the opposing evidence, the coverage
+judgement and the source provenance. It never changes the verdict, the
+confidence or the coverage status, and it may never be described as something a
+source reported. A reader has to be able to tell which sentences the engine
+stands behind.
+
 ## Time
 
 `qualifications` carry typed instants with the provider's own field name, so a
@@ -121,7 +156,9 @@ Never promote historical evidence to current activity.
 
 ## Sources
 
-`source_checks` records who was asked and what happened. It is provenance.
+`source_checks` records who was asked and what happened. It is provenance, and
+it is the **authority** for what was actually consulted: a source with no entry
+was not asked, whatever the installation ships and whatever is configured.
 
 ### Existing is not the same as asked
 
@@ -132,10 +169,11 @@ only say one of them out loud:
 | State | Means | Where you learn it |
 | --- | --- | --- |
 | Catalogued | The installation ships this integration. | `provider_status` |
-| Configured | Its local credential is present. | `provider_status.configured` |
+| Configured | A credential is stored for this account. Not that it is valid, entitled, in quota, or healthy. | `provider_status.configured` |
 | Considered | The planner could apply it to this observable. | `coverage[].providers_considered` |
 | Attempted | Task 13 selected it and Task 6 ran it. | a `source_checks` entry exists |
 | Called | A provider was physically contacted. | `called_provider` |
+| Served from cache | A real check that reused this caller's earlier result; the source was **not** contacted again. | `cache_hit` |
 | Succeeded | It returned a usable result. | `status` |
 
 **Never say a provider was queried, checked or used because it exists.** A

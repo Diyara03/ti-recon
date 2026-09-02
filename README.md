@@ -362,6 +362,13 @@ Ask for a "quick check" or to "investigate thoroughly" to change collection
 scope; explaining an existing result never triggers new lookups. See
 [docs/mcp.md](docs/mcp.md) and [docs/claude-skill.md](docs/claude-skill.md).
 
+The Skill is a filesystem artifact of this repository and is **not** delivered
+to a client that merely connects the MCP server. Every rule an analyst must not
+misread therefore lives in the MCP contract itself — the server instructions,
+the tool descriptions and the report's output schema — so an MCP-only client
+reads a result correctly without it. The Skill adds response structure,
+progressive disclosure and worked cases on top.
+
 See [docs/cli.md](docs/cli.md) and [docs/analyst-output.md](docs/analyst-output.md).
 
 ## Installation (development)

@@ -15,6 +15,41 @@ how to read what it returns. It lives at:
 It is instructions only — no scripts, no assets. `SKILL.md` is a compact control
 plane; the references load when Claude needs them.
 
+## It is not delivered with the MCP server
+
+This matters more than anything else on this page.
+
+A Skill is a filesystem artifact of *this repository*. A Claude Code session
+working in this checkout picks it up; **an ordinary client that merely connects
+the TI Recon MCP server does not**. Claude Web with the hosted connector, another
+MCP host, a future integration — all of them get the server's `instructions`, the
+tool descriptions and the report's output schema, and none of them gets a line of
+this Skill. Skills and MCP are separate delivery layers, and a future plugin
+bundling a connector with a Skill would be a convenience rather than the
+dependency model.
+
+So the rule is:
+
+> **No essential semantic rule may live only in the Skill.** If deleting
+> `.claude/skills/ti-recon-analyst/` would make MCP-only interpretation wrong or
+> ambiguous, the MCP contract is incomplete and that is the bug.
+
+Everything an analyst must not misread — what each verdict claims, that
+`INCONCLUSIVE` is not clean, that `not_configured` is a check that never ran,
+that a cache hit made no request, that `configured` is not `validated`, that
+confidence is not a probability, that coverage is not permission to act, that
+`source_checks` is the authority on what was consulted, that a related observable
+is not an indicator, that a client's own knowledge is not TI Recon evidence, and
+that hosted callers have no self-service credential setup — is carried by the MCP
+contract itself. `tests/unit/mcp_server/test_interpretation_contract.py` asserts
+that against a live protocol session and opens no Skill file.
+
+What the Skill adds is real and is all of the second kind: response structure,
+progressive disclosure, when to re-run versus re-read, depth and pivot judgement,
+the false-positive workflow, and worked cases for the shapes that are easy to
+summarise wrongly. It reinforces the semantics and does not own them — and where
+it and the server contract could ever disagree, the server contract wins.
+
 ## What it does and does not do
 
 The Skill **presents** TI Recon's answer. It never recomputes one. The verdict,

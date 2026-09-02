@@ -147,50 +147,138 @@ class RequestSummary(FrozenTiReconModel):
 
 
 class AssessmentSummary(FrozenTiReconModel):
-    """Task 17's conclusion, copied rather than recomputed.
+    """The engine's conclusion, copied rather than recomputed.
 
-    ``confidence`` answers "is this assessment correct?" and never "how bad is
-    it?". MALICIOUS at MEDIUM is an ordinary, coherent result.
+    ``verdict`` and ``confidence`` answer different questions, and any
+    combination of them is coherent. The verdict is what the evidence supports
+    about the observable; the confidence is whether *that assessment* is
+    correct. MALICIOUS at MEDIUM is an ordinary result, and neither field is a
+    severity, a risk score or a probability of maliciousness.
     """
 
-    verdict: Verdict
-    confidence: str = Field(min_length=1, max_length=32)
+    verdict: Verdict = Field(
+        description=(
+            "What the collected intelligence supports about this observable. "
+            "'malicious': the evidence supports a malicious assessment. "
+            "'suspicious': there is meaningful adverse evidence that does not "
+            "meet the policy for a malicious verdict. "
+            "'likely_benign': a positive benign assertion, or adverse evidence "
+            "fully accounted for by an alternative explanation -- never derived "
+            "from an absence of detections, and never a guarantee of safety. "
+            "'inconclusive': the engine cannot justify either direction from "
+            "the available evidence. Inconclusive does NOT mean clean, safe, "
+            "harmless or not malicious."
+        )
+    )
+    confidence: str = Field(
+        min_length=1,
+        max_length=32,
+        description=(
+            "How strongly the available evidence supports this assessment "
+            "being correct: unspecified, low, medium or high. It is NOT the "
+            "probability that the observable is malicious, and not a severity "
+            "or risk score. Do not render it as a percentage or as a chance of "
+            "compromise."
+        ),
+    )
     #: The canonical STIX integer for the band, for consumers that need one.
     #: Provided because STIX defines it, not because it may be arithmetic on.
-    confidence_stix: int | None = Field(default=None, ge=0, le=100)
-    verdict_rule_id: str = Field(min_length=1, max_length=128)
+    confidence_stix: int | None = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description=(
+            "The canonical STIX integer for the confidence band (15, 50 or 85), "
+            "for consumers that need one. It is not a percentage likelihood of "
+            "maliciousness; shown beside a verdict it invites exactly that "
+            "misreading, so prefer the band."
+        ),
+    )
+    verdict_rule_id: str = Field(
+        min_length=1,
+        max_length=128,
+        description=(
+            "Identifier of the policy rule that produced the verdict, for "
+            "traceability. Internal: explain the verdict in plain language "
+            "rather than by quoting this."
+        ),
+    )
     confidence_rule_id: str = Field(min_length=1, max_length=128)
     #: Named reasons the confidence band was held down, from Task 17.
-    confidence_caps: tuple[str, ...] = ()
+    confidence_caps: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Named reasons the confidence band was held down. These are the "
+            "answer to 'why is confidence low'; missing coverage is not, unless "
+            "a cap says so -- coverage is reported separately under 'readiness'."
+        ),
+    )
     assessment_id: str = Field(min_length=1, max_length=64)
 
 
 class ReadinessSummary(FrozenTiReconModel):
-    """Task 18's answer to a different question from the verdict.
+    """The answer to a different question from the verdict.
 
     Whether the *collection* was adequate for analyst triage. An assessment can
     be correct and its coverage incomplete at the same time.
+
+    Never authorization to act. Whether to block, quarantine, allowlist, close
+    an alert or declare an incident needs asset criticality, business impact
+    and response policy this engine has no access to.
     """
 
-    status: str = Field(min_length=1, max_length=40)
-    coverage_adequacy: str = Field(min_length=1, max_length=40)
-    continuation_state: str = Field(min_length=1, max_length=40)
+    status: str = Field(
+        min_length=1,
+        max_length=40,
+        description=(
+            "Whether the intelligence collection behind this assessment was "
+            "adequate for analyst triage. "
+            "'ready': no material intelligence gap remains for triage. "
+            "'ready_with_limitations': sufficient, with non-material caveats. "
+            "'needs_more_data': a material gap remains and further permitted "
+            "collection could still help. "
+            "'unresolved': a material gap remains that the external-intelligence "
+            "path cannot resolve. "
+            "This describes evidence adequacy only. It is NOT permission to "
+            "block, allow, remediate or close anything, and 'ready' never means "
+            "safe. Present it as intelligence coverage, not readiness to act."
+        ),
+    )
+    coverage_adequacy: str = Field(
+        min_length=1,
+        max_length=40,
+        description=(
+            "Whether the collection met the material requirements for this "
+            "observable: adequate, limited or inadequate."
+        ),
+    )
+    continuation_state: str = Field(
+        min_length=1,
+        max_length=40,
+        description=(
+            "Whether further collection could still help: complete, "
+            "more_data_available, blocked or exhausted. 'exhausted' means the "
+            "available sources were asked and the question remains open -- not "
+            "that coverage was adequate."
+        ),
+    )
     requirements_total: int = Field(default=0, ge=0)
     requirements_satisfied: int = Field(default=0, ge=0)
     requirements_limited: int = Field(default=0, ge=0)
 
 
 class BasisItem(FrozenTiReconModel):
-    """One claim Task 17 weighed, with the role it gave it.
+    """One claim the engine weighed, with the role it gave it.
 
     Used for the supporting basis and for opposing evidence alike, because they
     are the same kind of record and differ only in ``role`` — which every item
     carries, so a consumer reading either section can always see the engine's
     own disposition rather than inferring it from which list it arrived in.
 
-    Not "the most important provider" and not the strongest-looking finding: the
-    contributions Task 17 produced, with the role it assigned. Choosing here
-    would be presentation inventing an argument the engine did not make.
+    Not "the most important provider" and not the strongest-looking finding:
+    the contributions the assessment produced, with the role it assigned.
+    Choosing here would be presentation inventing an argument the engine did
+    not make.
     """
 
     role: str = Field(min_length=1, max_length=40)
@@ -201,7 +289,15 @@ class BasisItem(FrozenTiReconModel):
     effect: str = Field(min_length=1, max_length=40)
     scope: str = Field(min_length=1, max_length=40)
     #: Provenance, never a vote.
-    source_family: str = Field(min_length=1, max_length=64)
+    source_family: str = Field(
+        min_length=1,
+        max_length=64,
+        description=(
+            "The originating organisation behind the claim. Provenance, never a "
+            "vote: claims sharing a family are one origin and cannot corroborate "
+            "each other, so never justify a verdict by counting sources."
+        ),
+    )
     origin_provider: str = Field(default="", max_length=64)
     transport_provider: str = Field(default="", max_length=64)
     subject_key: str = Field(default="", max_length=700)
@@ -211,7 +307,7 @@ class BasisItem(FrozenTiReconModel):
 
 
 class ExplanationItem(FrozenTiReconModel):
-    """A Task 16 alternative explanation, and exactly what it covers.
+    """An alternative explanation, and exactly what it covers.
 
     Only findings that are an ``ALTERNATIVE_EXPLANATION`` *and* carry an
     ``EXPLAINS`` link reach this section. A limitation, an attribution caution or
@@ -225,9 +321,23 @@ class ExplanationItem(FrozenTiReconModel):
     dimension: str = Field(min_length=1, max_length=40)
     scope: str = Field(min_length=1, max_length=40)
     #: The evidence this explanation is linked to, and only that evidence.
-    explains_evidence_ids: tuple[str, ...] = ()
+    explains_evidence_ids: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Exactly which evidence this explanation accounts for, and nothing "
+            "else. It does not explain the investigation, and one explained "
+            "detection does not make the case a false positive -- check "
+            "'unexplained_evidence' for what survives."
+        ),
+    )
     #: What the explanation explicitly does not establish.
-    does_not_establish: tuple[str, ...] = ()
+    does_not_establish: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "What this explanation explicitly does NOT prove. Worth quoting "
+            "when a reader is inclined to over-read it."
+        ),
+    )
 
 
 class UnexplainedEvidenceItem(FrozenTiReconModel):
@@ -243,7 +353,12 @@ class UnexplainedEvidenceItem(FrozenTiReconModel):
 
 
 class ConflictItem(FrozenTiReconModel):
-    """Sources disagreeing about one proposition, preserved rather than resolved."""
+    """Sources disagreeing about one proposition, preserved rather than resolved.
+
+    Nothing is averaged, balanced or overruled: the disagreement is recorded and
+    the confidence band is capped. A conflict is a real finding to report, not
+    noise to tidy away.
+    """
 
     proposition_ref: str = Field(min_length=1, max_length=900)
     malicious_claim_ids: tuple[str, ...] = ()
@@ -253,7 +368,7 @@ class ConflictItem(FrozenTiReconModel):
 
 
 class QualificationItem(FrozenTiReconModel):
-    """What a finding means in time and context, from Task 15.
+    """What a finding means in time and context.
 
     Carries the source's own lifecycle where it stated one. There is no decay
     model and no freshness label: an age is a number, and what it is worth
@@ -280,13 +395,58 @@ class CoverageCheckItem(FrozenTiReconModel):
     and neither is evidence of safety.
     """
 
-    capability: str = Field(min_length=1, max_length=64)
+    capability: str = Field(
+        min_length=1,
+        max_length=64,
+        description=(
+            "The kind of intelligence this requirement asked for. Capabilities, "
+            "not providers: which source answers one is the engine's automatic "
+            "decision."
+        ),
+    )
     requirement_id: str = Field(min_length=1, max_length=64)
     criticality: str = Field(min_length=1, max_length=40)
-    status: str = Field(min_length=1, max_length=40)
-    completion: str = Field(min_length=1, max_length=40)
-    information_yield: str = Field(min_length=1, max_length=40)
-    material: bool = False
+    status: str = Field(
+        min_length=1,
+        max_length=40,
+        description=(
+            "Whether the requirement was met: satisfied, limited, unsatisfied or not_applicable."
+        ),
+    )
+    completion: str = Field(
+        min_length=1,
+        max_length=40,
+        description=(
+            "How far the check got, kept separate from what it returned: "
+            "complete, partial, not_attempted, blocked or out_of_scope. "
+            "'not_attempted' means nobody was asked -- which is not the same as "
+            "being asked and finding nothing."
+        ),
+    )
+    information_yield: str = Field(
+        min_length=1,
+        max_length=40,
+        description=(
+            "What the check actually returned. "
+            "'directional': evidence pointing one way. "
+            "'context_only': context that attaches no direction. "
+            "'no_data': a source was consulted and held nothing applicable -- "
+            "this is NOT evidence of safety and never means clean or benign; it "
+            "is equally true of every threat nobody has caught yet. "
+            "'none': nothing was returned. "
+            "'unattributed': one call answered several capabilities and the "
+            "record cannot say which of them returned what -- it is neither "
+            "'no_data' nor an absence, and must not be reported as either."
+        ),
+    )
+    material: bool = Field(
+        default=False,
+        description=(
+            "Whether this requirement bears on the assessment that was actually "
+            "reached. An unmet requirement that is not material does not "
+            "undermine the verdict."
+        ),
+    )
     gap_type: str = Field(default="", max_length=40)
 
 
@@ -324,23 +484,48 @@ class RelatedObservableItem(FrozenTiReconModel):
 
     A contacted host, a resolved address and a dropped file are relationships.
     None of them is malicious because it appeared here: an object carries a
-    verdict only when Task 17 assessed *it*, which for anything but the root is
-    a separate question this run may not have asked.
+    verdict only when this investigation separately assessed *it*, which for
+    anything but the root is a question this run may not have asked.
     """
 
     object_type: IntelObjectType
     canonical_key: str = Field(min_length=1, max_length=700)
     canonical_value: str = Field(min_length=1, max_length=700)
-    relationship_type: str = Field(default="", max_length=64)
+    relationship_type: str = Field(
+        default="",
+        max_length=64,
+        description=(
+            "How this object was connected to the target -- a contact, a "
+            "resolution, a dropped file. A relationship is not an accusation."
+        ),
+    )
     #: ``provider_observed`` means a source watched it happen;
     #: ``provider_reported`` means a source said so. Different epistemic
     #: standing, kept apart.
-    observation_basis: str = Field(default="", max_length=40)
+    observation_basis: str = Field(
+        default="",
+        max_length=40,
+        description=(
+            "How the relationship was learned. 'provider_observed': a source "
+            "watched it happen. 'provider_reported': a source said so. This is "
+            "provenance and says nothing about maliciousness in either "
+            "direction."
+        ),
+    )
     direction: str = Field(default="", max_length=16)
     source_families: tuple[str, ...] = ()
     hop: int = Field(default=0, ge=0)
     #: Whether Task 17 separately assessed this object in this run.
-    assessed: bool = False
+    assessed: bool = Field(
+        default=False,
+        description=(
+            "Whether this run separately reached a verdict about THIS object. "
+            "When false no verdict about it is implied: it is a relationship "
+            "and a possible pivot lead, not an indicator, and it must not be "
+            "described as malicious or listed as a confirmed IOC. Investigating "
+            "it directly is a separate request."
+        ),
+    )
 
 
 class SourceCheckItem(FrozenTiReconModel):
@@ -349,16 +534,67 @@ class SourceCheckItem(FrozenTiReconModel):
     Provider identity belongs here because it says where information came from.
     It is never a tally: this section has no score, no ratio and no count of who
     agreed with whom.
+
+    **This section is the authority for what was actually consulted.** A source
+    being shipped by this installation, or being configured for this caller, is
+    not the same as its having been asked: only an entry here says a check ran.
+    Anything without an entry was not queried in this investigation.
     """
 
-    provider_id: str = Field(min_length=1, max_length=64)
-    source_family: str = Field(min_length=1, max_length=64)
+    provider_id: str = Field(
+        min_length=1,
+        max_length=64,
+        description=(
+            "Which source ran this check. Provenance, never a vote: the engine "
+            "does not count how many sources agreed."
+        ),
+    )
+    source_family: str = Field(
+        min_length=1,
+        max_length=64,
+        description=(
+            "The originating organisation behind this source. Datasets run by "
+            "one organisation share a family and cannot corroborate each other, "
+            "however many product names they carry."
+        ),
+    )
     capability: str = Field(min_length=1, max_length=64)
-    status: str = Field(min_length=1, max_length=40)
+    status: str = Field(
+        min_length=1,
+        max_length=40,
+        description=(
+            "What happened to this check. "
+            "'success': it ran and returned a usable result. "
+            "'no_data': it ran and held nothing applicable -- never clean, safe "
+            "or benign. "
+            "'not_configured': it was NOT checked, because no usable credential "
+            "is available for this caller. It does not mean the source was "
+            "contacted, is offline or unreachable, rejected a key, or found "
+            "nothing. "
+            "'not_supported': the source does not answer this kind of "
+            "observable. "
+            "'plan_limited', 'quota_exceeded', 'temporarily_unavailable', "
+            "'error': the check did not complete. "
+            "'partial': something was learned, short of the whole check."
+        ),
+    )
     error_category: str = Field(default="", max_length=40)
-    called_provider: bool = False
-    cache_hit: bool = False
-    produced_evidence: bool = False
+    called_provider: bool = Field(
+        default=False,
+        description="Whether the source was physically contacted during this run.",
+    )
+    cache_hit: bool = Field(
+        default=False,
+        description=(
+            "The result was reused from this caller's own cache. The source was "
+            "not contacted again for this check, so do not describe it as "
+            "freshly queried."
+        ),
+    )
+    produced_evidence: bool = Field(
+        default=False,
+        description="Whether this check contributed any evidence to the investigation.",
+    )
 
 
 class IssueItem(FrozenTiReconModel):
@@ -412,7 +648,13 @@ class AnalystInvestigationReport(FrozenTiReconModel):
     assessment: AssessmentSummary
     readiness: ReadinessSummary
 
-    assessment_basis: ReportSection[BasisItem] = ReportSection[BasisItem]()
+    assessment_basis: ReportSection[BasisItem] = Field(
+        default=ReportSection[BasisItem](),
+        description=(
+            "The claims the verdict rested on: this is why the assessment was "
+            "reached, and the only section that answers that question."
+        ),
+    )
     #: Claims Task 17 recorded as pushing *against* the verdict it reached.
     #:
     #: Separate from the basis on purpose. Both are contributions and both
@@ -420,7 +662,15 @@ class AnalystInvestigationReport(FrozenTiReconModel):
     #: heading meaning "why" would put a benign assertion among the reasons an
     #: object was called malicious — which is the opposite of what the engine
     #: said about it.
-    opposing_evidence: ReportSection[BasisItem] = ReportSection[BasisItem]()
+    opposing_evidence: ReportSection[BasisItem] = Field(
+        default=ReportSection[BasisItem](),
+        description=(
+            "Claims that argued against the verdict and did not prevail. Real, "
+            "and kept apart from the basis on purpose: under one heading "
+            "meaning 'why', a benign assertion would read as a reason the "
+            "object was called malicious. Present the two separately."
+        ),
+    )
     alternative_explanations: ReportSection[ExplanationItem] = ReportSection[ExplanationItem]()
     unexplained_evidence: ReportSection[UnexplainedEvidenceItem] = ReportSection[
         UnexplainedEvidenceItem

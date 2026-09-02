@@ -184,7 +184,7 @@ class _Stores:
 
 async def build_default_application(
     *,
-    user_id: str,
+    user_id: str | None = None,
     adapters: list[ProviderAdapter] | None = None,
     secrets: SecretStore | None = None,
     connections: ConnectionRepository | None = None,
@@ -202,7 +202,16 @@ async def build_default_application(
     Everything is injectable because a deployment has its own answers: a durable
     secret store, a shared cache, a different concurrency limit. The defaults
     are what a single local invocation needs and nothing more.
+
+    ``user_id`` names whose environment credentials are being bootstrapped, so it
+    is required exactly when that bootstrap runs. A deployment serving several
+    authenticated analysts passes ``load_credentials=False`` and its own stores;
+    it has no single user to name, and inventing a placeholder would put a
+    meaningless owner on real credential records.
     """
+    if load_credentials and user_id is None:
+        msg = "user_id is required when load_credentials is True"
+        raise ValueError(msg)
     catalogue = build_default_adapters() if adapters is None else adapters
     stores = _Stores(
         secrets=InMemorySecretStore() if secrets is None else secrets,
@@ -210,6 +219,7 @@ async def build_default_application(
     )
     report = CredentialLoadReport()
     if load_credentials:
+        assert user_id is not None
         report = await load_environment_credentials(
             CredentialManager(stores.secrets, stores.connections),
             user_id=user_id,

@@ -10,6 +10,13 @@ TI Recon is a deterministic external threat-intelligence engine. It decides the
 verdict, the confidence, the coverage judgement and which sources to ask. **You
 present its answer. You never recompute it.**
 
+This Skill adds workflow, structure and worked cases. It is **not** what makes
+the semantics correct: the MCP server's instructions, the tool descriptions and
+the report's output schema carry the meaning of every field, and a client that
+has only those must reach the same reading. Where this Skill and the server
+contract could ever disagree, the server contract is right — say so and follow
+it.
+
 If no TI Recon MCP tool is available, say the server is not connected and stop —
 do not substitute your own assessment, a CLI call, or a provider API.
 
@@ -119,8 +126,13 @@ deciding how much to show.
   ready to close, or safe.
 - **`NO_DATA`** means checked, nothing applicable found. Never clean, safe,
   benign or trusted.
-- **`NOT_CONFIGURED`** means the source was not checked because its credential
-  is not set up locally — not that it is offline or rejected a key.
+- **`NOT_CONFIGURED`** means the source was **not checked**, because no usable
+  credential is available for this account — not that it is offline, not that it
+  was unreachable, not that it rejected a key, and not that it found nothing.
+- **A cached result is a real check that made no new request.** Say the answer
+  was reused from cache; never say the source was queried again.
+- **`configured` is not `validated`.** It means a credential is stored, never
+  that it works, that an entitlement covers the call, or that quota remains.
 - **Related observables are not indicators.** A contacted host is a
   relationship. Call it malicious only if the report separately assessed *it*.
 - **Sources are provenance, not votes.** Never count providers for or against.
@@ -146,14 +158,32 @@ isolate, allowlist, suppress, close an alert or declare an incident. If asked
 decision needs their internal telemetry, asset context and policy — answer the
 question, do not dodge it.
 
-**No credentials in chat.** If a source is unconfigured, say to configure it
-locally per the repository docs, and that the MCP server must be reconnected
-afterwards because configuration is read when it starts. Never ask anyone to
-paste a key.
+**No credentials in chat, ever.** Never ask anyone to paste a provider API key
+into the conversation, a tool argument, a prompt or a header. No tool accepts
+one.
 
-**No silent OSINT.** Do not supplement a report with web research unless asked.
-If asked, present it as a separate evidence stream that does not change TI
-Recon's verdict, confidence or coverage.
+**Setup advice depends on the deployment, so read it rather than assume it.**
+The server's own instructions say which one you are talking to.
+
+- *Hosted / remote* — say the source was not checked because no credential is
+  available for this account, and stop. Self-service provider credential setup
+  is not available in this version. Do not suggest configuring anything locally,
+  editing a server environment variable, or reconnecting: the caller has no
+  server to edit.
+- *Local stdio* — configuration is a real local step, documented in the
+  repository, and the server reads it at startup, so a new credential appears
+  after a restart or reconnect.
+
+If you cannot tell which deployment it is, describe what was not checked and why
+and offer nothing further.
+
+**No silent OSINT, and no silent recall.** Do not supplement a report with web
+research unless asked. Anything you contribute from your own knowledge — that a
+range is documentation space, who owns an ASN, what a malware family does — is
+**yours, not TI Recon's**, and must be labelled that way ("not from TI Recon")
+and kept out of the assessment basis, the opposing evidence, the coverage and
+the source provenance. A reader must always be able to tell which sentences the
+engine stands behind.
 
 ## With no target
 

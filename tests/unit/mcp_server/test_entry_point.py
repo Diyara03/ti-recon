@@ -9,18 +9,20 @@ the ones a model can act on.
 
 from __future__ import annotations
 
+import ast
 import logging
 import sys
+from pathlib import Path
 
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
 from ti_recon.application.composition import CredentialLoadReport
-from ti_recon.execution.models import ExecutionContext
+from ti_recon.credentials import InMemoryConnectionRepository
 from ti_recon.mcp_server import main as entry_point
 from ti_recon.mcp_server import tools
 from ti_recon.mcp_server.models import ProviderStatusReport
-from ti_recon.mcp_server.runtime import STDIO_PRINCIPAL, McpRuntime
+from ti_recon.mcp_server.runtime import STDIO_PRINCIPAL, FixedPrincipal, McpRuntime
 
 
 @pytest.fixture
@@ -85,6 +87,28 @@ def test_the_console_entry_point_is_importable_and_callable() -> None:
     assert callable(entry_point.main)
 
 
+def test_the_stdio_process_serves_the_local_profile() -> None:
+    """Read from the AST, because the difference is invisible at runtime here.
+
+    ``build_mcp_server`` defaults to the deployment-neutral instructions — the
+    honest default for a caller that has not said which profile it is, and the
+    wrong thing for a process that knows. The stdio entry point has to reach the
+    profile builder by name, or the shipped local server silently drops the
+    paragraph describing how a credential is configured on this machine.
+    """
+    source = Path(entry_point.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    called = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "build_stdio_server" in called
+    assert "build_mcp_server" not in called
+    assert "build_remote_server" not in called
+
+
 # --------------------------------------------------------------------------- #
 # The remaining tool error paths
 # --------------------------------------------------------------------------- #
@@ -94,7 +118,8 @@ def _runtime(application: object) -> McpRuntime:
     return McpRuntime(
         application=application,  # type: ignore[arg-type]
         credentials=CredentialLoadReport(),
-        context=ExecutionContext(authenticated_user_id=STDIO_PRINCIPAL),
+        connections=InMemoryConnectionRepository(),
+        principals=FixedPrincipal(STDIO_PRINCIPAL),
     )
 
 
@@ -134,9 +159,10 @@ async def test_a_structural_workflow_failure_is_reported_as_a_failure() -> None:
     assert "internal/detail" not in message
 
 
-def test_provider_status_is_empty_and_honest_with_no_adapters() -> None:
+@pytest.mark.asyncio
+async def test_provider_status_is_empty_and_honest_with_no_adapters() -> None:
     """A runtime holding nothing reports nothing, rather than guessing."""
-    report = tools.provider_status(_runtime(object()))
+    report = await tools.provider_status(_runtime(object()))
 
     assert isinstance(report, ProviderStatusReport)
     assert report.providers == ()

@@ -116,12 +116,38 @@ If asked "give me all the IOCs":
 
 ## L. A material source is unconfigured
 
-> One source that would cover this was not checked because its credential is not
-> configured locally. Configuring it is a local setup step in the repository
-> docs — and the MCP server needs reconnecting afterwards, since configuration
-> is read when it starts.
+Hosted deployment:
 
-Never ask for the key in chat. Never say the provider is offline.
+> One source that would have covered this was **not checked**: no credential for
+> it is available for your account. Self-service provider credential setup isn't
+> available in this version, so I can't point you at a way to add one.
+
+Local stdio deployment:
+
+> One source that would have covered this was **not checked**: its credential
+> isn't configured on this machine. That's a local setup step in the repository
+> docs, and the MCP server has to be restarted or reconnected afterwards,
+> because configuration is read when it starts.
+
+Never say the provider is offline, unreachable, or that it found nothing. Never
+ask for the key in chat, in either deployment.
+
+## L2. A cached source check
+
+> That check was answered from your cached result rather than a fresh request —
+> the source wasn't contacted again for it.
+
+A cache hit is a real check whose answer stands. Do not present it as a new
+query, and do not present it as a missing one.
+
+## L3. Adding your own knowledge
+
+> **Not from TI Recon:** `198.51.100.0/24` is TEST-NET-2, reserved for
+> documentation, so traffic claiming to come from it is usually spoofed or
+> synthetic.
+
+Label it, keep it out of the basis and the coverage, and say plainly that it did
+not affect the verdict or the confidence.
 
 ## M. "Can you give me more data?"
 

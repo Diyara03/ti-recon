@@ -25,10 +25,15 @@ from fixtures.mcp_server import FAKE_ABUSE_KEY, FAKE_VT_KEY, scripted_server
 from ti_recon.application.composition import CredentialLoadReport
 from ti_recon.application.models import ObservableInputType
 from ti_recon.correlation.policy import PivotMode
+from ti_recon.credentials import InMemoryConnectionRepository
 from ti_recon.enums import InvestigationDepth, ProviderCapability
-from ti_recon.execution.models import ExecutionContext
 from ti_recon.mcp_server import tools
-from ti_recon.mcp_server.runtime import McpRuntime, build_stdio_runtime
+from ti_recon.mcp_server.runtime import (
+    STDIO_PRINCIPAL,
+    FixedPrincipal,
+    McpRuntime,
+    build_stdio_runtime,
+)
 from ti_recon.mcp_server.server import (
     REPORT_SCHEMA_URI,
     REQUEST_SCHEMA_URI,
@@ -110,7 +115,8 @@ async def test_an_unexpected_exception_leaks_neither_message_nor_traceback() -> 
     runtime = McpRuntime(
         application=_Exploding(),  # type: ignore[arg-type]
         credentials=CredentialLoadReport(),
-        context=ExecutionContext(authenticated_user_id="mcp-stdio-local"),
+        connections=InMemoryConnectionRepository(),
+        principals=FixedPrincipal(STDIO_PRINCIPAL),
     )
     captured = io.StringIO()
     handler = logging.StreamHandler(captured)
@@ -161,7 +167,8 @@ async def test_cancellation_does_not_become_a_result() -> None:
     runtime = McpRuntime(
         application=_Blocking(),  # type: ignore[arg-type]
         credentials=CredentialLoadReport(),
-        context=ExecutionContext(authenticated_user_id="mcp-stdio-local"),
+        connections=InMemoryConnectionRepository(),
+        principals=FixedPrincipal(STDIO_PRINCIPAL),
     )
     task = asyncio.ensure_future(
         tools.investigate_observable(
@@ -235,7 +242,7 @@ async def test_provider_status_describes_the_runtime_catalogue() -> None:
 async def test_provider_status_says_configured_and_never_validated() -> None:
     """The field is named for what it knows.
 
-    ``configured`` means the credential was present at startup. Calling it
+    ``configured`` means this principal has the credential stored. Calling it
     ``verified`` or ``healthy`` would claim something only a network call could
     establish — which this tool must never make.
     """
@@ -260,20 +267,35 @@ def _sources() -> list[tuple[Path, str]]:
     return [(path, path.read_text(encoding="utf-8")) for path in sorted(MCP_PACKAGE.rglob("*.py"))]
 
 
+#: The one module here allowed an HTTP client, and why.
+#:
+#: Fetching a JWKS document is authorization infrastructure: it talks to the
+#: deployment's identity provider at a configured URL, and it is the only way a
+#: resource server can hold public signing keys. That is a different thing from
+#: intelligence traffic, which still may not originate here — ``jwt_auth.py``
+#: imports no provider adapter and no provider client, and its only destination
+#: is ``JwtVerifierConfig.jwks_url``.
+_HTTP_CLIENT_EXEMPT = "jwt_auth.py"
+
+
 def test_the_server_imports_no_provider_adapter_or_transport() -> None:
     """Execution belongs to Task 13 and Task 6.
 
     ``runtime.py`` may import the *catalogue*, which is a composition root. No
-    module here may import an individual adapter, an HTTP client or a socket.
+    module here may import an individual adapter or open a socket, and only the
+    JWKS verifier may hold an HTTP client.
     """
     for path, source in _sources():
+        banned = {"socket", "ssl", "requests"}
+        if path.name != _HTTP_CLIENT_EXEMPT:
+            banned.add("httpx")
         tree = ast.parse(source)
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    assert alias.name not in {"socket", "httpx", "ssl", "requests"}, path.name
+                    assert alias.name not in banned, path.name
             if isinstance(node, ast.ImportFrom) and node.module:
-                assert node.module not in {"socket", "httpx", "ssl", "requests"}, path.name
+                assert node.module not in banned, path.name
                 assert not node.module.startswith("ti_recon.providers.") or node.module.endswith(
                     (".catalog", ".adapter")
                 ), f"{path.name} imports {node.module}"
@@ -330,7 +352,484 @@ def test_the_reusable_factory_does_not_reconfigure_logging() -> None:
     embedding application's handlers — the lesson Task 20 already learned once.
     """
     for path, source in _sources():
-        if path.name == "main.py":
+        # The two process entry points own logging for their own process. Every
+        # other module here is a library somebody may embed, and reconfiguring
+        # the package logger would silently replace their handlers.
+        if path.name in {"main.py", "http_main.py"}:
             continue
         assert "basicConfig" not in source, path.name
         assert ".handlers =" not in source, path.name
+
+
+# --------------------------------------------------------------------------- #
+# The access token stops at the MCP boundary
+# --------------------------------------------------------------------------- #
+
+#: Every package the engine is made of. None of them may learn that OAuth
+#: exists: the MCP layer converts a validated token into one opaque string, and
+#: that string is the whole vocabulary below it.
+_ENGINE_PACKAGES = (
+    "application",
+    "investigation",
+    "planning",
+    "correlation",
+    "execution",
+    "credentials",
+    "providers",
+    "reasoning",
+    "reporting",
+    "cli",
+)
+
+#: Symbols that only exist because a request was authenticated over HTTP.
+_AUTH_SYMBOLS = frozenset(
+    {
+        "AccessToken",
+        "AuthenticatedUser",
+        "AuthSettings",
+        "TokenVerifier",
+        "auth_context_var",
+        "get_access_token",
+        "principal_components",
+        "authorization_context",
+    }
+)
+
+
+def _engine_sources() -> list[tuple[Path, str]]:
+    root = MCP_PACKAGE.parent
+    return [
+        (path, path.read_text(encoding="utf-8"))
+        for package in _ENGINE_PACKAGES
+        for path in sorted((root / package).rglob("*.py"))
+    ]
+
+
+def test_the_engine_imports_nothing_from_the_mcp_sdk() -> None:
+    """The token that authorizes an analyst must never reach a provider.
+
+    Structural rather than procedural: a provider adapter can only forward an
+    MCP access token if something below this boundary can *reach* one, and the
+    only way to reach one is to import the SDK. Nothing below does, so a
+    passthrough would have to add an import first — and this test is what
+    notices.
+    """
+    for path, source in _engine_sources():
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert alias.name != "mcp" and not alias.name.startswith("mcp."), (
+                        f"{path} imports {alias.name}"
+                    )
+            if isinstance(node, ast.ImportFrom) and node.module:
+                assert node.module != "mcp" and not node.module.startswith("mcp."), (
+                    f"{path} imports from {node.module}"
+                )
+
+
+def test_no_engine_module_names_an_authentication_symbol() -> None:
+    """Not by import, and not by attribute either.
+
+    Catches the shape an import ban misses: reaching a contextvar through a
+    module object somebody passed in.
+    """
+    for path, source in _engine_sources():
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    assert alias.name not in _AUTH_SYMBOLS, f"{path} imports {alias.name}"
+            if isinstance(node, ast.Name):
+                assert node.id not in _AUTH_SYMBOLS, f"{path} names {node.id}"
+            if isinstance(node, ast.Attribute):
+                assert node.attr not in _AUTH_SYMBOLS, f"{path} reads .{node.attr}"
+
+
+def test_nothing_below_the_boundary_can_read_an_inbound_request_header() -> None:
+    """The two directions are different, and only one is forbidden.
+
+    A provider config naming ``Authorization`` is *TI Recon's* key going out to
+    a provider — expected, and where the outbound credential belongs. Reading an
+    *inbound* header is the direction that could reach the analyst's token, and
+    it needs the ASGI/HTTP server machinery to do it. Nothing below the MCP
+    layer imports any, so there is no inbound request to read a header from.
+    """
+    forbidden = ("starlette", "uvicorn", "fastapi", "asgiref")
+    for path, source in _engine_sources():
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            names = (
+                [alias.name for alias in node.names]
+                if isinstance(node, ast.Import)
+                else [node.module or ""]
+                if isinstance(node, ast.ImportFrom)
+                else []
+            )
+            for name in names:
+                assert not name.startswith(forbidden), f"{path} imports {name}"
+
+
+def test_the_remote_composition_never_loads_environment_credentials() -> None:
+    """A server's environment is global to the server.
+
+    Read from the module's AST rather than from a comment: the remote builder
+    must pass ``load_credentials=False``, and nothing here may call the
+    environment loader.
+    """
+    source = (MCP_PACKAGE / "runtime.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    remote = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "build_remote_runtime"
+    )
+    keywords = {
+        keyword.arg: keyword.value
+        for node in ast.walk(remote)
+        if isinstance(node, ast.Call)
+        for keyword in node.keywords
+    }
+    loaded = keywords.get("load_credentials")
+    assert isinstance(loaded, ast.Constant) and loaded.value is False
+
+    for path, text in _sources():
+        assert "load_environment_credentials" not in text, path.name
+
+
+# --------------------------------------------------------------------------- #
+# HTTP stops at the MCP boundary too
+# --------------------------------------------------------------------------- #
+
+
+def test_the_engine_imports_no_http_server_machinery() -> None:
+    """Extends the token ban to the transport that carries one.
+
+    ``application/``, ``execution/``, ``credentials/``, ``providers/`` and
+    ``reasoning/`` must not learn that HTTP serving exists. ``providers/`` is an
+    HTTP *client* of third parties and imports ``httpx`` legitimately; what none
+    of them may import is a server framework, which is the only way to reach an
+    inbound request, a header, or ``AuthSettings``.
+    """
+    forbidden = ("starlette", "uvicorn", "fastapi", "asgiref", "hypercorn")
+    for path, source in _engine_sources():
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            names = (
+                [alias.name for alias in node.names]
+                if isinstance(node, ast.Import)
+                else [node.module or ""]
+                if isinstance(node, ast.ImportFrom)
+                else []
+            )
+            for name in names:
+                assert not name.startswith(forbidden), f"{path} imports {name}"
+
+
+def test_no_engine_module_names_an_http_auth_symbol() -> None:
+    """``AuthSettings``, ``Request`` and the transport knobs stay above the line."""
+    symbols = frozenset(
+        {
+            "AuthSettings",
+            "TransportSecuritySettings",
+            "RemoteHttpConfig",
+            "StrictTokenVerifier",
+            "RemotePrincipal",
+            "build_remote_http_app",
+            "streamable_http_app",
+        }
+    )
+    for path, source in _engine_sources():
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    assert alias.name not in symbols, f"{path} imports {alias.name}"
+            if isinstance(node, ast.Name):
+                assert node.id not in symbols, f"{path} names {node.id}"
+
+
+def test_the_remote_builder_never_registers_the_file_tool() -> None:
+    """Read from the AST, so "hidden from the docs" cannot pass for "absent".
+
+    ``build_remote_server`` must pass ``local_file_tool=False``, and the file
+    tool's registration must live behind that flag rather than beside it.
+    """
+    source = (MCP_PACKAGE / "server.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    remote = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "build_remote_server"
+    )
+    flags = {
+        keyword.arg: keyword.value
+        for node in ast.walk(remote)
+        if isinstance(node, ast.Call)
+        for keyword in node.keywords
+    }
+    value = flags.get("local_file_tool")
+    assert isinstance(value, ast.Constant) and value.value is False
+
+    register = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_register_tools"
+    )
+    guarded = [
+        node
+        for node in ast.walk(register)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Name)
+        and node.test.id == "local_file_tool"
+    ]
+    assert guarded, "the file tool must be registered behind the profile flag"
+
+
+def test_the_remote_modules_name_no_provider() -> None:
+    """Which source answers a question stays Task 13's ranked decision.
+
+    The transport layer must not be able to express a preference, so no module
+    added for HTTP may import an adapter or name one.
+    """
+    for name in ("http.py", "limits.py", "auth.py", "principal.py"):
+        source = (MCP_PACKAGE / name).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                assert not node.module.startswith("ti_recon.providers."), f"{name}: {node.module}"
+        for provider in ("virustotal", "urlscan", "greynoise", "censys", "abuse", "gti"):
+            assert provider not in source.lower().replace("provider", ""), f"{name}: {provider}"
+
+
+def test_no_permissive_token_verifier_ships() -> None:
+    """A development verifier reachable from production would end this boundary.
+
+    The one implementation in ``src`` is the strict wrapper, and it composes over
+    an injected delegate it has no default for.
+    """
+    for path, source in _sources():
+        lowered = source.lower()
+        for banned in ("unsafetokenverifier", "developmentverifier", "insecuretokenverifier"):
+            assert banned not in lowered.replace(" ", ""), f"{path.name}: {banned}"
+
+    tree = ast.parse((MCP_PACKAGE / "http.py").read_text(encoding="utf-8"))
+    factory = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "build_remote_http_app"
+    )
+    delegate = next(item for item in factory.args.kwonlyargs if item.arg == "delegate")
+    index = factory.args.kwonlyargs.index(delegate)
+    assert factory.args.kw_defaults[index] is None, "delegate must have no default"
+
+
+def test_the_remote_entry_point_cannot_run_more_than_one_worker() -> None:
+    """The entry point exists now, and offers no way to scale it wrongly.
+
+    Task 6's cache, cooldown, quota and single-flight stores are process-local,
+    and so is the tenant limiter. A second worker enforces each of them a second
+    time independently, so the worker count is not a tuning knob — it is a
+    correctness constraint until Task 24 gives that state a shared backend.
+
+    Read from the AST rather than the text: the module docstring explains the
+    policy at length and should.
+    """
+    manifest = Path("pyproject.toml").read_text(encoding="utf-8")
+    assert "ti-recon-mcp-http = " in manifest
+
+    tree = ast.parse((MCP_PACKAGE / "http_main.py").read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            for keyword in node.keywords:
+                assert keyword.arg != "workers", "the entry point must not request workers"
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            assert node.value not in {"--workers", "workers", "WEB_CONCURRENCY"}, node.value
+
+
+def test_nothing_below_the_boundary_imports_the_http_gate() -> None:
+    """The preflight gate is transport composition and stays above the engine.
+
+    It knows HTTP and configuration; it must never learn that providers,
+    executors or reasoning exist, and nothing in the engine may reach up to it.
+    """
+    for path, source in _engine_sources():
+        assert "RemoteHttpApp" not in source, path
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                assert "mcp_server" not in node.module, f"{path} imports {node.module}"
+
+
+def test_the_http_gate_knows_only_transport_configuration() -> None:
+    """No adapter, no executor, no credential loader, no reasoning engine."""
+    tree = ast.parse((MCP_PACKAGE / "http.py").read_text(encoding="utf-8"))
+    forbidden = (
+        "ti_recon.providers",
+        "ti_recon.execution",
+        "ti_recon.reasoning",
+        "ti_recon.planning",
+        "ti_recon.correlation",
+        "ti_recon.investigation",
+    )
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            assert not node.module.startswith(forbidden), node.module
+    for name in ("ProviderExecutor", "CredentialResolver", "load_environment_credentials"):
+        assert name not in (MCP_PACKAGE / "http.py").read_text(encoding="utf-8"), name
+
+
+def test_no_sdk_class_is_monkeypatched_or_reached_into_privately() -> None:
+    """Ordering is arranged by ASGI composition, not by rewriting the SDK.
+
+    A global replacement of ``BearerAuthBackend`` or a patched
+    ``AuthenticationMiddleware`` would work in tests and be invisible to anybody
+    reading the deployment.
+    """
+    tree = ast.parse((MCP_PACKAGE / "http.py").read_text(encoding="utf-8"))
+    # Symbols, not prose: the module's docstring explains the SDK's composition
+    # at length, and it should. What matters is what the code touches.
+    symbols = frozenset({"BearerAuthBackend", "AuthenticationMiddleware", "setattr"})
+    privates = frozenset(
+        {"_lowlevel_server", "_session_manager", "_custom_starlette_routes", "__dict__"}
+    )
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                assert alias.name not in symbols, alias.name
+        if isinstance(node, ast.Name):
+            assert node.id not in symbols, node.id
+        if isinstance(node, ast.Attribute):
+            assert node.attr not in symbols | privates, node.attr
+
+
+def test_the_gate_adds_no_security_configuration_flag() -> None:
+    """These are mandatory semantics, not options somebody can turn off."""
+    source = (MCP_PACKAGE / "http.py").read_text(encoding="utf-8")
+    for banned in (
+        "pre_auth_enabled",
+        "health_skip_auth",
+        "bypass_verifier",
+        "pre_auth_allowed_hosts",
+        "mcp_allowed_hosts",
+        "skip_transport_security",
+    ):
+        assert banned not in source, banned
+
+
+# --------------------------------------------------------------------------- #
+# What the package promises it needs
+# --------------------------------------------------------------------------- #
+
+#: Third-party roots imported from ``src`` that ``pyproject`` does not declare.
+#:
+#: Both predate this branch and both arrive transitively today — ``aiohttp``
+#: with ``vt-py``, ``pydantic_core`` with ``pydantic``. Recorded rather than
+#: silently tolerated: an exemption a test names is debt somebody can find,
+#: whereas a test that simply did not look would let the next one join them.
+#: Nothing may be added here without the same reasoning.
+KNOWN_UNDECLARED_IMPORTS = frozenset({"aiohttp", "pydantic_core"})
+
+
+def _declared_distributions() -> set[str]:
+    """Requirement names from ``pyproject``, normalised the way PyPI does."""
+    import re
+    import tomllib
+
+    manifest = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    names = set()
+    for requirement in manifest["project"]["dependencies"]:
+        name = re.split(r"[<>=!\[;~ ]", requirement, maxsplit=1)[0]
+        names.add(name.strip().lower().replace("-", "_"))
+    return names
+
+
+def _imported_roots() -> set[str]:
+    """Every top-level module ``src`` imports, from the AST rather than at runtime."""
+    import sys
+
+    roots: set[str] = set()
+    for path in Path("src/ti_recon").rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                roots.update(alias.name.split(".")[0] for alias in node.names)
+            if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                roots.add(node.module.split(".")[0])
+    return {
+        root
+        for root in roots
+        if root not in sys.stdlib_module_names and not root.startswith("_") and root != "ti_recon"
+    }
+
+
+def test_every_third_party_module_the_source_imports_is_declared() -> None:
+    """A direct import is a dependency, whether or not something else supplies it.
+
+    Task 22 nearly shipped without this. ``mcp_server/http.py`` imports
+    Starlette's application, request, response and ASGI types to build the
+    preflight gate, and it worked only because the MCP SDK happens to depend on
+    Starlette — an unbounded ``>=0.27`` that TI Recon asserted nothing about. An
+    SDK release dropping it, or a Starlette major reworking the ASGI surface,
+    would have surfaced as an ImportError or a subtle behaviour change in
+    production rather than as a resolution failure at install time.
+
+    The mapping is deliberately import-name to distribution-name for the simple
+    cases only; anything whose two names differ is spelled out, because guessing
+    that correspondence is how a test like this starts lying.
+    """
+    distribution_of = {"jwt": "pyjwt", "vt": "vt_py"}
+    declared = _declared_distributions()
+
+    undeclared = sorted(
+        root
+        for root in _imported_roots()
+        if distribution_of.get(root, root) not in declared and root not in KNOWN_UNDECLARED_IMPORTS
+    )
+    assert undeclared == [], (
+        f"imported but not declared in pyproject: {undeclared}. "
+        "Declare it, or record it in KNOWN_UNDECLARED_IMPORTS with a reason."
+    )
+
+
+def test_the_asgi_dependencies_the_gate_imports_are_declared_with_a_ceiling() -> None:
+    """Both halves matter, and a floor alone would not be enough.
+
+    The floor makes the dependency explicit so resolution fails rather than the
+    import. The ceiling is TI Recon's own: this gate reasons about ASGI scopes,
+    lifespan messages and header lists directly, so a major that reworked any of
+    them is a change to review rather than to receive.
+    """
+    import tomllib
+
+    manifest = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    requirements = {
+        item.split(">=")[0].split("[")[0]: item for item in manifest["project"]["dependencies"]
+    }
+    for name in ("starlette", "uvicorn", "mcp"):
+        assert name in requirements, f"{name} is imported and must be declared"
+        assert "<" in requirements[name], f"{name} needs an upper bound: {requirements[name]}"
+
+
+def test_no_web_framework_or_shared_state_dependency_arrived() -> None:
+    """Task 24 owns shared execution state; nothing here may pre-empt it.
+
+    A FastAPI, Redis or database dependency appearing in this branch would mean
+    the single-worker boundary had been quietly crossed.
+    """
+    import tomllib
+
+    manifest = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    declared = " ".join(manifest["project"]["dependencies"]).lower()
+    for forbidden in (
+        "fastapi",
+        "redis",
+        "sqlalchemy",
+        "psycopg",
+        "celery",
+        "kafka",
+        "flask",
+        "django",
+    ):
+        assert forbidden not in declared, forbidden

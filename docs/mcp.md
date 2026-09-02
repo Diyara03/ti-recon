@@ -34,6 +34,13 @@ documents, into the per-user credential store — the same mechanism the CLI use
 There are no credential arguments and no credential tool inputs: a secret in a
 tool call would land in a conversation transcript.
 
+**This is the local deployment model, and it is not the hosted one.** A server
+started by an analyst on their own machine reads that machine's environment;
+somebody talking to a hosted deployment has no such environment and no process
+to restart, and telling them otherwise sends them to configure a server they do
+not run. The hosted profile states that difference in its own MCP instructions —
+see [`remote-mcp.md`](remote-mcp.md).
+
 Starting the server contacts nothing. Adapters create their clients lazily and no
 credential is validated at startup, so a server starts cleanly on a machine with
 no keys at all and reports what is missing through `provider_status`.
@@ -85,14 +92,44 @@ nobody.
 
 ### `provider_status`
 
-Which sources this installation can use, what they cover, and whether their
-credentials were present at startup. **Makes no provider requests at all.**
+Which sources this installation ships, what they cover, and whether *the caller*
+has the configuration each one needs. **Makes no provider requests at all.**
 
-`configured` means one thing: the required configuration was present when the
-server was assembled. It does not mean the credential is valid, that
-authentication would succeed, or that quota remains — none of which can be known
-without contacting somebody, which this tool must never do. That is why there is
-no `verified` or `healthy` field.
+`configured` means one thing: the required credential is stored for that
+principal. It does not mean the credential is valid, that authentication would
+succeed, that an entitlement covers the operation, or that quota remains — none
+of which can be known without contacting somebody, which this tool must never
+do. That is why there is no `verified` or `healthy` field.
+
+It is also not a statement about what was *asked*. This diagnostic describes the
+installation; which sources an investigation actually consulted is
+`source_checks` in the analyst report. "Which sources are available?" and "which
+did you use?" are different questions with different answers, and the first is
+never evidence for the second.
+
+## The interpretive contract travels with the protocol
+
+An MCP client gets the server `instructions`, each tool's `description` and the
+structured `outputSchema` — and, in general, nothing else. It does not get this
+document, and it does not get the project Skill: `.claude/skills/` is a
+filesystem artifact of this repository, delivered to a Claude Code session
+working in this checkout and to nobody who merely connects the server.
+
+So the vocabulary an analyst must not misread lives in those three places:
+
+* the instructions carry the short rules whose loss produces a confidently wrong
+  answer — `INCONCLUSIVE` is not clean, `not_configured` is not a failed check,
+  confidence is not a probability, coverage is not permission to act,
+  `source_checks` is the authority for what was consulted, and a client's own
+  knowledge must be labelled as its own;
+* the tool descriptions carry disclosure and the setup reality of *this*
+  deployment;
+* the report's output schema carries the per-field and per-value meanings.
+
+`tests/unit/mcp_server/test_interpretation_contract.py` asserts all of it
+against a live protocol session and reads no Skill file, so "correct without the
+Skill" is a checked property rather than an intention. See
+[`analyst-output.md`](analyst-output.md).
 
 ## What the data flow actually is
 
@@ -166,7 +203,11 @@ stderr; `TI_RECON_LOG_LEVEL` sets the level, defaulting to `WARNING`.
 
 ## Not in this task
 
-No HTTP transport, no OAuth, no multi-user deployment, no persistence, and no
-active provider operation — nothing submits, detonates, rescans or downloads a
-sample. Provider selection stays with Task 13 and cannot be influenced from a
-tool call.
+No HTTP transport, no multi-user deployment, no persistence, and no active
+provider operation — nothing submits, detonates, rescans or downloads a sample.
+Provider selection stays with Task 13 and cannot be influenced from a tool call.
+
+Task 22 has since added the remote *authentication primitives* this server's
+identity model is built on — see [remote-mcp.md](remote-mcp.md). There is still
+no HTTP entry point: stdio remains the only transport, and this page describes
+it in full.
