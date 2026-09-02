@@ -88,7 +88,8 @@ class ProviderStatusReport(FrozenTiReconModel):
     set up, how many disclose nothing. They are not a quality measure and
     nothing downstream may read them as one: this engine never counts providers
     to decide anything, and a "7 of 9 configured" is a setup checklist rather
-    than a statement about coverage. Task 18 answers coverage, per capability.
+    than a statement about coverage. Coverage is answered per capability, in an
+    investigation's own report.
     """
 
     providers: tuple[ProviderStatusItem, ...] = ()

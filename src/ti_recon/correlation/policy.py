@@ -66,7 +66,7 @@ PIVOT_DEPTH_DOWNSHIFT: Final[dict[InvestigationDepth, InvestigationDepth]] = {
 
 
 class PivotMode(StrEnum):
-    """How far Task 14 may go beyond building the graph."""
+    """How far correlation may go beyond building the graph."""
 
     #: Correlate only. No candidate ranking, no queries.
     NONE = "none"

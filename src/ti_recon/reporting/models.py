@@ -147,7 +147,7 @@ class RequestSummary(FrozenTiReconModel):
 
 
 class AssessmentSummary(FrozenTiReconModel):
-    """Task 17's conclusion, copied rather than recomputed.
+    """The engine's conclusion, copied rather than recomputed.
 
     ``verdict`` and ``confidence`` answer different questions, and any
     combination of them is coherent. The verdict is what the evidence supports
@@ -217,7 +217,7 @@ class AssessmentSummary(FrozenTiReconModel):
 
 
 class ReadinessSummary(FrozenTiReconModel):
-    """Task 18's answer to a different question from the verdict.
+    """The answer to a different question from the verdict.
 
     Whether the *collection* was adequate for analyst triage. An assessment can
     be correct and its coverage incomplete at the same time.
@@ -268,16 +268,17 @@ class ReadinessSummary(FrozenTiReconModel):
 
 
 class BasisItem(FrozenTiReconModel):
-    """One claim Task 17 weighed, with the role it gave it.
+    """One claim the engine weighed, with the role it gave it.
 
     Used for the supporting basis and for opposing evidence alike, because they
     are the same kind of record and differ only in ``role`` — which every item
     carries, so a consumer reading either section can always see the engine's
     own disposition rather than inferring it from which list it arrived in.
 
-    Not "the most important provider" and not the strongest-looking finding: the
-    contributions Task 17 produced, with the role it assigned. Choosing here
-    would be presentation inventing an argument the engine did not make.
+    Not "the most important provider" and not the strongest-looking finding:
+    the contributions the assessment produced, with the role it assigned.
+    Choosing here would be presentation inventing an argument the engine did
+    not make.
     """
 
     role: str = Field(min_length=1, max_length=40)
@@ -306,7 +307,7 @@ class BasisItem(FrozenTiReconModel):
 
 
 class ExplanationItem(FrozenTiReconModel):
-    """A Task 16 alternative explanation, and exactly what it covers.
+    """An alternative explanation, and exactly what it covers.
 
     Only findings that are an ``ALTERNATIVE_EXPLANATION`` *and* carry an
     ``EXPLAINS`` link reach this section. A limitation, an attribution caution or
@@ -367,7 +368,7 @@ class ConflictItem(FrozenTiReconModel):
 
 
 class QualificationItem(FrozenTiReconModel):
-    """What a finding means in time and context, from Task 15.
+    """What a finding means in time and context.
 
     Carries the source's own lifecycle where it stated one. There is no decay
     model and no freshness label: an age is a number, and what it is worth
@@ -483,8 +484,8 @@ class RelatedObservableItem(FrozenTiReconModel):
 
     A contacted host, a resolved address and a dropped file are relationships.
     None of them is malicious because it appeared here: an object carries a
-    verdict only when Task 17 assessed *it*, which for anything but the root is
-    a separate question this run may not have asked.
+    verdict only when this investigation separately assessed *it*, which for
+    anything but the root is a question this run may not have asked.
     """
 
     object_type: IntelObjectType

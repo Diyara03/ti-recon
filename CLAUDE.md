@@ -1511,14 +1511,17 @@ about it.
      enrichment is enabled only on unambiguous intent, never silently.
      `investigate_file` runs only for a file the user supplied, attached or
      named — no browsing, no enumerating, no reading `.env`, and "check my
-     machine" is not a selection. Credentials are configured locally and never
-     pasted into a conversation; after a change the MCP server must be
-     reconnected, because configuration is read at startup.
+     machine" is not a selection. A provider credential is never pasted into a
+     conversation, a tool argument, a prompt or a header, in any deployment.
+     *How* one comes to exist is deployment-specific and stated rather than
+     assumed — see 164; over stdio it is a local step read once at startup, so a
+     new credential appears after a restart or reconnect.
 
 135. **The Skill inherits every vocabulary rule the engine enforces.** Sources
      are provenance and never votes, so no tally is ever produced. `NO_DATA` is
      checked-and-nothing-found, never clean. `UNATTRIBUTED` is not `NO_DATA`.
-     `NOT_CONFIGURED` is a local setup fact, not a provider being offline. A
+     `NOT_CONFIGURED` is a configuration fact about the caller's own account —
+     a check that never ran — and not a provider being offline. A
      related observable is a relationship, not an indicator. TI coverage is not
      permission to act, and confidence is not a probability of maliciousness.
      The Skill states the assessment and makes no organisational remediation
