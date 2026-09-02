@@ -34,6 +34,13 @@ dependencies = [
     # updates stay installable.
     "pyjwt[crypto]>=2.13,<3",
     "uvicorn>=0.34,<1",
+    # Same rule, and the one this branch nearly missed. `mcp_server/http.py`
+    # imports Starlette's application, request, response and ASGI types
+    # directly to build the preflight gate, so an SDK release that stopped
+    # depending on Starlette must fail resolution rather than import. The floor
+    # is the SDK's own; the ceiling is ours, because a 2.x reworking the ASGI
+    # surface is a change this gate would have to be reviewed against.
+    "starlette>=0.27,<2",
 ]
 
 [project.scripts]

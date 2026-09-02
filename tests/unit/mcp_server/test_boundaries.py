@@ -716,3 +716,120 @@ def test_the_gate_adds_no_security_configuration_flag() -> None:
         "skip_transport_security",
     ):
         assert banned not in source, banned
+
+
+# --------------------------------------------------------------------------- #
+# What the package promises it needs
+# --------------------------------------------------------------------------- #
+
+#: Third-party roots imported from ``src`` that ``pyproject`` does not declare.
+#:
+#: Both predate this branch and both arrive transitively today — ``aiohttp``
+#: with ``vt-py``, ``pydantic_core`` with ``pydantic``. Recorded rather than
+#: silently tolerated: an exemption a test names is debt somebody can find,
+#: whereas a test that simply did not look would let the next one join them.
+#: Nothing may be added here without the same reasoning.
+KNOWN_UNDECLARED_IMPORTS = frozenset({"aiohttp", "pydantic_core"})
+
+
+def _declared_distributions() -> set[str]:
+    """Requirement names from ``pyproject``, normalised the way PyPI does."""
+    import re
+    import tomllib
+
+    manifest = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    names = set()
+    for requirement in manifest["project"]["dependencies"]:
+        name = re.split(r"[<>=!\[;~ ]", requirement, maxsplit=1)[0]
+        names.add(name.strip().lower().replace("-", "_"))
+    return names
+
+
+def _imported_roots() -> set[str]:
+    """Every top-level module ``src`` imports, from the AST rather than at runtime."""
+    import sys
+
+    roots: set[str] = set()
+    for path in Path("src/ti_recon").rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                roots.update(alias.name.split(".")[0] for alias in node.names)
+            if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                roots.add(node.module.split(".")[0])
+    return {
+        root
+        for root in roots
+        if root not in sys.stdlib_module_names and not root.startswith("_") and root != "ti_recon"
+    }
+
+
+def test_every_third_party_module_the_source_imports_is_declared() -> None:
+    """A direct import is a dependency, whether or not something else supplies it.
+
+    Task 22 nearly shipped without this. ``mcp_server/http.py`` imports
+    Starlette's application, request, response and ASGI types to build the
+    preflight gate, and it worked only because the MCP SDK happens to depend on
+    Starlette — an unbounded ``>=0.27`` that TI Recon asserted nothing about. An
+    SDK release dropping it, or a Starlette major reworking the ASGI surface,
+    would have surfaced as an ImportError or a subtle behaviour change in
+    production rather than as a resolution failure at install time.
+
+    The mapping is deliberately import-name to distribution-name for the simple
+    cases only; anything whose two names differ is spelled out, because guessing
+    that correspondence is how a test like this starts lying.
+    """
+    distribution_of = {"jwt": "pyjwt", "vt": "vt_py"}
+    declared = _declared_distributions()
+
+    undeclared = sorted(
+        root
+        for root in _imported_roots()
+        if distribution_of.get(root, root) not in declared and root not in KNOWN_UNDECLARED_IMPORTS
+    )
+    assert undeclared == [], (
+        f"imported but not declared in pyproject: {undeclared}. "
+        "Declare it, or record it in KNOWN_UNDECLARED_IMPORTS with a reason."
+    )
+
+
+def test_the_asgi_dependencies_the_gate_imports_are_declared_with_a_ceiling() -> None:
+    """Both halves matter, and a floor alone would not be enough.
+
+    The floor makes the dependency explicit so resolution fails rather than the
+    import. The ceiling is TI Recon's own: this gate reasons about ASGI scopes,
+    lifespan messages and header lists directly, so a major that reworked any of
+    them is a change to review rather than to receive.
+    """
+    import tomllib
+
+    manifest = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    requirements = {
+        item.split(">=")[0].split("[")[0]: item for item in manifest["project"]["dependencies"]
+    }
+    for name in ("starlette", "uvicorn", "mcp"):
+        assert name in requirements, f"{name} is imported and must be declared"
+        assert "<" in requirements[name], f"{name} needs an upper bound: {requirements[name]}"
+
+
+def test_no_web_framework_or_shared_state_dependency_arrived() -> None:
+    """Task 24 owns shared execution state; nothing here may pre-empt it.
+
+    A FastAPI, Redis or database dependency appearing in this branch would mean
+    the single-worker boundary had been quietly crossed.
+    """
+    import tomllib
+
+    manifest = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    declared = " ".join(manifest["project"]["dependencies"]).lower()
+    for forbidden in (
+        "fastapi",
+        "redis",
+        "sqlalchemy",
+        "psycopg",
+        "celery",
+        "kafka",
+        "flask",
+        "django",
+    ):
+        assert forbidden not in declared, forbidden
