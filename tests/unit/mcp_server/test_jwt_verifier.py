@@ -476,6 +476,71 @@ async def test_a_duplicate_kid_refuses_the_whole_document(signing_key: SigningKe
 
 
 @pytest.mark.asyncio
+async def test_two_keys_without_a_kid_refuse_the_whole_document() -> None:
+    """Absent is an identifier, and two keys cannot share it either.
+
+    A key with no ``kid`` is the key an unkeyed token resolves against, so a set
+    holding two of them is the same ambiguity a repeated ``kid`` is — and was
+    the one place it was resolved silently instead of refused. Keeping the last
+    entry made the answer depend on the order the authorization server happened
+    to serialize its document in: a token signed with the *first* key was
+    rejected as an unknown key, which reads like an outage rather than a
+    malformed key set.
+
+    Not an authentication bypass in either direction — both keys came from the
+    configured JWKS over HTTPS — but a security-critical set that cannot say
+    which key signed anything must be refused rather than guessed at.
+    """
+    first = SigningKey.generate("unused-a")
+    second = SigningKey.generate("unused-b")
+    endpoint = JwksEndpoint()
+    endpoint.body = json.dumps({"keys": [first.jwk(kid=None), second.jwk(kid=None)]}).encode()
+
+    verifier = _verifier(endpoint)
+    assert await verifier.verify_token(first.sign(headers={"kid": None})) is None
+    assert await verifier.verify_token(second.sign(headers={"kid": None})) is None
+
+
+@pytest.mark.asyncio
+async def test_one_key_without_a_kid_still_answers_beside_a_keyed_one(
+    signing_key: SigningKey, second_key: SigningKey
+) -> None:
+    """The refusal is about *two* unkeyed keys, and nothing narrower works.
+
+    A rotation that publishes a keyed key beside a legacy unkeyed one is
+    ordinary, and so is a set holding exactly one unkeyed key. Refusing either
+    would deny authentication over a document that says what it means.
+    """
+    endpoint = JwksEndpoint()
+    endpoint.body = json.dumps({"keys": [signing_key.jwk(kid=None), second_key.jwk()]}).encode()
+
+    verifier = _verifier(endpoint)
+    assert await verifier.verify_token(signing_key.sign(headers={"kid": None})) is not None
+    assert await verifier.verify_token(second_key.sign()) is not None
+
+
+@pytest.mark.asyncio
+async def test_an_unkeyed_encryption_key_is_not_an_unkeyed_conflict(
+    signing_key: SigningKey,
+) -> None:
+    """Eligibility is judged first here too, exactly as it is for a shared ``kid``.
+
+    An encryption key with no ``kid`` is not a candidate, so it cannot collide
+    with the signing key that is one — otherwise irrelevant encryption material
+    would deny all authentication.
+    """
+    encryption = SigningKey.generate("unused")
+    endpoint = JwksEndpoint()
+    endpoint.body = json.dumps(
+        {"keys": [encryption.jwk(kid=None, use="enc"), signing_key.jwk(kid=None)]}
+    ).encode()
+
+    assert (
+        await _verifier(endpoint).verify_token(signing_key.sign(headers={"kid": None})) is not None
+    )
+
+
+@pytest.mark.asyncio
 async def test_an_encryption_key_is_skipped_rather_than_fatal(signing_key: SigningKey) -> None:
     """A set may legitimately hold both; only signing keys are candidates."""
     endpoint = JwksEndpoint(keys=[signing_key])

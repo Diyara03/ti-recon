@@ -705,8 +705,11 @@ def _parse_jwks(
 
     Treated as untrusted input throughout: the key count is bounded before any
     key is constructed, unusable entries are skipped rather than fatal, and a
-    duplicate ``kid`` refuses the whole document — two keys claiming one
-    identifier means the set cannot say which signed anything.
+    duplicate identifier refuses the whole document — two keys claiming one
+    identifier means the set cannot say which signed anything. That holds for a
+    repeated ``kid`` and, equally, for a second key carrying none: absent is an
+    identifier like any other here, and it is the one an unkeyed token resolves
+    against.
     """
     keys = document.get("keys")
     if not isinstance(keys, list) or not keys:
@@ -737,6 +740,14 @@ def _parse_jwks(
             continue
         kid = entry.get("kid")
         if kid is None:
+            if unkeyed is not None:
+                # A key with no ``kid`` is the key with no identifier, and two of
+                # them share it exactly as two keys sharing an explicit ``kid``
+                # do. Refused for the same reason: an unkeyed token names no key,
+                # so a set holding two candidates cannot say which signed
+                # anything — and silently keeping the last would make the answer
+                # depend on document order at the authorization server.
+                raise JwksUnavailableError(JwtRejection.MALFORMED_JWKS)
             unkeyed = key
             continue
         if not isinstance(kid, str) or not kid:
