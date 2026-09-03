@@ -164,6 +164,23 @@ Implemented (Jira Tasks 1-19):
   identity provider has been contacted**; a staging OAuth acceptance test is the
   next phase.
 
+- Task 23, Phase 1 — the local Claude Code plugin (`plugins/ti-recon/`), as
+  architecture, host proof and developer proof only. The primary usage model is
+  Claude Enterprise → Claude Code on each analyst workstation → the plugin →
+  the local stdio `ti-recon-mcp` → that analyst's own provider credentials, with
+  **no shared deployment**. The plugin bundles the MCP server declaration and a
+  byte-identical copy of the analyst Skill; its `userConfig` declares one
+  optional `sensitive` option per credential group plus the non-secret Censys
+  organization id, substituted by the host into the server's environment where
+  the existing loader already reads them. `TI_RECON_CREDENTIAL_SETUP` selects a
+  `LocalCredentialSetup` so the server states the plugin's setup step rather
+  than the environment one. **No runtime is bundled**: the committed launcher
+  fails closed, and `tools/build_dev_plugin.py` generates a NON-DISTRIBUTABLE
+  copy that runs this checkout for proof only. Runtime packaging (recommended:
+  a `uv`-provisioned environment in `${CLAUDE_PLUGIN_DATA}`), the internal
+  marketplace and Windows/macOS verification are later phases. See
+  `docs/claude-plugin.md`.
+
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Task 13 chooses what
 to ask, Task 14 assembles what came back, Task 15 says what each finding means in
@@ -313,6 +330,13 @@ about it.
   prompt, into tool arguments and into a conversation transcript
 - Tenant-key rotation or migration, and any second identity scheme beside
   `tenant-v1:`
+- A bundled or provisioned plugin runtime, a cross-platform launcher, a
+  `ti-recon[remote]` extra, an internal plugin marketplace, a release tag flow,
+  and any plugin hook, agent or command. Phase 1 of Task 23 proves the host
+  mechanics; the committed launcher fails closed until a runtime exists
+- A plugin-specific credential store, loader or repository; a `set_api_key`
+  tool; any `${user_config.*}` reference in Skill content; a development or
+  override path in the committed launcher (`TI_RECON_MCP_*`, `PATH` search)
 
 ## Architectural invariants
 
@@ -1853,6 +1877,53 @@ about it.
      text disagree with the JSON about what the engine concluded, which is worse
      than the ambiguity it fixes.
 
+166. **A plugin option reaches the engine only as an environment variable the
+     loader already reads, and a secret never reaches model context.** The
+     path is plugin configuration → Claude Code secure storage →
+     `${user_config.KEY}` substituted into `.mcp.json` `env` → the server
+     process environment, read once → `load_environment_credentials` → the
+     per-user store → `CredentialResolver` → `_apply_auth`. It never passes
+     through Skill content (no `${user_config.*}` there, and the host refuses
+     sensitive ones anyway), a prompt, a tool argument, `instructions`, a tool
+     description, a report, a log, stderr or an exception. A test drives the
+     real server — in process and as the installed subprocess with stderr
+     captured at `DEBUG` — with sentinel credentials and searches every surface.
+     The plugin is a distribution layer: nothing under `src/ti_recon` reads
+     `CLAUDE_PLUGIN_*`, `user_config` or a plugin path.
+
+167. **One credential system, keyed by group, every credential optional.** The
+     plugin declares exactly one `sensitive` option per credential group the
+     shipped adapters draw from — derived, not restated, so a new credentialled
+     provider fails the suite until the plugin offers it — and asks for the
+     abuse.ch key once. No option is `required` and none has a `default`: an
+     analyst with one key, or none, gets a server that starts and reports the
+     rest `not_configured`. An unset option substitutes to the empty string,
+     which the loader already treats as absent, so no boundary change was
+     needed and no plugin-specific store, loader or repository exists.
+
+168. **The setup step a client is told is the one that applies, and it fits the
+     host.** `TI_RECON_CREDENTIAL_SETUP` selects `LocalCredentialSetup`:
+     `environment` (default, unchanged) or `claude-plugin`, whose instructions
+     and `provider_status` description say a credential is entered in the
+     plugin's configuration and never advise an environment variable the
+     plugin's mapping would overwrite. An unrecognised value refuses to start,
+     on stderr, without echoing it. Claude Code truncates `instructions` to
+     2048 characters, and the deployment sentence is last in every profile, so
+     each complete profile is held under that limit by a test.
+
+169. **The committed launcher fails closed and has one target.** It execs
+     `${CLAUDE_PLUGIN_ROOT}/runtime/bin/ti-recon-mcp` if present and otherwise
+     exits 1 with one line on stderr and nothing on stdout. No environment
+     override, no `PATH` search, no development mode: the developer proof is a
+     separately generated copy carrying a NON-DISTRIBUTABLE marker, an absolute
+     path and a `NON_DISTRIBUTABLE` file, and a test asserts the committed
+     plugin carries none of them.
+
+170. **The Skill has one canonical source.** `.claude/skills/ti-recon-analyst/`
+     is canonical; the plugin's copy is byte-identical, regenerated by
+     `tools/sync_plugin_skill.py`, never edited, never a symlink, and a test
+     fails on drift in either direction.
+
 153. **The gate is a raw ASGI wrapper, and lifespan ownership does not move.**
      Not a `Mount`: lifespan events pass through unexamined to the SDK
      application, which keeps owning the Streamable HTTP session manager —
@@ -2182,6 +2253,11 @@ src/ti_recon/
   cli/               Task 20: the `ti-recon` command. parser (argparse; no
                      credential or provider flags), main (streams, exit codes),
                      runtime (the one composition root a local invocation uses)
+plugins/ti-recon/    Task 23: the Claude Code plugin. .claude-plugin/plugin.json
+                     (manifest, userConfig), .mcp.json (the stdio server and its
+                     environment mapping), bin/ti-recon-mcp (fail-closed
+                     launcher), skills/ti-recon-analyst (byte-identical copy of
+                     the project Skill). No runtime is bundled yet
   investigation/     Task 19: end-to-end orchestration. models (request, round,
                      stop reasons, directives, workflow version), analysis (the
                      one Task 15-18 pass), continuation (readiness -> capability
@@ -2231,12 +2307,15 @@ src/ti_recon/data/   Task 11: the pinned MISP warninglist snapshot (manifest +
                      and an installed wheel all find it. Refreshed only by
                      tools/, never at runtime; the packaged copy is an immutable
                      baseline and `snapshot_root` overrides it
-tools/               Task 11: operator scripts. update_misp_warninglists.py
-                     (build a snapshot from a local checkout; the only code that
-                     runs git), measure_misp_warninglists.py (footprint report)
+tools/               operator scripts. update_misp_warninglists.py (Task 11:
+                     build a snapshot from a local checkout; the only code that
+                     runs git), measure_misp_warninglists.py (footprint report),
+                     sync_plugin_skill.py (Task 23: keep the plugin's Skill copy
+                     identical), build_dev_plugin.py (Task 23: the
+                     NON-DISTRIBUTABLE developer proof plugin)
 docs/                scope, architecture, data model, credentials, provider
                      framework, provider execution, artifacts, sandbox, mcp,
-                     remote-mcp,
+                     remote-mcp, claude-plugin,
                      providers/gti, providers/urlscan, providers/greynoise,
                      providers/censys, providers/threatfox, providers/urlhaus,
                      providers/malwarebazaar, providers/misp-warninglists,
