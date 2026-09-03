@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "ti-recon": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/ti-recon-mcp",
+      "env": {
+        "TI_RECON_CREDENTIAL_SETUP": "claude-plugin",
+        "VIRUSTOTAL_API_KEY": "${user_config.virustotal_api_key}",
+        "URLSCAN_API_KEY": "${user_config.urlscan_api_key}",
+        "GREYNOISE_API_KEY": "${user_config.greynoise_api_key}",
+        "CENSYS_PAT": "${user_config.censys_pat}",
+        "ABUSECH_AUTH_KEY": "${user_config.abusech_auth_key}",
+        "HYBRID_ANALYSIS_API_KEY": "${user_config.hybrid_analysis_api_key}",
+        "CENSYS_ORGANIZATION_ID": "${user_config.censys_organization_id}"
+      }
+    }
+  }
+}

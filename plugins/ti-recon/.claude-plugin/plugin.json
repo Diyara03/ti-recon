@@ -1,0 +1,52 @@
+{
+  "name": "ti-recon",
+  "version": "0.1.0",
+  "description": "Passive external threat-intelligence investigation of URLs, domains, IP addresses, file hashes and user-selected local files, with each analyst's own provider credentials. Bundles the local TI Recon MCP server and the TI Recon analyst Skill.",
+  "author": {
+    "name": "TI Recon"
+  },
+  "keywords": ["threat-intelligence", "security", "soc", "ioc", "mcp"],
+  "userConfig": {
+    "virustotal_api_key": {
+      "type": "string",
+      "title": "Google TI / VirusTotal API key",
+      "description": "Optional. Enables Google Threat Intelligence. Leave empty if you do not have one: the source is then reported as not_configured and is never asked.",
+      "sensitive": true
+    },
+    "urlscan_api_key": {
+      "type": "string",
+      "title": "urlscan.io API key",
+      "description": "Optional. Enables urlscan.io passive web intelligence. Leave empty if you do not have one.",
+      "sensitive": true
+    },
+    "greynoise_api_key": {
+      "type": "string",
+      "title": "GreyNoise API key",
+      "description": "Optional. Enables GreyNoise internet-scanner context for IPv4 addresses. Leave empty if you do not have one.",
+      "sensitive": true
+    },
+    "censys_pat": {
+      "type": "string",
+      "title": "Censys personal access token (PAT)",
+      "description": "Optional. Enables Censys Platform exposure context. This is the Platform API v3 personal access token, not the older API ID / secret pair. Leave empty if you do not have one.",
+      "sensitive": true
+    },
+    "abusech_auth_key": {
+      "type": "string",
+      "title": "abuse.ch Auth-Key",
+      "description": "Optional. One key enables all three abuse.ch sources: ThreatFox, URLhaus and MalwareBazaar. Leave empty if you do not have one.",
+      "sensitive": true
+    },
+    "hybrid_analysis_api_key": {
+      "type": "string",
+      "title": "Hybrid Analysis API key",
+      "description": "Optional. Enables passive lookup of existing Hybrid Analysis sandbox reports by file hash. Nothing is ever submitted or detonated. Leave empty if you do not have one.",
+      "sensitive": true
+    },
+    "censys_organization_id": {
+      "type": "string",
+      "title": "Censys organization ID (optional)",
+      "description": "Not a secret. Only for Censys organization accounts: selects the organization credit endpoint. Leave empty for a personal Censys account or if Censys is not configured."
+    }
+  }
+}

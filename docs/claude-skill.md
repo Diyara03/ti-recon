@@ -163,8 +163,10 @@ credential was present when the server started — **not** that it is valid,
 authenticated or healthy.
 
 The Skill never asks anyone to paste a key into the conversation. When a source
-is missing it points at the local configuration and notes that the MCP server
-must be reconnected afterwards, because configuration is read at startup.
+is missing it points at the local setup step the server's instructions name —
+the documented environment variables, or the plugin's configuration when TI
+Recon runs as the Claude Code plugin — and notes that the MCP server must be
+reconnected afterwards, because configuration is read at startup.
 
 ## How it is distributed
 
@@ -172,6 +174,12 @@ The Skill is a **project** asset: a user gets it by working in this repository.
 It is tracked source, so it ships inside the sdist — but **installing the Python
 wheel does not install it**. The wheel carries the MCP server and the CLI;
 `.claude/skills/` is not Python and pip puts nothing where Claude Code looks.
+
+**The plugin carries it.** `plugins/ti-recon/skills/ti-recon-analyst/` is a
+byte-identical copy of this Skill, because Claude Code copies an installed
+plugin into its cache and loads only what is inside it. This directory stays
+canonical; the copy is regenerated with `tools/sync_plugin_skill.py --write`,
+and a test fails on drift. See [`claude-plugin.md`](claude-plugin.md).
 
 To use it across all your projects, copy it into your personal skills directory:
 
