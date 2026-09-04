@@ -369,11 +369,20 @@ Data-quality problems, recorded rather than swallowed:
 | Issue | Meaning |
 |---|---|
 | `FILE_HASH_CONFLICT` | weak hash matched, stronger one disagreed |
-| `INVALID_RELATED_OBJECT` | an object could not be turned into a node |
+| `INVALID_RELATED_OBJECT` | an object could not be turned into a node, including one whose canonical key exceeds `MAX_NODE_KEY_LENGTH` |
 | `DANGLING_RELATIONSHIP` | a relationship referenced an absent object |
 | `UNKNOWN_RELATIONSHIP` | no canonical definition for this type |
 | `ENDPOINT_TYPE_MISMATCH` | the endpoints do not fit the relationship |
 | `GRAPH_LIMIT_REACHED` | a ceiling stopped the graph growing |
+
+A related object the graph will not hold costs one node, never the run
+(Task 24). A provider can return a contacted URL of any length and a node key is
+the whole canonical value, so a live DEEP lookup once ended a whole
+investigation on the model's own length validation. The engine now checks the
+bound before building the node: the object is refused with one
+`INVALID_RELATED_OBJECT` that echoes neither key nor value, and every
+relationship naming it is dropped with it rather than reported as dangling —
+the object was refused, not absent.
 
 These are deliberately **not** `EvidenceConflict`, which relates two pieces of
 intelligence that disagree about the world. An MD5 collision or a malformed

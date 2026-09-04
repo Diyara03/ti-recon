@@ -194,6 +194,31 @@ Implemented (Jira Tasks 1-19):
   and the floor is not weakened to reach it. See `docs/claude-plugin.md` and
   `docs/claude-plugin-pilot-checklist.md`.
 
+- Task 24 Phase 1 — GTI evidence quality and known-malware underclassification.
+  Reconstructed live: a sample every GTI sandbox called malicious reached
+  fusion carrying only an aggregated detection count, because
+  `sandbox_verdicts` was never normalized, the behaviour summary's own
+  `verdicts` were context only, a `FILE_BEHAVIOR`-only request below DEEP
+  re-fetched the primary object and mis-credited behaviour coverage, and
+  fusion recognised compatible propositions only across independence groups.
+  Fixed at the earliest boundary each time: `gti.sandbox_verdicts` (one record
+  per response, never `SUPPORTS_BENIGN`), `gti.behavior.verdict` with a closed
+  verdict-strength table and bounded highlights, a `NOT_SUPPORTED` refusal
+  (`GTI_FILE_BEHAVIOR_REQUIRES_DEEP`), exact translator entries for the five
+  `gti.threat_association.*` claim types a live DEEP run surfaced unmapped, the
+  `malicious.single_origin_compatible_propositions.v1` verdict rule at MEDIUM,
+  `highlights` carried through claims to the report, and a correlation graph
+  that refuses an over-long related object instead of ending the run.
+  `FUSION_POLICY_VERSION` and `CLAIM_SEMANTICS_POLICY_VERSION` are `1.1.0`.
+  Live, with only GTI and MISP configured: EICAR stays LIKELY_BENIGN (now
+  MEDIUM), the known ransomware sample is SUSPICIOUS with a real sandbox basis
+  at STANDARD and DEEP; MALICIOUS there needs `gti_assessment` (a GTI
+  entitlement this account lacks) or an independent second family. Open
+  decisions, not omissions: whether a curated family attribution may
+  corroborate a same-origin sandbox verdict; a claim-level sandbox
+  execution-quality signal. See `docs/providers/gti.md` §7a and §12,
+  `docs/reasoning/evidence-fusion.md` §6.
+
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Task 13 chooses what
 to ask, Task 14 assembles what came back, Task 15 says what each finding means in
@@ -1054,8 +1079,8 @@ about it.
     `assessment_id` incorporate `Evidence.id`, so re-running fusion over stored
     evidence reproduces them exactly while a fresh collection of the same
     intelligence does not — the cross-run identity is the proposition
-    (`subject + semantic + scope`). `FUSION_POLICY_VERSION` 1.0.0 is the first
-    finalized policy; once a version has shipped or assessments are persisted
+    (`subject + semantic + scope`). `FUSION_POLICY_VERSION` 1.1.0 (Task 24)
+    succeeds 1.0.0, the first finalized policy; once a version has shipped or assessments are persisted
     under it, any behavioural change to claim mapping, claim strength,
     compatibility, independence, verdict rules or confidence rules requires an
     explicit review and bump, because the version is what distinguishes the
@@ -1989,6 +2014,71 @@ about it.
      answers, so no other test in that file can be passing because a fixture
      started something a real ASGI server would not.
 
+
+173. **A provider's sandbox block is one record, and a sandbox's negative is
+     never benign.** GTI's `sandbox_verdicts` — several sandboxes run by one
+     provider — becomes one `gti.sandbox_verdicts` evidence record whose
+     `verdict` is the strongest category present; `malicious` and `suspicious`
+     support malicious as a `CURATED_THREAT_ASSERTION`, `harmless` and
+     `undetected` are `CONTEXT_ONLY`, and nothing maps to `SUPPORTS_BENIGN`.
+     Divergence is recorded beside the verdict, never resolved. Several
+     sandboxes, fields or reports from one family are never independent
+     sources: `google_ti` stays one origin however many sandboxes it ran.
+
+174. **A verdict is a claim; activity is not.** The behaviour summary's own
+     `verdicts` list is read through a closed strength table
+     (`BEHAVIOR_VERDICT_STRENGTH`): a named malware class is asserted, a
+     greyware or suspicious class is suspected, and an unknown word leaves the
+     record context only. Process, registry, network and ATT&CK activity
+     without a verdict is never directional and never decisive — a test asserts
+     it. A directional behaviour record carries bounded `highlights` (Sigma
+     titles, technique ids, signature names) so a report can say why without
+     reproducing a sandbox report.
+
+175. **A depth-gated capability asked for below its depth is refused, not
+     answered with the wrong document.** A `FILE_BEHAVIOR`-only request below
+     DEEP returns `NOT_SUPPORTED` with `GTI_FILE_BEHAVIOR_REQUIRES_DEEP` and
+     makes no request. Re-fetching the primary object instead duplicated
+     reputation evidence and let coverage credit a check that never happened.
+     A bundled request naming behaviour beside other capabilities is still
+     answered for the others; the planner never bundles an elevated-cost
+     capability, so the refusal never hides a real answer.
+
+176. **One origin may corroborate itself only across compatible propositions,
+     and only to MEDIUM.** `malicious.single_origin_compatible_propositions.v1`
+     needs two unexplained, exact-scope, asserted, corroborative claims of
+     different but compatible semantics from one independence component —
+     what the object *is* and what it *did*. A hedged claim, an aggregate,
+     host scope, an unclassified basis or the same semantic twice does not
+     qualify, so this is never "one source equals malicious": a sandbox
+     verdict alone stays SUSPICIOUS. Confidence is
+     `medium.single_origin_compatible_propositions.v1`, never HIGH, and a
+     specific Task 16 explanation of either claim dissolves the pair.
+
+177. **Every claim type a provider can emit at any depth is mapped or refused
+     on purpose.** The semantic-coverage regression drives the real adapters
+     at DEEP over a fake client, because relationship pages are fetched rather
+     than inlined and a normalize-only fixture never saw them — which is how
+     five `gti.threat_association.*` claim types reached a live assessment as
+     `UNCLASSIFIED_DIRECTIONAL`. The expected set is derived from the spec
+     table, so a new threat-object relationship fails the suite until somebody
+     decides what its claim means. An attribution is asserted; a report mention
+     or a plain collection membership is suspected; none is decisive.
+
+178. **A related object the graph cannot hold costs one node, never the
+     investigation.** A provider can return a contacted URL of any length and a
+     node key is the whole canonical value, so the engine checks
+     `MAX_NODE_KEY_LENGTH` before building the node: one
+     `INVALID_RELATED_OBJECT` that echoes neither key nor value, and every
+     relationship naming the object dropped with it rather than reported as
+     dangling. A model validation error is a software fault; a long URL from a
+     third party is data.
+
+179. **Highlights are quotation, never weight.** A claim's `highlights` are at
+     most eight bounded lines built from named attributes — the source's own
+     words about its own claim. Fusion never reads them, the report copies
+     them, the text renderer neutralises them like every other provider
+     string, and a claim without any is weighed exactly the same.
 
 ## Security rules
 

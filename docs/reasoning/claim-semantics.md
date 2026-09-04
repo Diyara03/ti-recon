@@ -102,6 +102,10 @@ structured fields.
 | GTI | `gti_analysis_stats` | `AGGREGATED_REPUTATION` |
 | GTI | `gti.threat_actor_association` and siblings | `THREAT_ACTOR_ASSOCIATION` |
 | GTI | `gti.sandbox_verdict.malicious` | `SANDBOX_CLASSIFICATION` |
+| GTI | `gti.sandbox_verdicts`, verdict `malicious` / `suspicious` | `SANDBOX_CLASSIFICATION` (asserted / suspected) |
+| GTI | `gti.behavior.verdict`, verdict `asserted` / `suspected` | `SANDBOX_CLASSIFICATION` (asserted / suspected) |
+| GTI | `gti.threat_association.malware-families`, `.related-threat-actors`, `.campaigns` | `THREAT_ACTOR_ASSOCIATION` |
+| GTI | `gti.threat_association.related-reports`, `.associations` | `THREAT_ACTOR_ASSOCIATION` (suspected) |
 | GTI | `gti.analyst_determination.*`, `gti.legitimate_software` | `MALICIOUS_`/`BENIGN_REPUTATION` |
 | urlscan | `urlscan_verdict` | `MALICIOUS_REPUTATION` |
 | urlscan | `urlscan_engine_aggregate`, `urlscan_community_votes` | `AGGREGATED_REPUTATION` |
@@ -149,5 +153,11 @@ Everything else corroborates only itself. In particular:
 
 `CLAIM_SEMANTICS_POLICY_VERSION` is folded into every claim id, so a translation
 change produces different claims rather than silently reinterpreting stored ones.
+It is `1.1.0` as of Task 24, which added the GTI rows above.
+
+A claim may carry bounded **`highlights`** (Task 24): at most eight lines of at
+most 160 characters, built from named attributes only — the source's own words
+about its own claim, for the report to quote. They are presentation: fusion
+never reads them, and a claim without any weighs exactly the same.
 
 See [evidence-fusion.md](evidence-fusion.md) for what fusion does with these.

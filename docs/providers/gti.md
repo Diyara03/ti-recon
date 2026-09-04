@@ -204,6 +204,42 @@ evidence would be a guess with real consequences.
 
 Every factor points at its parent assessment through `upstream_evidence_refs`.
 
+`malicious_sandbox_verdict` is `CURATED_THREAT_ASSERTION`, not
+`DIRECT_OBSERVATION` (Task 24). It is a boolean on GTI's own assessment rather
+than a report of what a sandbox watched, and only a curated assertion can be
+accounted for by Task 16's test-artifact explanation — which is what keeps an
+EICAR file at LIKELY_BENIGN when every scanner and sandbox flags it.
+
+## 7a. `sandbox_verdicts` (Task 24)
+
+`sandbox_verdicts` is a public file attribute — one entry per sandbox that ran
+the sample, each with `category` (`malicious`, `suspicious`, `harmless`,
+`undetected`), `confidence`, `malware_classification`, `malware_names` and
+`sandbox_name`. It was never normalized before Task 24, which is how a sample
+seven sandboxes had called malicious reached fusion carrying nothing firmer than
+an aggregated detection count.
+
+The block becomes **one** evidence record, `gti.sandbox_verdicts`, never one per
+sandbox: several sandboxes run by one provider are one source (invariant 36).
+
+```
+verdict                 strongest category present: malicious > suspicious > harmless > undetected
+sandbox_count, malicious_count, suspicious_count, harmless_count, undetected_count
+divergent               malicious and harmless both present
+sandboxes[≤10]          {sandbox_name, category, confidence, malware_classification[≤5], malware_names[≤5]}
+malware_classification  sorted union across sandboxes, ≤5
+sandboxes_omitted       how many entries the ceiling dropped
+```
+
+`malicious` and `suspicious` are `SUPPORTS_MALICIOUS` on a
+`CURATED_THREAT_ASSERTION`; `harmless` and `undetected` are `CONTEXT_ONLY` on
+`CONTEXT` — never `SUPPORTS_BENIGN` (invariant 34). `provider_confidence` is
+the highest confidence among the sandboxes that stated the chosen verdict.
+There is no `last_seen`, because the block carries no time. An unreadable
+block produces `GTI_SANDBOX_VERDICTS_UNREADABLE` and a degraded result rather
+than an exception. The Task 17 translator reads `verdict` for strength —
+`malicious` asserted, `suspicious` suspected, anything else suspected.
+
 ## 8. Top-level `threat_severity`
 
 GTI also returns a top-level `threat_severity` block, separate from the
@@ -405,6 +441,16 @@ first-class object types to hold a GTI identifier would be a data-model decision
 made for one integration's convenience, and it loses nothing an analyst needs to
 keep them as claims. Full threat-object modelling belongs to a later task.
 
+Every association claim type has an exact entry in the Task 17 translator
+(`docs/reasoning/claim-semantics.md`), after a live DEEP lookup surfaced them as
+`UNCLASSIFIED_DIRECTIONAL` (Task 24): a family, actor or campaign attribution is
+asserted; a report relationship and the generic `associations` collection are
+hedged, because a report can discuss a decoy and a collection can hold whatever
+its author gathered. None of them corroborates a sandbox or reputation verdict
+from the same origin — that compatibility is a deliberate open decision, not an
+omission. The file DEEP plan lists eleven relationships and fetches ten, so
+`campaigns` is never reached for a file today.
+
 ## 12. File behaviour (DEEP only)
 
 Sandbox behaviour requires three conditions at once: the observable is a **file**,
@@ -422,13 +468,36 @@ dns_lookups        -> domain objects, CONTACTS
 ip_traffic         -> address objects, CONTACTS
 http_conversations -> url objects, CONTACTS
 files_dropped      -> file objects, DROPS
-tags / verdicts / calls_highlighted -> one bounded context claim
+verdicts / verdict_confidence / sigma / MITRE / signature_matches
+                   -> one bounded verdict claim, gti.behavior.verdict (Task 24)
+tags / calls_highlighted / processes / attack techniques
+                   -> one bounded context claim, gti.behavior.summary
 ```
 
-Behaviour evidence is `DIRECT_OBSERVATION` — something genuinely watched it
-happen — but stays `CONTEXT_ONLY`. Contacting a domain during detonation is a
+Contact and drop evidence is `DIRECT_OBSERVATION` — something genuinely watched
+it happen — and stays `CONTEXT_ONLY`. Contacting a domain during detonation is a
 fact about behaviour; deciding what it means about the sample belongs to fusion.
-A test asserts behaviour alone produces no malicious-leaning evidence.
+
+**The summary's own verdict is a claim; raw activity is not.**
+`gti.behavior.verdict` reads the summary's `verdicts` list through
+`BEHAVIOR_VERDICT_STRENGTH`: MALWARE, RANSOM, TROJAN, BACKDOOR, STEALER,
+SPYWARE, WORM, BOT, MINER and PHISHING are *asserted*; SUSPICIOUS, GREYWARE,
+ADWARE and PUA are *suspected*; anything else lands in `unmapped_verdicts` and
+the record stays `CONTEXT_ONLY`. A directional record is a
+`CURATED_THREAT_ASSERTION` with `SUPPORTS_MALICIOUS`, carries
+`verdict_confidence` verbatim, and carries up to eight bounded `highlights` —
+critical and high Sigma rule titles, MITRE technique ids with severity and
+description, signature names — so a report can say *why* without reproducing a
+sandbox report. Process, registry, network and ATT&CK activity without a verdict
+remains context, and a test asserts it: activity alone is never decisive.
+
+**A `FILE_BEHAVIOR`-only request below DEEP is refused, not answered with the
+wrong document.** Before Task 24 the adapter fetched the primary object again,
+re-emitted its reputation evidence and let Task 13 credit behaviour coverage
+nothing had looked at. It now returns `NOT_SUPPORTED` with
+`GTI_FILE_BEHAVIOR_REQUIRES_DEEP` and makes no request, so Task 18 records the
+capability as out of scope for that depth. A bundled request naming behaviour
+beside other capabilities is still answered for the others.
 
 ## 13. Quota
 

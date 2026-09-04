@@ -61,7 +61,11 @@ ready to close, or safe.
 
 **`assessment_basis`** — the claims the verdict rested on, with the role the
 engine gave each. This is "why", and the only thing that belongs under that
-heading.
+heading. An item may carry `highlights`: the source's own bounded words about
+its claim (a sandbox verdict and classification, a Sigma rule title, a MITRE
+technique, a named family). Quote them as what that source said. They are
+presentation and carry no weight of their own — an item without highlights
+weighs exactly the same as one with eight.
 
 **`opposing_evidence`** — claims that pushed the other way and did not prevail.
 Real, and shown separately. Putting them under "why" would read as though a
