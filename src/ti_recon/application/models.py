@@ -23,6 +23,7 @@ from pydantic import Field, model_validator
 
 from ti_recon.correlation.policy import PivotMode
 from ti_recon.enums import InvestigationDepth
+from ti_recon.investigation.models import InvestigationObjective
 from ti_recon.models.base import FrozenTiReconModel
 
 __all__ = ["MAX_OBSERVABLE_INPUT", "AnalystInvestigationRequest", "ObservableInputType"]
@@ -87,6 +88,18 @@ class AnalystInvestigationRequest(FrozenTiReconModel):
     #: and credential-bearing targets, and Task 13's provider selection all
     #: apply exactly as before.
     allow_remote_pivot_lookup: bool = False
+
+    #: What the collection stops on (Task 24 Phase 2).
+    #:
+    #: ``triage`` -- the default and every existing caller's behaviour -- stops
+    #: when readiness says coverage is adequate for triage. ``corroborate``
+    #: asks for at most one more round after that point: an adverse search
+    #: from a source family independent of the ones the assessment rests on,
+    #: if one is eligible and the budget permits. It adds no capability, raises
+    #: no depth, names no provider and repeats no call. It is the structured
+    #: form of an analyst saying "confirm this with another source"; the
+    #: engine never infers it from a verdict.
+    objective: InvestigationObjective = InvestigationObjective.TRIAGE
 
     @model_validator(mode="after")
     def _validate_request(self) -> AnalystInvestigationRequest:

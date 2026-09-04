@@ -134,6 +134,7 @@ def build_analyst_report(result: InvestigationResult) -> AnalystInvestigationRep
             depth=result.requested_depth,
             pivot_mode=result.pivot_mode,
             allow_remote_pivot_lookup=result.allow_remote_pivot_lookup,
+            objective=result.objective,
         ),
         assessment=AssessmentSummary(
             verdict=assessment.verdict,

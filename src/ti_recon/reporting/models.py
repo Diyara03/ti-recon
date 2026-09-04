@@ -144,6 +144,20 @@ class RequestSummary(FrozenTiReconModel):
     #: related observables were merely graphed or were themselves sent to third
     #: parties, and that is not inferable from ``pivot_mode`` alone.
     allow_remote_pivot_lookup: bool = False
+    #: What the caller asked the collection to stop on.
+    objective: str = Field(
+        default="triage",
+        min_length=1,
+        max_length=32,
+        description=(
+            "The caller's stopping objective: triage stops when coverage is "
+            "adequate for triage; corroborate spent at most one extra round "
+            "seeking an adverse search from a source family independent of the "
+            "assessment's basis, if one was eligible and affordable. Records "
+            "what was asked for, never whether corroboration was obtained -- "
+            "source_checks and the assessment say that."
+        ),
+    )
 
 
 class AssessmentSummary(FrozenTiReconModel):
