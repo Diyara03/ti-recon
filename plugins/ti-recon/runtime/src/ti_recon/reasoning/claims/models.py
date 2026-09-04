@@ -154,10 +154,12 @@ class ClaimQualification(StrEnum):
     #: The translator made no statement. The claim is weighed as its semantic,
     #: scope and strength alone allow.
     UNQUALIFIED = "unqualified"
-    #: The source's own record met the provider's documented consensus test:
-    #: enough independent evaluations, agreement, no contrary verdict, and
-    #: adequate stated confidence. May let a semantic that is otherwise only
-    #: corroborative decide alone.
+    #: The source's own record met TI Recon's versioned consensus test for
+    #: that provider -- owned by the provider package because it reads the
+    #: provider's documented fields, never a threshold the vendor defined:
+    #: enough evaluations, agreement, no contrary verdict, and adequate stated
+    #: confidence. May let a semantic that is otherwise only corroborative
+    #: decide alone.
     STRONG_DIRECT = "strong_direct"
     #: The record was tested and did not meet it -- too few evaluations,
     #: disagreement, a contrary verdict or insufficient confidence. The

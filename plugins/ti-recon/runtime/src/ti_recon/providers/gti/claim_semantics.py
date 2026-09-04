@@ -264,9 +264,15 @@ def _confidence_summary(attributes: Mapping[str, object]) -> str:
         attributes.get("malicious_confidence_min"),
         attributes.get("malicious_confidence_max"),
     )
-    if isinstance(low, int) and isinstance(high, int):
-        summary += f" (stated range {low}-{high})"
+    if _is_number(low) and _is_number(high):
+        # The normalizer stores confidences as floats; render them as GTI
+        # states them, integers on a 0-100 scale.
+        summary += f" (stated range {low:g}-{high:g})"
     return summary
+
+
+def _is_number(value: object) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
 
 
 def _count(attributes: Mapping[str, object], name: str) -> int:
