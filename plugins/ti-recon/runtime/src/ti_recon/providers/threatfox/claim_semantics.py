@@ -48,8 +48,9 @@ _HASH_CLAIM: Final[str] = "threatfox_hash_association"
 #: For an address the record that matched is an ``ip:port`` IOC, and the
 #: report has to be able to say so: which IOC matched, that it matched the
 #: *host* component, which port, what ThreatFox called the threat and the
-#: family. ``confidence_level`` is the contributor's own number, quoted and
-#: never weighed (invariant 94b).
+#: family. ``confidence_level`` is deliberately absent: the contributor's own
+#: number stays provider data and reaches no claim in any form (invariant
+#: 94b), and a regression asserts the serialized claim never carries it.
 HIGHLIGHT_ATTRIBUTES: Final[dict[str, tuple[str, ...]]] = {
     _IOC_CLAIM: (
         "ioc",
@@ -58,7 +59,6 @@ HIGHLIGHT_ATTRIBUTES: Final[dict[str, tuple[str, ...]]] = {
         "port",
         "threat_type",
         "malware_printable",
-        "confidence_level",
         "is_compromised",
     ),
     _HASH_CLAIM: ("malware_printable", "threat_type", "matched_records"),

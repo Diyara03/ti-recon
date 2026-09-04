@@ -33,3 +33,5 @@ def test_a_port_qualified_match_is_quoted_as_the_ioc_it_matched() -> None:
     assert any(item.startswith("port: ") for item in highlights)
     assert any(item.startswith("threat_type: ") for item in highlights)
     assert len(highlights) <= 8
+    # The contributor's confidence stays provider data: never on the claim.
+    assert not any("confidence" in item for item in highlights)
