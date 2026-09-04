@@ -286,10 +286,18 @@ class GraphEdge(FrozenTiReconModel):
         return max(present) if present else None
 
 
+#: The longest canonical key a node may carry. A key is derived from an
+#: observable's canonical value, and a provider can return a related URL of any
+#: length: one beyond this bound is refused as an ``INVALID_RELATED_OBJECT``
+#: rather than rejected by the model, so a single over-long related object costs
+#: one node and never the investigation.
+MAX_NODE_KEY_LENGTH = 300
+
+
 class GraphNode(FrozenTiReconModel):
     """One object in the investigation graph."""
 
-    node_key: str = Field(min_length=1, max_length=300)
+    node_key: str = Field(min_length=1, max_length=MAX_NODE_KEY_LENGTH)
     intel_object: IntelObject
     #: Confirmed alternate identities for this node — today, a file's other
     #: digests. Only ever grown with non-conflicting values.

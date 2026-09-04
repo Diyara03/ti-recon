@@ -33,6 +33,7 @@ __all__ = [
     "ClaimTranslationContext",
     "ClaimTranslator",
     "directional_evidence",
+    "highlights_from",
     "is_unresolved_subject",
 ]
 
@@ -136,6 +137,44 @@ def directional_evidence(envelope: ProviderResultEnvelope) -> tuple[Evidence, ..
     return tuple(
         item for item in envelope.evidence if item.effect is not EvidenceEffect.CONTEXT_ONLY
     )
+
+
+def highlights_from(attributes: Mapping[str, Any], names: tuple[str, ...]) -> tuple[str, ...]:
+    """Bounded ``name: value`` lines for the attributes a translator names.
+
+    The translator decides *which* attributes matter -- that is provider
+    knowledge -- and this decides only how they are rendered: scalars and short
+    lists become one line each, a list attribute named ``highlights`` is
+    spliced in as the lines it already is, mappings and long text are cut at
+    the bound. Nothing is interpreted.
+    """
+    from ti_recon.reasoning.claims.models import (
+        MAX_CLAIM_HIGHLIGHT_LENGTH,
+        MAX_CLAIM_HIGHLIGHTS,
+    )
+
+    lines: list[str] = []
+    for name in names:
+        value = attributes.get(name)
+        if value is None or value == "" or value == [] or value == {}:
+            continue
+        if name == "highlights" and isinstance(value, list):
+            lines.extend(str(item) for item in value if isinstance(item, str))
+            continue
+        if isinstance(value, list):
+            rendered = ", ".join(str(item) for item in value[:MAX_CLAIM_HIGHLIGHTS])
+        elif isinstance(value, Mapping):
+            rendered = ", ".join(f"{k}={v}" for k, v in list(value.items())[:MAX_CLAIM_HIGHLIGHTS])
+        else:
+            rendered = str(value)
+        lines.append(f"{name}: {rendered}")
+    return tuple(
+        _one_line(item)[:MAX_CLAIM_HIGHLIGHT_LENGTH] for item in lines[:MAX_CLAIM_HIGHLIGHTS]
+    )
+
+
+def _one_line(value: str) -> str:
+    return "".join(ch for ch in value if ch.isprintable() and ch not in "\r\n")
 
 
 def text_attribute(attributes: Mapping[str, Any], name: str) -> str | None:

@@ -26,6 +26,7 @@ re-reading a timestamp.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Final
 
 from ti_recon.providers.result import ProviderResultEnvelope
@@ -38,10 +39,18 @@ from ti_recon.reasoning.claims.models import (
 from ti_recon.reasoning.claims.translation import (
     ClaimTranslationContext,
     directional_evidence,
+    highlights_from,
     text_attribute,
 )
 
-__all__ = ["CLAIM_SEMANTICS", "VERDICT_SEMANTICS", "translate"]
+__all__ = [
+    "ASSOCIATION_STRENGTHS",
+    "CLAIM_SEMANTICS",
+    "HIGHLIGHT_ATTRIBUTES",
+    "SANDBOX_VERDICT_STRENGTHS",
+    "VERDICT_SEMANTICS",
+    "translate",
+]
 
 #: GTI's own assessment verdicts, mapped to propositions.
 #:
@@ -69,8 +78,21 @@ CLAIM_SEMANTICS: Final[dict[str, ClaimSemantic]] = {
     "gti.threat_report_association": ClaimSemantic.THREAT_ACTOR_ASSOCIATION,
     "gti.malware_association": ClaimSemantic.THREAT_ACTOR_ASSOCIATION,
     "gti.osint_association": ClaimSemantic.THREAT_ACTOR_ASSOCIATION,
-    # Behaviour GTI watched rather than a record it holds.
+    # A sandbox's classification of what it watched -- the assessment's own
+    # boolean factor, the file-level per-sandbox verdicts, and the behaviour
+    # summary's aggregated verdict. Three records of one proposition from one
+    # origin: fusion sees one claim, never three corroborations.
     "gti.sandbox_verdict.malicious": ClaimSemantic.SANDBOX_CLASSIFICATION,
+    "gti.sandbox_verdicts": ClaimSemantic.SANDBOX_CLASSIFICATION,
+    "gti.behavior.verdict": ClaimSemantic.SANDBOX_CLASSIFICATION,
+    # Curated association relationships (Task 7 §11), one exact claim type per
+    # relationship the normalizer emits. They surface only at DEEP, which is why
+    # a STANDARD-only fixture never showed them unmapped.
+    "gti.threat_association.malware-families": ClaimSemantic.THREAT_ACTOR_ASSOCIATION,
+    "gti.threat_association.related-threat-actors": ClaimSemantic.THREAT_ACTOR_ASSOCIATION,
+    "gti.threat_association.campaigns": ClaimSemantic.THREAT_ACTOR_ASSOCIATION,
+    "gti.threat_association.related-reports": ClaimSemantic.THREAT_ACTOR_ASSOCIATION,
+    "gti.threat_association.associations": ClaimSemantic.THREAT_ACTOR_ASSOCIATION,
     # Detections and infrastructure findings about the object.
     "gti.yara_match.malicious": ClaimSemantic.MALICIOUS_REPUTATION,
     "gti.dtm_alert": ClaimSemantic.MALICIOUS_REPUTATION,
@@ -78,6 +100,67 @@ CLAIM_SEMANTICS: Final[dict[str, ClaimSemantic]] = {
 }
 
 _ASSESSMENT_CLAIM: Final[str] = "gti_assessment"
+
+#: Claim types whose ``verdict`` attribute states how firmly the sandbox spoke.
+#: ``malicious``/``asserted`` is a firm classification; ``suspicious`` and
+#: ``suspected`` are hedged and stay weak, exactly as a hedged GTI verdict does.
+_SANDBOX_CLAIMS: Final[frozenset[str]] = frozenset({"gti.sandbox_verdicts", "gti.behavior.verdict"})
+
+#: How firmly each curated association asserts threat relevance.
+#:
+#: A family, actor or campaign attribution is GTI stating what this exact object
+#: *is*. A report relationship says a report mentions it, and the generic
+#: ``associations`` relationship says it sits in some collection -- both real,
+#: both hedged: a report can discuss a decoy, and a collection can be anything
+#: its author gathered. A hedged claim is never decisive and never corroborates
+#: on its own.
+ASSOCIATION_STRENGTHS: Final[Mapping[str, ClaimAssertionStrength]] = {
+    "gti.threat_association.malware-families": ClaimAssertionStrength.ASSERTED,
+    "gti.threat_association.related-threat-actors": ClaimAssertionStrength.ASSERTED,
+    "gti.threat_association.campaigns": ClaimAssertionStrength.ASSERTED,
+    "gti.threat_association.related-reports": ClaimAssertionStrength.SUSPECTED,
+    "gti.threat_association.associations": ClaimAssertionStrength.SUSPECTED,
+}
+SANDBOX_VERDICT_STRENGTHS: Final[dict[str, ClaimAssertionStrength]] = {
+    "malicious": ClaimAssertionStrength.ASSERTED,
+    "asserted": ClaimAssertionStrength.ASSERTED,
+    "suspicious": ClaimAssertionStrength.SUSPECTED,
+    "suspected": ClaimAssertionStrength.SUSPECTED,
+}
+
+#: Which of a record's attributes are worth showing beside its claim, per claim
+#: type. Provider knowledge, kept in the provider's package: the report never
+#: reads a GTI attribute name, it prints the lines produced here.
+HIGHLIGHT_ATTRIBUTES: Final[dict[str, tuple[str, ...]]] = {
+    _ASSESSMENT_CLAIM: ("verdict", "severity", "threat_score", "description"),
+    "gti_analysis_stats": ("malicious", "suspicious", "harmless", "undetected"),
+    "gti.sandbox_verdicts": (
+        "verdict",
+        "malware_classification",
+        "malicious_count",
+        "suspicious_count",
+        "harmless_count",
+        "sandbox_count",
+        "divergent",
+    ),
+    "gti.behavior.verdict": ("verdicts", "verdict_confidence", "highlights"),
+    "gti.sandbox_verdict.malicious": ("factor",),
+    "gti.threat_association.malware-families": ("relationship", "gti_collection_type", "name"),
+    "gti.threat_association.related-threat-actors": ("relationship", "gti_collection_type", "name"),
+    "gti.threat_association.campaigns": ("relationship", "gti_collection_type", "name"),
+    "gti.threat_association.related-reports": ("relationship", "gti_collection_type", "name"),
+    "gti.threat_association.associations": ("relationship", "gti_collection_type", "name"),
+    "gti.analyst_determination.malicious": ("factor", "value"),
+    "gti.analyst_determination.benign": ("factor", "value"),
+    "gti.legitimate_software": ("factor", "value"),
+    "gti.threat_actor_association": ("factor", "value"),
+    "gti.threat_report_association": ("factor", "value"),
+    "gti.malware_association": ("factor", "value"),
+    "gti.osint_association": ("factor", "value"),
+    "gti.yara_match.malicious": ("factor", "value"),
+    "gti.dtm_alert": ("factor", "value"),
+    "gti.domain_hijack": ("factor", "value"),
+}
 
 
 def translate(
@@ -96,6 +179,15 @@ def translate(
             semantic = CLAIM_SEMANTICS.get(
                 evidence.claim_type, ClaimSemantic.UNCLASSIFIED_DIRECTIONAL
             )
+            if evidence.claim_type in _SANDBOX_CLAIMS:
+                stated = text_attribute(evidence.attributes, "verdict")
+                # A record whose verdict word this table does not know is a
+                # hedged claim, never a firm one: the conservative direction.
+                strength = SANDBOX_VERDICT_STRENGTHS.get(
+                    stated or "", ClaimAssertionStrength.SUSPECTED
+                )
+            elif evidence.claim_type in ASSOCIATION_STRENGTHS:
+                strength = ASSOCIATION_STRENGTHS[evidence.claim_type]
 
         claims.append(
             claim_from(
@@ -105,6 +197,9 @@ def translate(
                 strength=strength,
                 subject_key=context.subject_key_for(evidence.subject_object_id),
                 source_partial=context.source_partial,
+                highlights=highlights_from(
+                    evidence.attributes, HIGHLIGHT_ATTRIBUTES.get(evidence.claim_type, ())
+                ),
             )
         )
     return tuple(claims)
