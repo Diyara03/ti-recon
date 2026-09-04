@@ -1,26 +1,25 @@
-"""The Claude Code plugin as a distribution artifact (Task 23, Phase 1).
+"""The Claude Code plugin as a distribution artifact (Task 23).
 
 The plugin is a *packaging* of things the repository already has — the local
-MCP server and the analyst Skill — plus the declaration of how an analyst's
-provider credentials reach that server. So what a test can hold is structural:
-the manifest the host reads, the credential mapping it substitutes, the Skill
-copy it carries, and the absence of anything that must not be in a distributed
-directory. Prose is not asserted; the distinctions are.
+MCP server, as a bundled copy of the project, and the analyst Skill — plus the
+declaration of how the host starts the server and how an analyst's provider
+credentials reach it. So what a test can hold is structural: the manifest the
+host reads, the ``uv`` invocation it spawns, the credential mapping it
+substitutes, the two copies it carries, and the absence of anything that must
+not be in a distributed directory. Prose is not asserted; the distinctions are.
 
 Where a check needs the real host, it runs ``claude plugin validate`` and skips
-where the CLI is not installed. The interactive proof — the plugin loaded with
-``--plugin-dir`` and driven through a session — is recorded in
-``docs/claude-plugin.md`` rather than automated, because it needs a model.
+where the CLI is not installed. Provisioning and running the bundled runtime is
+``test_runtime_provisioning.py``'s job.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
-import stat
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -34,19 +33,22 @@ from ti_recon.providers.catalog import build_default_adapters
 
 from .support import (
     CANONICAL_SKILL,
-    LAUNCHER,
+    DATA_PLACEHOLDER,
     MANIFEST,
     MCP_CONFIG,
     PLUGIN,
     PLUGIN_SKILL,
     ROOT,
+    ROOT_PLACEHOLDER,
+    RUNTIME,
     SERVER_NAME,
     env_mapping,
+    every_entry,
+    integration_files,
     load_tool,
     manifest,
     mcp_config,
     option_for,
-    plugin_files,
     server_config,
 )
 
@@ -91,6 +93,9 @@ KNOWN_OPTION_FIELDS = {
 #: The one non-secret option, and the variable it feeds.
 NON_SECRET_OPTIONS = {"censys_organization_id": "CENSYS_ORGANIZATION_ID"}
 
+#: Top-level directories organization-distributed plugins may not contain.
+REJECTED_TOP_LEVEL = {"bin"}
+
 
 def _credentialled_groups() -> set[str]:
     return {
@@ -98,6 +103,11 @@ def _credentialled_groups() -> set[str]:
         for adapter in build_default_adapters()
         if adapter.descriptor.requires_credentials
     }
+
+
+def _runtime_pyproject() -> dict[str, object]:
+    with (RUNTIME / "pyproject.toml").open("rb") as handle:
+        return tomllib.load(handle)
 
 
 # --------------------------------------------------------------------------- #
@@ -111,6 +121,7 @@ def test_the_manifest_lives_where_the_host_looks_and_holds_only_itself() -> None
     assert [path.name for path in (PLUGIN / ".claude-plugin").iterdir()] == ["plugin.json"]
     assert (PLUGIN_SKILL / "SKILL.md").is_file()
     assert MCP_CONFIG.is_file()
+    assert (RUNTIME / "pyproject.toml").is_file()
 
 
 def test_the_manifest_names_the_plugin_and_uses_only_documented_fields() -> None:
@@ -128,9 +139,33 @@ def test_components_are_discovered_from_default_locations() -> None:
     data = manifest()
     for field in ("skills", "commands", "agents", "hooks", "mcpServers", "lspServers"):
         assert field not in data, field
-    assert not (PLUGIN / "hooks").exists()
-    assert not (PLUGIN / "agents").exists()
-    assert not (PLUGIN / "commands").exists()
+    for name in ("hooks", "agents", "commands", "scripts"):
+        assert not (PLUGIN / name).exists(), f"{name}/ exists but nothing needs it"
+
+
+def test_the_plugin_has_no_top_level_directory_enterprise_distribution_rejects() -> None:
+    """Organization-distributed plugins are rejected with a top-level ``bin/``."""
+    top_level = {path.name for path in PLUGIN.iterdir()}
+    assert top_level & REJECTED_TOP_LEVEL == set(), top_level & REJECTED_TOP_LEVEL
+
+
+def test_nothing_in_the_plugin_is_a_symlink() -> None:
+    """The plugin cache copies files; a link out of the tree copies nothing."""
+    links = [path for path in every_entry() if path.is_symlink()]
+    assert links == [], links
+
+
+def test_no_placeholder_path_escapes_the_plugin_root() -> None:
+    """Every ``${CLAUDE_PLUGIN_ROOT}`` reference names something inside the plugin."""
+    server = server_config()
+    for part in [server["command"], *server.get("args", []), *server["env"].values()]:
+        if ROOT_PLACEHOLDER not in part:
+            continue
+        relative = part.split(ROOT_PLACEHOLDER, 1)[1].lstrip("/")
+        assert ".." not in Path(relative).parts, part
+        assert (PLUGIN / relative).exists(), f"{part} names nothing in the plugin"
+    for path, text in integration_files().items():
+        assert "../" not in text, f"{path}: repository-relative reference"
 
 
 # --------------------------------------------------------------------------- #
@@ -169,7 +204,7 @@ def test_the_shared_abusech_key_is_asked_for_once_and_named_for_all_three() -> N
 
 
 def test_non_secret_configuration_is_not_marked_sensitive() -> None:
-    """Secure storage is a shared, bounded budget; only secrets belong there."""
+    """Sensitive plugin storage is a shared, bounded budget; only secrets belong there."""
     options = manifest()["userConfig"]
     mapping = env_mapping()
     for name, variable in NON_SECRET_OPTIONS.items():
@@ -195,7 +230,7 @@ def test_each_option_uses_only_documented_schema_fields() -> None:
 
 
 def test_the_sensitive_footprint_stays_small() -> None:
-    """Secure storage is ~2 KB shared with OAuth tokens.
+    """Sensitive plugin storage is ~2 KB shared with the host's own tokens.
 
     The count is what this layer controls: one sensitive option per credential
     group, no more. Value lengths are the providers' and are estimated in
@@ -206,17 +241,64 @@ def test_the_sensitive_footprint_stays_small() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The MCP server declaration
+# The MCP server declaration: what the host spawns
 # --------------------------------------------------------------------------- #
 
 
-def test_the_plugin_declares_one_stdio_server_started_from_the_bundled_launcher() -> None:
+def test_the_plugin_declares_one_stdio_server_started_directly_through_uv() -> None:
+    """A bare executable name, resolved on PATH, on every platform. No shell."""
     servers = mcp_config()["mcpServers"]
     assert list(servers) == [SERVER_NAME]
     server = server_config()
-    assert server["command"] == "${CLAUDE_PLUGIN_ROOT}/bin/ti-recon-mcp"
+    assert server["command"] == "uv"
     assert "url" not in server, "the plugin is local stdio, never HTTP"
-    assert "args" not in server or server["args"] == []
+    assert server["args"][0] == "run"
+    assert server["args"][-1] == "ti-recon-mcp"
+
+
+def test_the_server_command_is_a_console_script_the_bundled_project_defines() -> None:
+    scripts = _runtime_pyproject()["project"]["scripts"]  # type: ignore[index]
+    assert server_config()["args"][-1] in scripts
+
+
+def test_uv_is_pointed_at_the_bundled_project_and_nowhere_else() -> None:
+    """``--project`` names the runtime under the plugin root, so the working
+    directory — wherever the analyst started Claude Code — plays no part."""
+    args = server_config()["args"]
+    assert "--project" in args
+    assert args[args.index("--project") + 1] == f"{ROOT_PLACEHOLDER}/runtime"
+    assert "--directory" not in args
+
+
+def test_the_invocation_is_locked_lean_and_reads_no_environment_file() -> None:
+    """Exact lock, no dev extras, a real install, and no ``.env`` from the cwd."""
+    args = server_config()["args"]
+    for flag in ("--locked", "--no-dev", "--no-editable", "--no-env-file"):
+        assert flag in args, flag
+    assert "--frozen" not in args, "--locked also refuses a lock that disagrees with pyproject"
+
+
+def test_the_python_request_is_deterministic_and_agrees_everywhere() -> None:
+    """One series, derived from ``requires-python`` and stated three times identically."""
+    sync = load_tool("sync_plugin_runtime")
+    series = sync.python_series()
+    args = server_config()["args"]
+    assert "--python" in args
+    assert args[args.index("--python") + 1] == series
+    assert (RUNTIME / ".python-version").read_text(encoding="utf-8").strip() == series
+    assert series == "3.12"
+
+
+def test_runtime_state_lives_under_plugin_data_and_code_under_plugin_root() -> None:
+    """The root is replaced on every plugin update; the data directory survives it."""
+    server = server_config()
+    environment = server["env"]
+    assert environment["UV_PROJECT_ENVIRONMENT"].startswith(f"{DATA_PLACEHOLDER}/")
+    assert ".." not in environment["UV_PROJECT_ENVIRONMENT"]
+    for part in server["args"]:
+        assert DATA_PLACEHOLDER not in part, "mutable state is never an argument"
+    for value in environment.values():
+        assert ROOT_PLACEHOLDER not in value, "nothing under the versioned root is mutable"
 
 
 def test_the_server_is_told_its_credentials_came_from_the_plugin() -> None:
@@ -233,14 +315,14 @@ def test_options_travel_only_through_the_environment() -> None:
         assert "${user_config" not in arg, arg
 
 
-def test_the_environment_names_only_variables_the_repository_documents() -> None:
+def test_the_environment_names_only_variables_the_repository_documents_or_uv_defines() -> None:
     documented = {
         line.split("=", 1)[0].strip()
         for line in (ROOT / ".env.example").read_text(encoding="utf-8").splitlines()
         if "=" in line and not line.lstrip().startswith("#")
     }
     for variable in server_config()["env"]:
-        assert variable in documented, variable
+        assert variable in documented or variable.startswith("UV_"), variable
 
 
 # --------------------------------------------------------------------------- #
@@ -254,13 +336,12 @@ def test_no_sensitive_value_is_ever_substituted_into_skill_content() -> None:
     So the only safe reference count in Skill content is zero — a future edit
     that pasted one in would put a value into model context.
     """
-    for path, text in plugin_files().items():
-        if path.suffix == ".md":
-            assert "${user_config" not in text, path
+    for path in PLUGIN_SKILL.rglob("*.md"):
+        assert "${user_config" not in path.read_text(encoding="utf-8"), path
 
 
-def test_no_distribution_file_holds_a_secret_shaped_value() -> None:
-    for path, text in plugin_files().items():
+def test_no_integration_file_holds_a_secret_shaped_value() -> None:
+    for path, text in integration_files().items():
         for pattern in (
             r"api[_-]?key\s*[=:]\s*\S{8,}",
             r"auth[_-]?key\s*[=:]\s*\S{8,}",
@@ -272,17 +353,16 @@ def test_no_distribution_file_holds_a_secret_shaped_value() -> None:
         assert "default" not in option or not option.get("sensitive"), name
 
 
-def test_the_committed_plugin_references_no_checkout_and_no_absolute_path() -> None:
+def test_the_plugin_references_no_checkout_home_directory_or_virtual_environment() -> None:
     """Installed elsewhere, an absolute path points at nothing or at the wrong thing."""
-    build = load_tool("build_dev_plugin")
-    for path, text in plugin_files().items():
-        for forbidden in ("/home/", "/Users/", "/tmp/", "C:\\", ".venv", build.MARKER):
+    for path, text in integration_files().items():
+        for forbidden in ("/home/", "/Users/", "/tmp/", "C:\\", ".venv", "~/ti-recon"):
             assert forbidden not in text, f"{path}: {forbidden}"
-    assert not (PLUGIN / "NON_DISTRIBUTABLE").exists()
 
 
-def test_the_plugin_references_no_remote_authentication() -> None:
-    """The plugin is the local, single-analyst path. Task 22 is a different surface."""
+def test_the_integration_references_no_remote_authentication() -> None:
+    """The plugin is the local, single-analyst path; the bundled runtime still
+    *contains* the remote surface, unchanged, but nothing here starts it."""
     forbidden = (
         "jwt",
         "jwks",
@@ -291,12 +371,11 @@ def test_the_plugin_references_no_remote_authentication() -> None:
         "http_main",
         "ti-recon-mcp-http",
         "token_verifier",
-        "tokenverifier",
         "tenant-v1",
         "resource server",
         "onrender",
     )
-    for path, text in plugin_files().items():
+    for path, text in integration_files().items():
         lowered = text.lower()
         for term in forbidden:
             assert term not in lowered, f"{path}: {term}"
@@ -319,66 +398,7 @@ def test_the_core_knows_nothing_about_the_plugin() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The launcher
-# --------------------------------------------------------------------------- #
-
-
-def _run_launcher(
-    root: Path, *, env: dict[str, str] | None = None
-) -> subprocess.CompletedProcess[bytes]:
-    environment = {"PATH": os.environ.get("PATH", "")}
-    if env:
-        environment.update(env)
-    return subprocess.run(
-        ["sh", str(root / "bin" / "ti-recon-mcp")],
-        env=environment,
-        capture_output=True,
-        timeout=30,
-        check=False,
-    )
-
-
-def test_the_launcher_is_executable_and_fails_closed_with_a_clean_stdout(tmp_path) -> None:
-    """No bundled runtime means no server — and nothing on the protocol stream."""
-    assert LAUNCHER.stat().st_mode & stat.S_IXUSR
-    result = _run_launcher(PLUGIN, env={"CLAUDE_PLUGIN_ROOT": str(tmp_path)})
-    assert result.returncode == 1
-    assert result.stdout == b"", "stdout belongs to MCP; a message there corrupts the stream"
-    assert b"runtime" in result.stderr
-
-
-def test_the_launcher_finds_its_root_without_the_host_variable(tmp_path) -> None:
-    copy = tmp_path / "ti-recon"
-    shutil.copytree(PLUGIN, copy)
-    result = _run_launcher(copy)
-    assert result.returncode == 1
-    assert result.stdout == b""
-
-
-def test_the_launcher_runs_only_a_runtime_bundled_under_the_plugin_root(tmp_path) -> None:
-    """One location, no override: a runtime that is present is exec'd; nothing
-    else is searched."""
-    bundled = tmp_path / "runtime" / "bin" / "ti-recon-mcp"
-    bundled.parent.mkdir(parents=True)
-    bundled.write_text("#!/bin/sh\nprintf 'BUNDLED-RUNTIME-STARTED'\n", encoding="utf-8")
-    bundled.chmod(0o755)
-
-    result = _run_launcher(PLUGIN, env={"CLAUDE_PLUGIN_ROOT": str(tmp_path)})
-
-    assert result.returncode == 0
-    assert result.stdout == b"BUNDLED-RUNTIME-STARTED"
-
-    text = LAUNCHER.read_text(encoding="utf-8")
-    code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
-    assert code.count("exec ") == 1
-    assert "runtime/bin/ti-recon-mcp" in code
-    # No development escape hatch: nothing but the plugin root decides the target.
-    for forbidden in ("TI_RECON_MCP", "$PATH", "command -v", "which ", "python", "uv "):
-        assert forbidden not in code, forbidden
-
-
-# --------------------------------------------------------------------------- #
-# The Skill copy
+# The two copies: Skill and runtime
 # --------------------------------------------------------------------------- #
 
 
@@ -420,37 +440,80 @@ def test_the_plugin_skill_keeps_the_structure_the_host_needs() -> None:
         assert (PLUGIN_SKILL / "references" / name).is_file(), name
 
 
-# --------------------------------------------------------------------------- #
-# The developer proof is a different artifact
-# --------------------------------------------------------------------------- #
+def test_the_bundled_runtime_is_byte_identical_to_the_repository_manifest() -> None:
+    """The project, its lock, its package and nothing else — regenerated, never edited."""
+    sync = load_tool("sync_plugin_runtime")
+    assert sync.TARGET == RUNTIME
+    assert sync.differences() == []
 
 
-def test_the_dev_build_is_marked_non_distributable_everywhere(tmp_path) -> None:
-    build = load_tool("build_dev_plugin")
-    fake_server = tmp_path / "checkout" / ".venv" / "bin" / "ti-recon-mcp"
-    fake_server.parent.mkdir(parents=True)
-    fake_server.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-
-    out = build.build(tmp_path / "out" / "ti-recon", server=fake_server)
-
-    assert (out / "NON_DISTRIBUTABLE").is_file()
-    assert build.MARKER in (out / "NON_DISTRIBUTABLE").read_text(encoding="utf-8")
-    generated = json.loads((out / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
-    assert generated["description"].startswith(build.MARKER)
-    assert generated["name"] == "ti-recon", "same namespace as the real plugin"
-    launcher = (out / "bin" / "ti-recon-mcp").read_text(encoding="utf-8")
-    assert build.MARKER in launcher
-    assert str(fake_server) in launcher
-    # Everything else is the committed plugin, unchanged.
-    assert (out / ".mcp.json").read_bytes() == MCP_CONFIG.read_bytes()
-    sync = load_tool("sync_plugin_skill")
-    assert sync.differences(PLUGIN_SKILL, out / "skills" / "ti-recon-analyst") == []
+def test_the_runtime_manifest_carries_only_what_a_build_needs() -> None:
+    """Tests, tools, docs, the Skill, environment files and caches stay out."""
+    sync = load_tool("sync_plugin_runtime")
+    assert set(sync.FILES) == {"pyproject.toml", "uv.lock", "README.md"}
+    assert set(sync.DIRECTORIES) == {"src/ti_recon"}
+    names = {path.relative_to(RUNTIME).as_posix() for path in RUNTIME.rglob("*") if path.is_file()}
+    for forbidden in (
+        "tests/",
+        "tools/",
+        "docs/",
+        ".claude/",
+        ".env",
+        ".git/",
+        "__pycache__",
+        ".pyc",
+    ):
+        assert not any(forbidden in name for name in names), forbidden
+    assert ".python-version" in names
 
 
-def test_the_dev_build_refuses_to_run_without_a_development_server(tmp_path) -> None:
-    build = load_tool("build_dev_plugin")
-    with pytest.raises(FileNotFoundError):
-        build.build(tmp_path / "out", server=tmp_path / "missing")
+def test_the_runtime_sync_tool_reports_drift_and_repairs_it(tmp_path) -> None:
+    sync = load_tool("sync_plugin_runtime")
+    root = tmp_path / "repo"
+    (root / "src" / "ti_recon").mkdir(parents=True)
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "x"\nrequires-python = ">=3.12"\n', encoding="utf-8"
+    )
+    (root / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+    (root / "README.md").write_text("readme\n", encoding="utf-8")
+    (root / "src" / "ti_recon" / "__init__.py").write_text("x = 1\n", encoding="utf-8")
+    (root / "src" / "ti_recon" / "__pycache__").mkdir()
+    (root / "src" / "ti_recon" / "__pycache__" / "a.pyc").write_bytes(b"\x00")
+    target = tmp_path / "runtime"
+
+    assert sync.differences(root, target), "an absent copy is drift"
+    sync.write(root, target)
+    assert sync.differences(root, target) == []
+    assert not (target / "src" / "ti_recon" / "__pycache__").exists()
+    assert (target / ".python-version").read_text(encoding="utf-8") == "3.12\n"
+
+    (root / "src" / "ti_recon" / "__init__.py").write_text("x = 2\n", encoding="utf-8")
+    (target / "stray.txt").write_text("edited in the wrong place\n", encoding="utf-8")
+    problems = sync.differences(root, target)
+    assert any("differs: src/ti_recon/__init__.py" in p for p in problems)
+    assert any("not part of the runtime manifest: stray.txt" in p for p in problems)
+    sync.write(root, target)
+    assert sync.differences(root, target) == []
+
+
+def test_the_runtime_project_metadata_is_the_repositorys_own() -> None:
+    project = _runtime_pyproject()["project"]  # type: ignore[index]
+    assert project["name"] == "ti-recon"  # type: ignore[index]
+    assert project["version"] == __version__  # type: ignore[index]
+    assert (RUNTIME / "uv.lock").read_bytes() == (ROOT / "uv.lock").read_bytes()
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv not installed")
+def test_the_runtime_lock_matches_its_project() -> None:
+    """``--locked`` at startup would refuse a stale lock; catch it here first."""
+    result = subprocess.run(
+        ["uv", "lock", "--check", "--offline", "--project", str(RUNTIME)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 # --------------------------------------------------------------------------- #
@@ -469,3 +532,17 @@ def test_claude_code_validates_the_plugin_strictly() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_the_runtime_copy_is_not_published_inside_the_package_sdist() -> None:
+    """The package's own archive must not carry a second copy of itself."""
+    with (ROOT / "pyproject.toml").open("rb") as handle:
+        exclude = tomllib.load(handle)["tool"]["hatch"]["build"]["targets"]["sdist"]["exclude"]
+    assert "plugins/" in exclude
+
+
+def test_no_leftover_developer_artifacts_from_the_proof_phase() -> None:
+    """The shell launcher and the generated developer copy were Phase 1 only."""
+    assert not (ROOT / "tools" / "build_dev_plugin.py").exists()
+    assert not (PLUGIN / "NON_DISTRIBUTABLE").exists()
+    assert json.dumps(manifest()).count("NON-DISTRIBUTABLE") == 0
