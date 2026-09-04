@@ -304,6 +304,19 @@ class BasisItem(FrozenTiReconModel):
     claim_id: str = Field(min_length=1, max_length=64)
     evidence_id: str = Field(min_length=1, max_length=200)
     reason_codes: tuple[str, ...] = ()
+    #: What the source actually said, in its own bounded terms.
+    highlights: tuple[str, ...] = Field(
+        default=(),
+        max_length=8,
+        description=(
+            "Short statements of what the source actually said about this claim -- "
+            "a verdict category, a confidence, a classification label, a rule "
+            "title -- chosen by the provider's own translation and bounded. "
+            "Presentation of the source's words, never additional evidence, never "
+            "a score, and never a reason to weigh the claim differently from "
+            "its decision_role."
+        ),
+    )
 
 
 class ExplanationItem(FrozenTiReconModel):
@@ -350,6 +363,11 @@ class UnexplainedEvidenceItem(FrozenTiReconModel):
     scope: str = Field(min_length=1, max_length=40)
     source_family: str = Field(min_length=1, max_length=64)
     subject_key: str = Field(default="", max_length=700)
+    highlights: tuple[str, ...] = Field(
+        default=(),
+        max_length=8,
+        description="What the source actually said, bounded. See assessment_basis.",
+    )
 
 
 class ConflictItem(FrozenTiReconModel):

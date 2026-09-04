@@ -32,6 +32,7 @@ import unicodedata
 
 from ti_recon.reporting.models import (
     AnalystInvestigationReport,
+    BasisItem,
     ReportSection,
 )
 
@@ -225,11 +226,26 @@ def _basis(report: AnalystInvestigationReport) -> list[str]:
         lines += _empty("No claim supported the assessment.")
         return lines
     for item in section.items:
-        lines.append(f"  - {safe_text(item.semantic, limit=64)} ({item.effect})")
-        lines.append(f"      role: {item.role} / {item.decision_role}")
-        lines.append(f"      scope: {item.scope}")
-        lines.append(f"      source: {safe_text(item.source_family, limit=64)}")
+        lines += _basis_lines(item)
     return lines + _omitted(section)
+
+
+def _basis_lines(item: BasisItem) -> list[str]:
+    """One basis or opposing item, with what its source actually said.
+
+    Highlights are the provider's own bounded words, rendered as neutralised
+    text like every other provider-influenced value: they explain a claim and
+    never rank it.
+    """
+    lines = [
+        f"  - {safe_text(item.semantic, limit=64)} ({item.effect})",
+        f"      role: {item.role} / {item.decision_role}",
+        f"      scope: {item.scope}",
+        f"      source: {safe_text(item.source_family, limit=64)}",
+    ]
+    for highlight in item.highlights:
+        lines.append(f"      said: {safe_text(highlight, limit=160)}")
+    return lines
 
 
 def _opposition(report: AnalystInvestigationReport) -> list[str]:
@@ -245,10 +261,7 @@ def _opposition(report: AnalystInvestigationReport) -> list[str]:
         return []
     lines = _heading("Evidence against this assessment")
     for item in section.items:
-        lines.append(f"  - {safe_text(item.semantic, limit=64)} ({item.effect})")
-        lines.append(f"      role: {item.role} / {item.decision_role}")
-        lines.append(f"      scope: {item.scope}")
-        lines.append(f"      source: {safe_text(item.source_family, limit=64)}")
+        lines += _basis_lines(item)
     return lines + _omitted(section)
 
 
