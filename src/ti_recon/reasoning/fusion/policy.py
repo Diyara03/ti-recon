@@ -60,7 +60,7 @@ __all__ = [
 #:
 #: Recorded on the assessment and folded into its identity, so a policy change
 #: produces a new assessment rather than silently reinterpreting a stored one.
-FUSION_POLICY_VERSION: Final[str] = "1.0.0"
+FUSION_POLICY_VERSION: Final[str] = "1.1.0"
 
 #: Semantics specific enough that one unexplained exact-scope claim can justify a
 #: verdict without a second source.
@@ -154,6 +154,13 @@ def decision_role_for(claim: NormalizedClaim) -> ClaimDecisionRole:
 VERDICT_RULES: Final[dict[str, str]] = {
     "malicious_decisive": "malicious.decisive_exact_claim.v1",
     "malicious_corroborated": "malicious.independent_corroboration.v1",
+    # One origin, but two *different kinds* of firm knowledge about the exact
+    # object -- a curated malicious verdict and a sandbox classification of the
+    # same sample, say -- that the compatibility table already says may
+    # corroborate. Not vendor voting: the rule counts propositions, never
+    # records, and both must be firm, exact-scope and unexplained. Confidence
+    # stays MEDIUM, because nobody independent has agreed.
+    "malicious_single_origin": "malicious.single_origin_compatible_propositions.v1",
     "suspicious_residual": "suspicious.unexplained_residual_support.v1",
     "suspicious_conflict": "suspicious.residual_support_under_conflict.v1",
     "likely_benign_explained": "likely_benign.all_malicious_claims_explained.v1",
@@ -170,6 +177,7 @@ CONFIDENCE_RULES: Final[dict[str, str]] = {
     "high_explained_complete": "high.complete_exact_explanation.v1",
     "medium_decisive": "medium.single_decisive_unopposed.v1",
     "medium_corroborated": "medium.multiple_independent_support.v1",
+    "medium_single_origin": "medium.single_origin_compatible_propositions.v1",
     "medium_explained": "medium.exact_explanation_complete.v1",
     "low_single_weak": "low.limited_or_qualified_support.v1",
     "unspecified_no_support": "unspecified.no_directional_support.v1",
@@ -207,6 +215,7 @@ CONFIDENCE_CAPS: Final[dict[str, str]] = {
 REASON_CODES: Final[dict[str, str]] = {
     "decisive_basis": "basis.decisive_exact_claim",
     "corroborates": "basis.independent_corroboration",
+    "compatible_same_origin": "basis.compatible_proposition_same_origin",
     "weak_support": "basis.weak_support_only",
     "explained": "disposition.explained_by_alternative",
     "dependent": "disposition.dependent_on_counted_source",

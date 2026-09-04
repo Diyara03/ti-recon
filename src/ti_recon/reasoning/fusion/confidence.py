@@ -144,6 +144,12 @@ def _band(
         return AssessmentConfidence.HIGH, CONFIDENCE_RULES["high_decisive_corroborated"]
     if decisive:
         return AssessmentConfidence.MEDIUM, CONFIDENCE_RULES["medium_decisive"]
+    if verdict_rule_id == VERDICT_RULES["malicious_single_origin"]:
+        # Two firm kinds of knowledge about the object, from one origin. MEDIUM
+        # by structure and never HIGH: HIGH is reserved for a separate origin
+        # agreeing, which is exactly what this rule lacks. Not a cap -- the
+        # band is what the evidence earns, and the rule id says why.
+        return AssessmentConfidence.MEDIUM, CONFIDENCE_RULES["medium_single_origin"]
 
     broad = any(
         group.breadth is SupportBreadth.MULTIPLE_INDEPENDENT_SOURCES for group in corroboration

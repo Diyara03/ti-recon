@@ -45,12 +45,22 @@ from ti_recon.models.evidence import Evidence
 
 __all__ = [
     "CLAIM_ID_LENGTH",
+    "MAX_CLAIM_HIGHLIGHTS",
+    "MAX_CLAIM_HIGHLIGHT_LENGTH",
     "ClaimAssertionStrength",
     "ClaimPropositionKey",
     "ClaimSemantic",
     "NormalizedClaim",
     "claim_id_for",
 ]
+
+
+#: Length of a claim's derived record identity.
+CLAIM_ID_LENGTH: Final[int] = 32
+
+#: Bounds on the presentation highlights a claim may carry.
+MAX_CLAIM_HIGHLIGHTS: Final[int] = 8
+MAX_CLAIM_HIGHLIGHT_LENGTH: Final[int] = 160
 
 
 class ClaimSemantic(StrEnum):
@@ -192,6 +202,13 @@ class NormalizedClaim(FrozenTiReconModel):
 
     #: ``True`` when the provider result behind this was incomplete.
     source_partial: bool = False
+    #: Short, bounded statements of what the source actually said -- a verdict
+    #: category, a confidence, a classification label, a rule title -- chosen by
+    #: the provider's own translator from its own attributes. Presentation
+    #: only: fusion never reads them, and a claim with none is weighed exactly
+    #: like one with many. They exist so a report can say *why* without
+    #: carrying the provider payload.
+    highlights: tuple[str, ...] = Field(default=(), max_length=MAX_CLAIM_HIGHLIGHTS)
     #: ``True`` when TI Recon derived this claim from graph structure rather than
     #: a provider stating it. Such a claim names its derivation rule and can
     #: never be presented as something a provider reported.
@@ -232,10 +249,6 @@ class NormalizedClaim(FrozenTiReconModel):
         return self.transport_provider != self.origin_provider
 
 
-#: Length of a claim's derived record identity.
-CLAIM_ID_LENGTH: Final[int] = 32
-
-
 def claim_id_for(
     *,
     policy_version: str,
@@ -273,6 +286,7 @@ def claim_from(
     strength: ClaimAssertionStrength = ClaimAssertionStrength.ASSERTED,
     target_key: str = "",
     source_partial: bool = False,
+    highlights: tuple[str, ...] = (),
 ) -> NormalizedClaim:
     """Build a claim as a view over one piece of evidence.
 
@@ -303,4 +317,7 @@ def claim_from(
         source_family=evidence.source_family,
         lineage_group_id=evidence.lineage_group_id,
         source_partial=source_partial,
+        highlights=tuple(item[:MAX_CLAIM_HIGHLIGHT_LENGTH] for item in highlights)[
+            :MAX_CLAIM_HIGHLIGHTS
+        ],
     )

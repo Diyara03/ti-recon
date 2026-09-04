@@ -207,8 +207,12 @@ GOLDEN = (
         lambda: observable(abusech_payloads.SCANNER_IP),
         Verdict.SUSPICIOUS,
     ),
-    # One vendor's judgement about the object, however well resourced.
-    ("gti_file", gti_file_envelope, _gti_subject, Verdict.SUSPICIOUS),
+    # One origin, two firm kinds of knowledge about the exact file: GTI's own
+    # malicious verdict *and* its malicious sandbox classification. Compatible
+    # propositions, so the single-origin rule reaches MALICIOUS -- at MEDIUM,
+    # because nobody independent agreed. A verdict alone would stop at
+    # SUSPICIOUS; see the single-origin rule's own suite.
+    ("gti_file", gti_file_envelope, _gti_subject, Verdict.MALICIOUS),
     ("urlscan", urlscan_scan_envelope, _urlscan_subject, Verdict.SUSPICIOUS),
     # Malicious *scanning*, which is a different accusation from C2.
     (
@@ -249,10 +253,12 @@ def test_one_provider_alone_reaches_the_verdict_its_semantics_justify(
 ) -> None:
     """The whole policy in one table, driven by real adapter output.
 
-    Read down the `MALICIOUS` rows: every one is a specific claim about the exact
-    object from a repository that vetted it. Read down the `SUSPICIOUS` rows:
-    every one is a judgement, an aggregate, or a claim about the neighbourhood.
-    That line — specificity, not vendor reputation — is the policy.
+    Read down the `MALICIOUS` rows: every one is either a specific claim about
+    the exact object from a repository that vetted it, or two firm, compatible
+    kinds of knowledge about the exact object from one origin. Read down the
+    `SUSPICIOUS` rows: every one is a single judgement, an aggregate, or a claim
+    about the neighbourhood. That line — specificity and kind, not vendor
+    reputation and never a count — is the policy.
     """
     assert _assess(builder, subject_factory).assessment.verdict is expected
 
