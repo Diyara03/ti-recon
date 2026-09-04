@@ -79,6 +79,7 @@ __all__ = [
     "normalize_file_behavior",
     "normalize_inline_relationships",
     "normalize_related_items",
+    "normalize_sandbox_verdicts",
     "normalize_threat_severity",
 ]
 
@@ -441,10 +442,15 @@ CONTRIBUTING_FACTORS: Final[dict[str, ContributingFactor]] = {
         EvidenceEffect.SUPPORTS_MALICIOUS,
         EvidenceClass.CURATED_THREAT_ASSERTION,
     ),
+    # A sandbox *verdict* is the sandbox's classification of what it watched,
+    # not the watching itself: a curated assertion, like Hybrid Analysis's own
+    # verdict in Task 12, so that an object-nature explanation (a test artifact
+    # every sandbox flags) can account for it. What the sandbox *observed* --
+    # contacts, drops -- stays ``DIRECT_OBSERVATION`` in the behaviour records.
     "malicious_sandbox_verdict": ContributingFactor(
         "gti.sandbox_verdict.malicious",
         EvidenceEffect.SUPPORTS_MALICIOUS,
-        EvidenceClass.DIRECT_OBSERVATION,
+        EvidenceClass.CURATED_THREAT_ASSERTION,
     ),
     "matched_malicious_yara": ContributingFactor(
         "gti.yara_match.malicious",
@@ -735,6 +741,154 @@ def _confidence(value: Any) -> float | None:
         return None
     number = float(value)
     return number if 0.0 <= number <= 100.0 else None
+
+
+# --------------------------------------------------------------------------- #
+# sandbox_verdicts
+# --------------------------------------------------------------------------- #
+
+#: The verdict categories a sandbox entry may carry, as the API documents them,
+#: and the direction each one points. ``harmless`` and ``undetected`` are
+#: context, never benign: a sample that sat still may have wanted a click, the
+#: wrong OS or a live C2, and a sandbox that saw nothing did not see safety.
+SANDBOX_VERDICT_EFFECTS: Final[dict[str, EvidenceEffect]] = {
+    "malicious": EvidenceEffect.SUPPORTS_MALICIOUS,
+    "suspicious": EvidenceEffect.SUPPORTS_MALICIOUS,
+    "harmless": EvidenceEffect.CONTEXT_ONLY,
+    "undetected": EvidenceEffect.CONTEXT_ONLY,
+}
+
+#: Reported when a ``sandbox_verdicts`` block was present but no entry could be
+#: read. Degrading, like an unreadable severity block: a recognized field that
+#: changed shape is worth saying so about.
+GTI_SANDBOX_VERDICTS_UNREADABLE: Final[str] = "GTI_SANDBOX_VERDICTS_UNREADABLE"
+
+#: How many per-sandbox entries, and how many labels per entry, one record keeps.
+_MAX_SANDBOXES: Final[int] = 10
+_MAX_SANDBOX_LABELS: Final[int] = 5
+
+#: The verdict rank used to pick the record's overall category: the strongest
+#: category any sandbox stated. Divergence is preserved beside it, never voted on.
+_SANDBOX_VERDICT_RANK: Final[tuple[str, ...]] = (
+    "malicious",
+    "suspicious",
+    "harmless",
+    "undetected",
+)
+
+
+def normalize_sandbox_verdicts(
+    context: NormalizationContext, gti_object: GTIObject
+) -> GTINormalization:
+    """Normalize the file-level ``sandbox_verdicts`` block into **one** record.
+
+    Several sandboxes reporting on one sample are one provider observing one
+    sample (Task 12's rule for Hybrid Analysis, applied to GTI's own sandboxes):
+    one directional record per file, carrying every sandbox's category,
+    confidence and classification labels, bounded, so an analyst can see who
+    said what and fusion sees one claim from one origin. Two GTI sandboxes
+    agreeing is never two sources.
+
+    The record's direction is the strongest category any sandbox stated --
+    ``malicious`` over ``suspicious`` -- and the raw category travels in
+    ``verdict`` so the claim layer can keep a hedged verdict weaker than a firm
+    one. A malicious verdict beside a harmless one is recorded as
+    ``divergent`` rather than resolved.
+
+    Class ``CURATED_THREAT_ASSERTION``: a verdict is the sandbox's judgement
+    about what it watched, not the watching itself, so a test artifact that
+    every sandbox flags can still be explained as one. Provider confidence is
+    the highest confidence among the sandboxes that stated the chosen category.
+    """
+    block = gti_object.mapping("sandbox_verdicts")
+    if not block:
+        return GTINormalization()
+
+    entries: list[dict[str, Any]] = []
+    for key, raw in sorted(block.items()):
+        if not isinstance(raw, Mapping):
+            continue
+        category = raw.get("category")
+        if not isinstance(category, str) or category.strip().lower() not in SANDBOX_VERDICT_EFFECTS:
+            continue
+        entry: dict[str, Any] = {
+            "sandbox_name": _sandbox_name(raw, key),
+            "category": category.strip().lower(),
+        }
+        confidence = _confidence(raw.get("confidence"))
+        if confidence is not None:
+            entry["confidence"] = confidence
+        for field in ("malware_classification", "malware_names"):
+            labels = raw.get(field)
+            if isinstance(labels, list):
+                kept = [
+                    str(item).strip() for item in labels if isinstance(item, str) and item.strip()
+                ]
+                if kept:
+                    entry[field] = kept[:_MAX_SANDBOX_LABELS]
+        entries.append(entry)
+    if not entries:
+        return GTINormalization(warnings=(GTI_SANDBOX_VERDICTS_UNREADABLE,), degraded=True)
+
+    counts = {
+        name: sum(1 for item in entries if item["category"] == name)
+        for name in _SANDBOX_VERDICT_RANK
+    }
+    verdict = next(name for name in _SANDBOX_VERDICT_RANK if counts[name])
+    agreeing = [item for item in entries if item["category"] == verdict]
+    confidences = [item["confidence"] for item in agreeing if "confidence" in item]
+    classifications = sorted(
+        {label for item in agreeing for label in item.get("malware_classification", [])}
+    )
+    attributes: dict[str, Any] = {
+        "verdict": verdict,
+        "sandbox_count": len(entries),
+        "malicious_count": counts["malicious"],
+        "suspicious_count": counts["suspicious"],
+        "harmless_count": counts["harmless"],
+        "undetected_count": counts["undetected"],
+        # Malicious beside harmless is environment-dependent malware describing
+        # itself. Preserved, never averaged.
+        "divergent": bool(counts["malicious"] and counts["harmless"]),
+        "sandboxes": entries[:_MAX_SANDBOXES],
+    }
+    if classifications:
+        attributes["malware_classification"] = classifications[:_MAX_SANDBOX_LABELS]
+    if len(entries) > _MAX_SANDBOXES:
+        attributes["sandboxes_omitted"] = len(entries) - _MAX_SANDBOXES
+
+    effect = SANDBOX_VERDICT_EFFECTS[verdict]
+    evidence = Evidence(
+        investigation_id=context.investigation_id,
+        subject_object_id=context.subject_object_id,
+        evidence_class=(
+            EvidenceClass.CURATED_THREAT_ASSERTION
+            if effect is EvidenceEffect.SUPPORTS_MALICIOUS
+            else EvidenceClass.CONTEXT
+        ),
+        claim_type="gti.sandbox_verdicts",
+        effect=effect,
+        transport_provider=GTI_PROVIDER_ID,
+        origin_provider=GTI_ORIGIN_PROVIDER,
+        source_family=GTI_SOURCE_FAMILY,
+        provider_confidence=max(confidences) if confidences else None,
+        match_scope=MatchScope.EXACT_OBSERVABLE,
+        # No instant: a sandbox verdict carries no timestamp of its own, and the
+        # object's last_analysis_date is when engines scanned it, not when a
+        # sandbox ran it.
+        retrieved_at=context.now,
+        lineage_group_id=GTI_LINEAGE_GROUP,
+        attributes=attributes,
+        raw_reference_id=context.raw_reference_id,
+    )
+    return GTINormalization(evidence=(evidence,))
+
+
+def _sandbox_name(entry: Mapping[str, Any], key: str) -> str:
+    name = entry.get("sandbox_name")
+    if isinstance(name, str) and name.strip():
+        return name.strip()[:80]
+    return str(key)[:80]
 
 
 # --------------------------------------------------------------------------- #
@@ -1351,6 +1505,40 @@ _BEHAVIOR_SUMMARY_FIELDS: Final[tuple[str, ...]] = (
     "attack_techniques",
 )
 
+#: The behaviour summary's own ``verdicts`` values that state a classification,
+#: and how firmly. An explicit table: the API documents ``verdicts`` as a list
+#: without enumerating it, so nothing here infers direction from a word it does
+#: not recognize. ``MALWARE`` and ``RANSOM`` are the ones GTI's sandboxes state
+#: for the samples that matter; the remaining rows are the families GTI's own
+#: classification vocabulary uses. Anything else -- including a benign-looking
+#: word -- is recorded by name and produces no direction, because a sandbox that
+#: saw nothing did not see safety.
+BEHAVIOR_VERDICT_STRENGTH: Final[dict[str, str]] = {
+    "MALWARE": "asserted",
+    "RANSOM": "asserted",
+    "TROJAN": "asserted",
+    "BACKDOOR": "asserted",
+    "STEALER": "asserted",
+    "SPYWARE": "asserted",
+    "WORM": "asserted",
+    "BOT": "asserted",
+    "MINER": "asserted",
+    "PHISHING": "asserted",
+    "SUSPICIOUS": "suspected",
+    "GREYWARE": "suspected",
+    "ADWARE": "suspected",
+    "PUA": "suspected",
+}
+
+#: Bounds on the highlights a behaviour verdict carries. Semantic findings
+#: only -- a technique id, a rule title, a signature name -- never the process
+#: list, the registry accesses or the API calls, which are noise at this level.
+_MAX_BEHAVIOR_HIGHLIGHTS: Final[int] = 8
+_MAX_HIGHLIGHT_LENGTH: Final[int] = 160
+
+#: Sigma rule levels worth surfacing beside a verdict.
+_SIGMA_LEVELS_HIGHLIGHTED: Final[frozenset[str]] = frozenset({"critical", "high"})
+
 
 def normalize_file_behavior(
     context: NormalizationContext,
@@ -1421,12 +1609,138 @@ def normalize_file_behavior(
     overview = _behavior_summary_evidence(context, subject, summary)
     if overview is not None:
         evidence.append(overview)
+    verdict = _behavior_verdict_evidence(context, subject, summary)
+    if verdict is not None:
+        evidence.append(verdict)
 
     return GTINormalization(
         evidence=tuple(evidence),
         objects=tuple(objects),
         relationships=tuple(relationships),
     )
+
+
+def _behavior_verdict_evidence(
+    context: NormalizationContext, subject: IntelObject, summary: Mapping[str, Any]
+) -> Evidence | None:
+    """The sandboxes' aggregated classification of the sample, as one claim.
+
+    ``verdicts`` is the summary's own statement of what the detonations amount
+    to, and ``verdict_confidence`` is how sure it is. That is a classification
+    -- a curated assertion, like the file-level sandbox verdicts -- and it is
+    the *only* thing in the summary that carries a direction. Techniques,
+    signatures, processes and registry keys are what the sample did; they
+    travel as bounded highlights beside the verdict so an analyst can see why,
+    and they never become evidence on their own, because legitimate software
+    creates processes and touches the registry too.
+    """
+    raw = summary.get("verdicts")
+    if not isinstance(raw, list):
+        return None
+    stated = [item.strip().upper() for item in raw if isinstance(item, str) and item.strip()]
+    if not stated:
+        return None
+    recognized = [item for item in stated if item in BEHAVIOR_VERDICT_STRENGTH]
+    unmapped = sorted({item for item in stated if item not in BEHAVIOR_VERDICT_STRENGTH})
+    strengths = {BEHAVIOR_VERDICT_STRENGTH[item] for item in recognized}
+    strength = "asserted" if "asserted" in strengths else ("suspected" if strengths else None)
+
+    attributes: dict[str, Any] = {"verdicts": stated[:_MAX_SANDBOX_LABELS]}
+    if unmapped:
+        attributes["unmapped_verdicts"] = unmapped[:_MAX_SANDBOX_LABELS]
+    confidence = _confidence(summary.get("verdict_confidence"))
+    if confidence is not None:
+        attributes["verdict_confidence"] = confidence
+    highlights = _behavior_highlights(summary)
+    if highlights:
+        attributes["highlights"] = highlights
+    if strength is None:
+        # Words this table does not know, or a benign-looking one. Recorded as
+        # context so the analyst can see what the summary said; no direction.
+        attributes["verdict"] = "unclassified"
+        effect = EvidenceEffect.CONTEXT_ONLY
+        evidence_class = EvidenceClass.CONTEXT
+    else:
+        attributes["verdict"] = strength
+        effect = EvidenceEffect.SUPPORTS_MALICIOUS
+        evidence_class = EvidenceClass.CURATED_THREAT_ASSERTION
+
+    return Evidence(
+        investigation_id=context.investigation_id,
+        subject_object_id=subject.id,
+        evidence_class=evidence_class,
+        claim_type="gti.behavior.verdict",
+        effect=effect,
+        transport_provider=GTI_PROVIDER_ID,
+        origin_provider=GTI_ORIGIN_PROVIDER,
+        source_family=GTI_SOURCE_FAMILY,
+        provider_confidence=confidence,
+        match_scope=MatchScope.EXACT_OBSERVABLE,
+        retrieved_at=context.now,
+        lineage_group_id=GTI_LINEAGE_GROUP,
+        attributes=attributes,
+        raw_reference_id=context.raw_reference_id,
+    )
+
+
+def _behavior_highlights(summary: Mapping[str, Any]) -> list[str]:
+    """Bounded, semantic reasons drawn from the summary's own findings.
+
+    Three sources, in a fixed order, each bounded: critical and high Sigma
+    rule titles, MITRE ATT&CK technique ids with their severity, and signature
+    match names. Descriptions are provider-authored text and are truncated;
+    nothing here is executed, parsed for structure or matched against.
+    """
+    found: list[str] = []
+
+    sigma = summary.get("sigma_analysis_results")
+    if isinstance(sigma, list):
+        for item in sigma:
+            if not isinstance(item, Mapping):
+                continue
+            level = item.get("rule_level")
+            title = item.get("rule_title")
+            if (
+                isinstance(level, str)
+                and level.strip().lower() in _SIGMA_LEVELS_HIGHLIGHTED
+                and isinstance(title, str)
+                and title.strip()
+            ):
+                found.append(f"sigma {level.strip().lower()}: {title.strip()}")
+
+    techniques = summary.get("mitre_attack_techniques")
+    if isinstance(techniques, list):
+        for item in techniques:
+            if not isinstance(item, Mapping):
+                continue
+            identifier = item.get("id")
+            if not isinstance(identifier, str) or not identifier.strip():
+                continue
+            severity = item.get("severity")
+            label = f"attack {identifier.strip()}"
+            if isinstance(severity, str) and severity.strip():
+                label += f" ({severity.strip().lower()})"
+            description = item.get("signature_description")
+            if isinstance(description, str) and description.strip():
+                label += f": {description.strip()}"
+            found.append(label)
+
+    signatures = summary.get("signature_matches")
+    if isinstance(signatures, list):
+        for item in signatures:
+            if not isinstance(item, Mapping):
+                continue
+            name = item.get("name")
+            if isinstance(name, str) and name.strip():
+                found.append(f"signature: {name.strip()}")
+
+    return [_bounded_text(item) for item in found[:_MAX_BEHAVIOR_HIGHLIGHTS]]
+
+
+def _bounded_text(value: str) -> str:
+    """One line, control characters removed, length capped."""
+    cleaned = "".join(ch for ch in value if ch.isprintable() and ch not in "\r\n")
+    return cleaned[:_MAX_HIGHLIGHT_LENGTH]
 
 
 def _behavior_evidence(
