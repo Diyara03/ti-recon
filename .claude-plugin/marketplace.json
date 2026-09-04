@@ -1,0 +1,17 @@
+{
+  "name": "ti-recon-pilot",
+  "description": "Internal pilot marketplace for the TI Recon Claude Code plugin: passive external threat-intelligence investigation with each analyst's own provider credentials, run locally through uv. Host this repository (or a copy of it) in a private Git repository your organization controls.",
+  "owner": {
+    "name": "TI Recon maintainers"
+  },
+  "plugins": [
+    {
+      "name": "ti-recon",
+      "source": "./plugins/ti-recon",
+      "description": "Local TI Recon MCP server and analyst Skill. Requires Claude Code and uv on the workstation; every provider credential is optional and entered through the plugin's configuration.",
+      "version": "0.1.0",
+      "category": "security",
+      "keywords": ["threat-intelligence", "security", "soc", "ioc", "mcp"]
+    }
+  ]
+}
