@@ -9,7 +9,9 @@ has. Run it once per platform:
 | --- | --- | --- | --- |
 | Windows x86-64 | | | |
 | macOS arm64 (Apple silicon) | | | |
-| macOS x86-64 (Intel) — only if the fleet still has them; see step 0 | | | |
+
+Intel (x86-64) Macs are **not supported by pilot 0.1.x** and are not on this
+checklist; see `docs/claude-plugin.md`.
 
 No real provider key is needed for any step. Where a key is asked for, use a
 fake sentinel such as `PILOT_SENTINEL_KEY_0001` and never a real one.
@@ -21,14 +23,6 @@ Git checkout, no virtual environment, no Render, no Auth0, no Claude Desktop.
 published (`ti-recon-pilot` in the repository's own manifest).
 
 ---
-
-## 0. Platform decision (Intel Mac only)
-
-`cryptography` ≥ 49 ships no macOS x86-64 wheel and is required by the MCP
-SDK. Before piloting on an Intel Mac, the maintainers must have chosen one of:
-a marker-scoped constraint to `cryptography` 48.0.1 (with its published
-advisories accepted), or excluding Intel Macs. If neither is recorded in
-`docs/claude-plugin.md`, stop here for that platform.
 
 ## 1. Versions
 

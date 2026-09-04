@@ -23,7 +23,7 @@ nothing here depends on it and nothing here changes it.
 | **Phase 1** (done) | proved the host mechanics with a developer-only proof: plugin loading, Skill discovery, MCP lifecycle, `userConfig` → environment → the existing credential resolver, no leakage. |
 | **Phase 2** (done) | made the plugin **self-contained and installable**: it bundles the TI Recon project and its lock, starts the server directly through `uv`, provisions a persistent Python environment under the plugin's data directory, and was installed through the real plugin manager from a disposable local marketplace and run from outside the repository. |
 | **Phase 3** (done) | hardened for a pilot: the local/remote dependency boundary (`ti-recon[remote]`), a measured start-up profile and a halved warm start, the pilot marketplace definition at the repository root, a proved versioned upgrade, the package-index policy, the reset procedure and the endpoint pilot checklist. |
-| **Not yet** | hosting the marketplace in the organization's private repository, an Enterprise analyst pilot, Windows and macOS execution (statically resolved only), and the Intel Mac decision below. |
+| **Not yet** | hosting the marketplace in the organization's private repository, an Enterprise analyst pilot, and Windows and macOS execution (statically resolved only). |
 
 The analyst experience this now supports:
 
@@ -234,7 +234,8 @@ the plugin's files, or the repository lock.
 | Platform | Status |
 | --- | --- |
 | Linux x86-64 | **executed**: every proof on this page |
-| Windows x86-64, macOS arm64, macOS x86-64 | **resolved statically only**: `uv sync --locked --python-platform … --dry-run` succeeds for each, and every locked distribution has a wheel for each — with one exception below. Not executed on real hardware. |
+| Windows x86-64, macOS arm64 (Apple silicon) | **intended pilot platforms, resolved statically only**: `uv sync --locked --python-platform … --dry-run` succeeds for each and every locked distribution has a cp312 wheel for each. Not executed on real hardware; see the pilot checklist. |
+| macOS x86-64 (Intel) | **not supported for pilot 0.1.x.** The reason is the dependency closure, not TI Recon: see below. |
 
 ### The local/remote dependency boundary
 
@@ -275,30 +276,23 @@ without the extra could silently miss — not what an analyst's environment
 contains. Removing `cryptography` from a local install would require the SDK
 to drop its own requirement, which is outside this repository.
 
-### Intel Macs: the exact chain
+### Intel Macs: not supported for the pilot
 
-`cryptography` releases from 49.0.0 (2026-06-12) publish macOS wheels for
-arm64 only; 48.0.1 (2026-06-09) is the last with x86-64 / universal2 wheels.
-The chain is `mcp → pyjwt[crypto] → cryptography`, so it survives the split.
-On an Intel Mac, `uv` would fall back to the sdist and need Rust and OpenSSL
-headers, which the pilot forbids.
+`cryptography` releases from 49.0.0 (June 2026) publish macOS wheels for
+arm64 only; the upstream project no longer supports macOS x86-64. It reaches
+the local runtime through the MCP SDK's own requirement — `mcp →
+pyjwt[crypto] → cryptography` — so the local/remote split does not remove it,
+and on an Intel Mac `uv` would fall back to building it from source, which
+needs a Rust toolchain and OpenSSL headers the pilot does not permit on a
+workstation.
 
-Verified with a scratch lock: a marker-scoped constraint —
-
-```toml
-[tool.uv]
-constraint-dependencies = ["cryptography<49 ; sys_platform == 'darwin' and platform_machine == 'x86_64'"]
-```
-
-— resolves `cryptography==48.0.1` for `x86_64-apple-darwin` only and leaves
-50.0.1 on Windows, Linux and Apple silicon. It is **not applied**: PyPI records
-six advisories against 48.0.1 and none against 50.0.1, and although the local
-server never exercises `cryptography`, shipping a version with published
-advisories to one platform is a decision for the organization, not a
-default. The alternatives are recorded in the pilot checklist: apply the
-constraint and accept the advisories for Intel Macs, or exclude Intel Macs
-from the pilot. A test lists this as the single tolerated wheel gap and fails
-if any other appears — or if this one closes and the entry is stale.
+**Pilot 0.1.x therefore does not support macOS x86-64.** The dependency floor
+is *not* weakened to reach it: the last `cryptography` release with x86-64
+wheels (48.0.1) has since-fixed security advisories recorded against it, so
+pinning it for one platform was rejected. TI Recon itself has no Intel-Mac
+incompatibility; support returns if the dependency closure regains x86-64
+wheels or the SDK stops requiring the package. A test records this as the one
+tolerated wheel gap and fails if any other appears.
 
 Every other distribution with native code has cp312 wheels for all four
 targets, no local package is source-only, and `uv sync --locked
@@ -571,9 +565,9 @@ current host documents, written down so the pilot can start from them.
 2. **`uv` on the endpoint** through endpoint management, and the index or
    mirror policy in `uv`'s settings; or IT-provisioned caches for offline
    first starts. The plugin never downloads `uv`.
-3. **The Intel Mac decision** (above), if the fleet still has them.
-4. **Windows and macOS execution** of `docs/claude-plugin-pilot-checklist.md`
-   on real managed machines, including the sensitive-storage observation.
+3. **Windows and Apple-silicon macOS execution** of
+   `docs/claude-plugin-pilot-checklist.md` on real managed machines,
+   including the sensitive-storage observation.
 
 A signed self-contained executable remains the fallback if the organization
 declines the `uv` prerequisite.

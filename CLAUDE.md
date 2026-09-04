@@ -188,9 +188,11 @@ Implemented (Jira Tasks 1-19):
   definition at the repository root (`.claude-plugin/marketplace.json`),
   proved a versioned upgrade keeps `${CLAUDE_PLUGIN_DATA}` and replaces the
   code, and wrote the endpoint pilot checklist. Proved installed on Linux
-  x86-64; Windows and macOS are resolved statically only, and Intel Macs are
-  blocked by the SDK's own `cryptography` requirement until a decision is
-  taken. See `docs/claude-plugin.md` and `docs/claude-plugin-pilot-checklist.md`.
+  x86-64; Windows and Apple-silicon macOS are the intended pilot platforms,
+  resolved statically only; Intel Macs are **not supported by pilot 0.1.x**,
+  because the SDK's own `cryptography` requirement has no macOS x86-64 wheel
+  and the floor is not weakened to reach it. See `docs/claude-plugin.md` and
+  `docs/claude-plugin-pilot-checklist.md`.
 
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Task 13 chooses what

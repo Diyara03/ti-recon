@@ -42,9 +42,9 @@ KNOWN_GAPS: dict[tuple[str, str], str] = {
         "cryptography >= 49 publishes no macOS x86-64 wheel. It is required by "
         "the MCP SDK itself (mcp -> pyjwt[crypto] -> cryptography), not only by "
         "TI Recon's remote extra, so the dependency split cannot remove it. "
-        "Decision pending: a marker-scoped constraint to the last x86-64 "
-        "release (48.0.1, which carries published advisories) or excluding "
-        "Intel Macs from the pilot. See docs/claude-plugin.md."
+        "Pilot 0.1.x does not support Intel Macs, and the floor is not "
+        "weakened to reach them: the last x86-64 release (48.0.1) has "
+        "since-fixed advisories. See docs/claude-plugin.md."
     ),
 }
 

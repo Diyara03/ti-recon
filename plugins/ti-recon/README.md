@@ -32,6 +32,11 @@ source unless IT has pre-provisioned `uv`'s caches; see `docs/claude-plugin.md`
 in the TI Recon repository for how an internal mirror is configured through
 `uv`'s own settings without touching this plugin.
 
+## Platforms
+
+Pilot 0.1.x targets Windows x86-64, macOS on Apple silicon and Linux x86-64.
+Intel (x86-64) Macs are not supported by this pilot release.
+
 ## Configuration
 
 Every provider credential is optional and is entered through the plugin's
