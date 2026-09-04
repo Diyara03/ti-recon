@@ -219,7 +219,10 @@ def test_no_data_is_coverage_of_a_source_and_never_evidence_of_safety() -> None:
     assert not state.has_directional_evidence  # type: ignore[attr-defined]
     # Coverage was still gained, so the same source is not asked again...
     assert len(chosen) == len(set(chosen))
-    assert state.covered_families[ProviderCapability.REPUTATION] == {FAMILY_A, FAMILY_B}  # type: ignore[attr-defined]
+    # NO_DATA is an answer from each dataset: recorded as answered-but-empty,
+    # never as data, and both families count once no sibling remains.
+    assert state.answered_families(ProviderCapability.REPUTATION) == {FAMILY_A, FAMILY_B}  # type: ignore[attr-defined]
+    assert ProviderCapability.REPUTATION not in state.covered_families  # type: ignore[attr-defined]
     # ...and a second family was consulted rather than the first repeated.
     assert all(attempt.coverage_gained for attempt in state.attempts)  # type: ignore[attr-defined]
 
