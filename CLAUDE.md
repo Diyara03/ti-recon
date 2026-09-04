@@ -235,6 +235,27 @@ Implemented (Jira Tasks 1-19):
   vendor threshold — and must be calibrated against more real malicious,
   benign and false-positive samples.
 
+- Task 24 Phase 2 — adaptive planner gap closure and explicit corroboration.
+  Reconstructed live: an address's two-family reputation target was met by
+  one family's data plus a sibling dataset's `NO_DATA`, so the same family's
+  IOC dataset — eligible, configured, unattempted — was never a candidate;
+  the only continuation directive named a capability nobody configured could
+  serve; the run stopped `NO_PROGRESS` with an unasked source. Fixed at the
+  planner: a family whose only answer was `NO_DATA` stays *open* while a
+  sibling dataset serving the capability is still eligible and unattempted
+  (`PlanningState.no_data_families`, `answered`, `_open_families`), so the
+  sibling is a candidate; a family that answered with data closes exactly as
+  before, so this is gap closure, not query-everything. Added a structured
+  `InvestigationObjective` (`triage` default, `corroborate`) through the
+  Task 19 request, the Task 20 request, the CLI and the MCP tool: one bounded
+  round past adequate readiness seeking an adverse search independent of the
+  basis, reusing the breadth seam. Recorded, not fixed: T24-FINDING-08 (GTI
+  mixed aggregate reputation — 10 malicious, 47 harmless, 32 undetected —
+  yields weak malicious support and no opposing claim; a reasoning review,
+  never vote counting) and T24-FINDING-09 (a bundled call keyed on one
+  capability leaves its other capabilities' gaps typed `NOT_ATTEMPTED` even
+  when the provider answered `NOT_CONFIGURED`).
+
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Task 13 chooses what
 to ask, Task 14 assembles what came back, Task 15 says what each finding means in
@@ -622,7 +643,8 @@ about it.
     one family. Every `StopReason` is operational, `GOALS_SATISFIED` means the
     requested coverage was *collected*, and there is deliberately no reason
     meaning "confident enough". `NO_DATA` covers a source and never the
-    observable, `PARTIAL` satisfies no family target, and false-positive context
+    observable — and covers the *dataset* that answered, not its whole family
+    (182) — `PARTIAL` satisfies no family target, and false-positive context
     never substitutes for threat intelligence — a warninglist match explains
     evidence rather than replacing the need for any.
 
@@ -2129,6 +2151,31 @@ about it.
      its direction. One sandbox is one opinion; a hedged verdict is
      hedged; a report or collection association is never the second
      proposition that turns SUSPICIOUS into MALICIOUS.
+
+182. **An empty answer closes a dataset, never its family.** A family target
+     counts a family once it has answered. `NO_DATA` from one dataset answers
+     for that dataset; while a sibling dataset in the same family serves the
+     capability for this observable and is still eligible — configured,
+     affordable, not blocked, not attempted, not already credited by a
+     whole-document response — the family stays open and the goal stays
+     unsatisfied, so the sibling is a candidate rather than being closed out by
+     its relative's silence. Family sameness bounds corroboration in Task 17;
+     it never means "never ask another dataset in the family". A family that
+     answered with data closes as before, and the budget, depth, activation,
+     blocked and attempted rules all apply unchanged. A no-progress stop is
+     therefore reached only after every eligible unattempted source for what
+     readiness asked was considered, and a workflow regression asserts it.
+
+183. **Stopping when adequate is the default; corroboration is an explicit
+     objective.** `InvestigationObjective.TRIAGE` stops when readiness says
+     coverage is adequate, whatever eligible sources remain — an unasked source
+     is not a reason to spend quota. `CORROBORATE` buys at most one round past
+     that point: `ADDITIONAL_COVERAGE` on the adverse-search capabilities the
+     depth admits, avoiding the families the verdict rests on. It adds no
+     capability, raises no depth, names no provider, repeats no call, is never
+     inferred from a verdict, and when nothing independent is eligible or
+     affordable it records `CORROBORATION_NOT_OBTAINED` and changes nothing.
+     Whether the answer was independent is settled by Task 17 from provenance.
 
 ## Security rules
 

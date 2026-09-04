@@ -52,6 +52,7 @@ and it contacts nothing.
 | `--depth` | `standard` | The engine's own default. Not `deep`: deeper spends more of somebody's quota, and asking for it is the caller's decision. |
 | `--pivot` | `recommend` | Task 14's own default. Related objects are recorded and **not** queried, because looking up something the observable merely touched is a wider disclosure than looking up what the analyst typed. |
 | `--allow-remote-pivot-lookup` | off | The second half of Task 14's deliberate double gate. Only meaningful with `--pivot enrich`. |
+| `--objective` | `triage` | `corroborate` spends at most one extra round after coverage is adequate, seeking an adverse search from a source family independent of the assessment's basis. Never a guarantee that one exists. |
 | `--format` | `text` | `json` is the integration contract. |
 
 Neither default is invented here; both are the values the engine already

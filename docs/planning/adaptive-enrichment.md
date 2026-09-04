@@ -95,6 +95,33 @@ effect: a provider in an already-covered family is still chosen readily for a
 capability nobody covers. Family independence bounds corroboration, not
 usefulness.
 
+### An empty answer does not close a family (Task 24 Phase 2)
+
+A family target counts a family once it has **answered**. A dataset that
+returned data has answered for its family; a dataset that returned `NO_DATA`
+has answered *for that dataset*. While a sibling dataset in the same family
+that serves the capability for this observable is still eligible — configured,
+affordable, not blocked, not yet asked — the family stays **open** and the goal
+stays unsatisfied, so the sibling is a candidate (`NEW_DATASET_SAME_FAMILY`)
+rather than closed out by its relative's silence. Once every eligible dataset
+has answered, or none remains eligible, the family counts exactly as before.
+
+Reconstructed live: an address's two-family reputation target was met by one
+family's data plus a URL tracker's `NO_DATA`, so the same house's IOC tracker —
+eligible, unattempted, and built for a different question — was never a
+candidate, the only continuation directive named a capability nobody configured
+could serve, and the run stopped "without progress" with an unasked source in
+the catalogue. Family sameness bounds *corroboration*: three abuse.ch datasets
+are still one origin in Task 17. It does not mean "never ask another dataset in
+the family" when the first one held nothing.
+
+This is gap closure, not query-everything. A family that answered with data is
+closed; a provider that already answered a capability — by name, or as part of
+a whole-document response it declared invariant — is never the sibling that
+reopens it; the budget, the depth, the activation rules, the blocked set and the
+attempted set all apply unchanged. `PlanningState.answered` records which
+provider answered which capability so that last rule holds.
+
 ### One provider, one call, several questions
 
 A provider that serves several *currently active* goals is asked **once**, for all
@@ -276,7 +303,7 @@ why a planner is worth having:
 | Status | Effect on coverage |
 |---|---|
 | `SUCCESS` | covered |
-| `NO_DATA` | **covered** — the source was consulted and answered |
+| `NO_DATA` | **answered, empty** — counts toward a family target once no eligible sibling dataset in the family remains unasked (§3) |
 | `PARTIAL` | recorded, but satisfies no family target |
 | everything else | no coverage |
 

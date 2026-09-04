@@ -242,6 +242,12 @@ distinguishable within it.
 A `SAME_IP` match is a narrower statement than an exact one: ThreatFox saw a C2
 on a port of this address, which is not the same as "this address is a C2".
 
+The claim carries bounded highlights so a report can say exactly that in the
+provider's own terms (Task 24 Phase 2): the `ioc` that matched (`ip:port`),
+`matched_component: host`, the `port`, the `threat_type`, the family and the
+contributor's `confidence_level` — quoted, never weighed. The scope stays
+`SAME_IP`; nothing rewrites an `ip:port` record into an exact bare-address IOC.
+
 ---
 
 ## 8. Unsupported is not the same as empty
