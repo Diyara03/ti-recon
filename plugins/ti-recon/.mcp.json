@@ -4,16 +4,19 @@
       "command": "uv",
       "args": [
         "run",
-        "--project", "${CLAUDE_PLUGIN_ROOT}/runtime",
+        "--project",
+        "${CLAUDE_PLUGIN_ROOT}/runtime",
         "--locked",
         "--no-dev",
         "--no-editable",
         "--no-env-file",
-        "--python", "3.12",
+        "--python",
+        "3.12",
         "ti-recon-mcp"
       ],
       "env": {
         "UV_PROJECT_ENVIRONMENT": "${CLAUDE_PLUGIN_DATA}/runtime-env",
+        "UV_COMPILE_BYTECODE": "1",
         "TI_RECON_CREDENTIAL_SETUP": "claude-plugin",
         "VIRUSTOTAL_API_KEY": "${user_config.virustotal_api_key}",
         "URLSCAN_API_KEY": "${user_config.urlscan_api_key}",

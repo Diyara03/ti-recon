@@ -67,6 +67,7 @@ __all__ = [
     "StringList",
     "SubstringList",
     "compile_list",
+    "parse_cidr",
 ]
 
 #: Which matchers this build evaluates. ``regex`` is ``False`` — see
@@ -333,7 +334,7 @@ def _usable(entry: object) -> str | None:
         return None
     if not entry.strip() or len(entry) > MAX_ENTRY_LENGTH:
         return None
-    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in entry):
+    if _CONTROL_CHARACTER.search(entry) is not None:
         return None
     return entry
 
@@ -400,6 +401,54 @@ def _compile_hostname(
     ), LoadDiagnostics(invalid_entry_count=invalid)
 
 
+#: A canonical dotted-quad IPv4 address with an optional prefix length, in the
+#: one spelling :func:`ipaddress.ip_network` accepts without normalisation: no
+#: leading zeros, no whitespace, no shorthand, no scope, decimal only. Anything
+#: else goes to :mod:`ipaddress` itself, so the fast path can never accept an
+#: entry the standard library would refuse or read one differently.
+_CANONICAL_IPV4_CIDR: Final[re.Pattern[str]] = re.compile(
+    r"(?P<address>(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}"
+    r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))"
+    r"(?:/(?P<prefix>3[0-2]|[12]?\d))?"
+)
+
+#: ASCII control characters, which no usable entry may contain.
+_CONTROL_CHARACTER: Final[re.Pattern[str]] = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def parse_cidr(entry: str) -> tuple[int, int, int, bool] | None:
+    """``(version, prefixlen, network_address, is_single_host)`` or ``None``.
+
+    Exactly what :func:`ipaddress.ip_network(entry, strict=False)` yields —
+    host bits masked off, a ``/32`` or a bare address a single host — computed
+    without constructing an :class:`~ipaddress.IPv4Network` where the entry is
+    a canonical IPv4 spelling, because the shipped snapshot holds ~140,000 of
+    those and the object construction was most of the server's startup.
+    Everything that is not that one spelling — IPv6, a leading zero, a
+    shorthand, whitespace — is handed to :mod:`ipaddress`, so the answer is the
+    standard library's in every case. A test compares the two over every
+    entry of every shipped list.
+    """
+    match = _CANONICAL_IPV4_CIDR.fullmatch(entry)
+    if match is None:
+        try:
+            network = ipaddress.ip_network(entry, strict=False)
+        except ValueError:
+            return None
+        return (
+            network.version,
+            network.prefixlen,
+            int(network.network_address),
+            network.num_addresses == 1,
+        )
+    prefixlen = 32 if match.group("prefix") is None else int(match.group("prefix"))
+    address = 0
+    for octet in match.group("address").split("."):
+        address = (address << 8) | int(octet)
+    network_address = address & (((1 << prefixlen) - 1) << (32 - prefixlen))
+    return (4, prefixlen, network_address, prefixlen == 32)
+
+
 def _compile_cidr(
     common: _ListMeta, raw: RawWarningList
 ) -> tuple[CompiledList | None, LoadDiagnostics]:
@@ -411,18 +460,17 @@ def _compile_cidr(
         if usable is None:
             invalid += 1
             continue
-        try:
-            network = ipaddress.ip_network(usable, strict=False)
-        except ValueError:
+        parsed = parse_cidr(usable)
+        if parsed is None:
             # Skipped, never repaired. A malformed prefix is not a hint about
             # which network was meant.
             invalid += 1
             continue
-        if network.num_addresses == 1:
-            hosts.add((network.version, int(network.network_address)))
+        version, prefixlen, network_address, single = parsed
+        if single:
+            hosts.add((version, network_address))
         else:
-            key = (network.version, network.prefixlen)
-            networks.setdefault(key, set()).add(int(network.network_address))
+            networks.setdefault((version, prefixlen), set()).add(network_address)
     if not hosts and not networks:
         return None, LoadDiagnostics(
             skipped_list_count=1,
