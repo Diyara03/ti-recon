@@ -35,7 +35,11 @@ from ti_recon.providers.gti.normalizer import (
     SANDBOX_VERDICT_EFFECTS,
     normalize_sandbox_verdicts,
 )
-from ti_recon.reasoning.claims.models import ClaimAssertionStrength, ClaimSemantic
+from ti_recon.reasoning.claims.models import (
+    ClaimAssertionStrength,
+    ClaimQualification,
+    ClaimSemantic,
+)
 from ti_recon.reasoning.claims.policy import CLAIM_SEMANTICS_POLICY_VERSION
 from ti_recon.reasoning.claims.translation import ClaimTranslationContext
 from ti_recon.reasoning.fusion.models import ClaimDecisionRole
@@ -193,7 +197,11 @@ async def test_a_malicious_sandbox_record_is_a_firm_sandbox_classification() -> 
     claim = claims[record.id]
     assert claim.semantic is ClaimSemantic.SANDBOX_CLASSIFICATION
     assert claim.strength is ClaimAssertionStrength.ASSERTED
-    assert decision_role_for(claim) is ClaimDecisionRole.CORROBORATIVE
+    # Two confident malicious verdicts out of three evaluations, no harmless
+    # verdict: the consensus test passes, so the claim may decide alone
+    # (Task 24 Phase 1B). The Phase 1 expectation was corroborative.
+    assert claim.qualification is ClaimQualification.STRONG_DIRECT
+    assert decision_role_for(claim) is ClaimDecisionRole.DECISIVE
     assert claim.source_family == GTI_SOURCE_FAMILY
     assert claim.lineage_group_id == GTI_LINEAGE_GROUP
     assert any(item.startswith("verdict: malicious") for item in claim.highlights)
