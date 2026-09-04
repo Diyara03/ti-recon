@@ -25,9 +25,10 @@ planner with a worse view, and the first thing it would break is the budget.
 
 from __future__ import annotations
 
-from ti_recon.enums import ProviderCapability
+from ti_recon.enums import CoverageRelevance, ProviderCapability
 from ti_recon.investigation.models import ContinuationDirective, ContinuationNeed
 from ti_recon.reasoning.fusion.independence import independence_groups
+from ti_recon.reasoning.fusion.models import ContributionRole
 from ti_recon.reasoning.fusion.results import FusionResult
 from ti_recon.reasoning.readiness.models import (
     ContinuationState,
@@ -50,10 +51,17 @@ BREADTH_GAP_TYPES: frozenset[GapType] = frozenset({GapType.INDEPENDENT_CHALLENGE
 
 __all__ = [
     "BREADTH_GAP_TYPES",
+    "CORROBORATION_REQUIREMENT_ID",
+    "basis_source_families",
     "benign_basis_families",
+    "corroboration_directives",
     "directives_for",
     "wants_continuation",
 ]
+
+#: The requirement id a corroboration directive carries. Not a Task 18
+#: requirement: the caller asked, not readiness, and the id says so.
+CORROBORATION_REQUIREMENT_ID = "caller.corroboration"
 
 
 def wants_continuation(readiness: AssessmentReadinessResult) -> bool:
@@ -95,6 +103,64 @@ def benign_basis_families(fusion: FusionResult) -> frozenset[str]:
         for group in independence_groups(fusion.normalized_claims)
         if benign_ids & set(group.claim_ids)
         for claim_id in group.claim_ids
+    )
+
+
+def basis_source_families(fusion: FusionResult) -> frozenset[str]:
+    """Source families dependent on the origins the verdict rests on.
+
+    The corroboration hint: a second source is only a second source if it is
+    independent of what already supported the verdict, so the planner is told
+    which families are already known to share that origin. Like
+    :func:`benign_basis_families`, a hint and never a proof -- Task 17 regroups
+    from the returned provenance, and a relay of the same origin is caught
+    there.
+    """
+    basis_ids = {
+        item.claim_id for item in fusion.contributions_with_role(ContributionRole.SUPPORTS_VERDICT)
+    }
+    if not basis_ids:
+        return frozenset()
+    by_id = {claim.claim_id: claim for claim in fusion.normalized_claims}
+    return frozenset(
+        by_id[claim_id].source_family
+        for group in independence_groups(fusion.normalized_claims)
+        if basis_ids & set(group.claim_ids)
+        for claim_id in group.claim_ids
+        if claim_id in by_id
+    )
+
+
+def corroboration_directives(
+    fusion: FusionResult,
+    *,
+    admissible: frozenset[ProviderCapability] | None,
+) -> tuple[ContinuationDirective, ...]:
+    """What an explicit corroboration objective asks Task 13 for.
+
+    One more independent adverse search, expressed exactly the way readiness
+    expresses the benign challenge: ``ADDITIONAL_COVERAGE`` on the adverse-search
+    capabilities this depth admits, avoiding the families the verdict already
+    rests on. It reuses the breadth seam Task 13 already has, so it adds no
+    capability, activates no goal, raises no depth, repeats no call and names
+    no provider; the planner still ranks, still refuses an attempted call and
+    still has to afford it. Empty when the depth admits no adverse-search
+    capability, which is the correct answer rather than a failure.
+    """
+    targets = DIRECTIONAL_SEARCH_CAPABILITIES
+    if admissible is not None:
+        targets = targets & admissible
+    avoid = basis_source_families(fusion)
+    return tuple(
+        ContinuationDirective(
+            requirement_id=CORROBORATION_REQUIREMENT_ID,
+            capability=capability,
+            need=ContinuationNeed.ADDITIONAL_COVERAGE,
+            criticality=CoverageRelevance.RELEVANT,
+            reason="caller.independent_corroboration",
+            avoid_source_families=avoid,
+        )
+        for capability in sorted(targets, key=lambda item: item.value)
     )
 
 

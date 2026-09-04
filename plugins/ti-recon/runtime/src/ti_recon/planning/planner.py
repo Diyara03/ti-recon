@@ -317,7 +317,9 @@ class AdaptiveEnrichmentPlanner:
         adapters = sorted(self._registry.list_all(), key=lambda item: item.descriptor.provider_id)
         for goal in state.goals:
             target = state.effective_target(goal.capability, goal.families_for_depth(request.depth))
-            if state.satisfied(goal, target):
+            if state.satisfied(
+                goal, target, open_families=self._open_families(goal, request, state, adapters)
+            ):
                 continue
             if not state.in_focus(goal.capability):
                 # A later round asked for specific missing information. The goal
@@ -338,7 +340,9 @@ class AdaptiveEnrichmentPlanner:
                     )
                 )
                 continue
-            required_unsatisfied = goal.is_required and not state.satisfied(goal, target)
+            required_unsatisfied = goal.is_required and not state.satisfied(
+                goal, target, open_families=self._open_families(goal, request, state, adapters)
+            )
 
             for adapter in adapters:
                 skip = self._ineligible(
@@ -375,6 +379,55 @@ class AdaptiveEnrichmentPlanner:
                     )
                 )
         return candidates, skipped
+
+    def _open_families(
+        self,
+        goal: CapabilityGoal,
+        request: EnrichmentPlanningRequest,
+        state: PlanningState,
+        adapters: list[ProviderAdapter],
+    ) -> frozenset[str]:
+        """Families that answered ``NO_DATA`` and still have an eligible dataset.
+
+        The gap-closure rule (Task 24 Phase 2). A family target counts a family
+        once it has *answered*; a dataset holding nothing is an answer about that
+        dataset, and a sibling dataset in the same family that serves the same
+        capability for this observable, is configured, affordable and has not
+        been asked, may hold something. Until it has been asked -- or is
+        ineligible for any of the ordinary reasons -- the family stays open and
+        the goal stays unsatisfied, so the sibling becomes a candidate rather
+        than being closed out by its relative's empty answer.
+
+        Generic by construction: nothing here names a provider, a family or a
+        capability. It never widens a goal, activates one, raises a budget or
+        repeats a call, and a family whose dataset returned *data* is not open --
+        one answer with content is what the target was counting.
+        """
+        empty = state.no_data_families.get(goal.capability, set())
+        if not empty:
+            return frozenset()
+        open_families: set[str] = set()
+        for adapter in adapters:
+            profile = self._profiles.get(adapter.descriptor.provider_id)
+            if profile is None or profile.source_family not in empty:
+                continue
+            if profile.source_family in open_families:
+                continue
+            if (profile.provider_id, goal.capability) in state.answered:
+                # This dataset already answered the capability -- by name, or
+                # as part of a whole-document response it declared invariant.
+                # It is not a sibling still to ask.
+                continue
+            skip = self._ineligible(
+                adapter=adapter,
+                goal=goal,
+                object_type=request.intel_object.object_type,
+                request=request,
+                state=state,
+            )
+            if skip is None:
+                open_families.add(profile.source_family)
+        return frozenset(open_families)
 
     def _goal_active(
         self,
@@ -501,6 +554,7 @@ class AdaptiveEnrichmentPlanner:
         # "no eligible provider" for it would describe a design decision as a
         # failure.
         baseline_done = state.baseline_attempted()
+        adapters = sorted(self._registry.list_all(), key=lambda item: item.descriptor.provider_id)
         active = [
             goal
             for goal in state.goals
@@ -516,6 +570,7 @@ class AdaptiveEnrichmentPlanner:
             state.satisfied(
                 goal,
                 state.effective_target(goal.capability, goal.families_for_depth(request.depth)),
+                open_families=self._open_families(goal, request, state, adapters),
             )
             for goal in active
         ):

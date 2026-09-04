@@ -58,6 +58,9 @@ class InvestigationResult(FrozenTiReconModel):
     #: carrying only the mode cannot say whether anything about a related
     #: observable actually left the machine.
     allow_remote_pivot_lookup: bool = False
+    #: The caller's stopping objective, recorded because it changes how many
+    #: sources were asked after readiness was adequate.
+    objective: str = Field(default="triage", min_length=1, max_length=32)
 
     #: Everything executed and covered, across every round.
     enrichment: AdaptiveEnrichmentResult

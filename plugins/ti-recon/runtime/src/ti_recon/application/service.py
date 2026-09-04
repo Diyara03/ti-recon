@@ -185,7 +185,7 @@ class InvestigationApplication:
         """
         root = resolve_observable(request)
         return await self.orchestrator.investigate(
-            InvestigationRequest(root=root, depth=request.depth),
+            InvestigationRequest(root=root, depth=request.depth, objective=request.objective),
             context,
             pivot_policy=PivotPolicy(
                 mode=request.pivot_mode,

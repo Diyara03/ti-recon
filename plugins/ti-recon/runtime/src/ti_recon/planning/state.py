@@ -11,9 +11,17 @@ Coverage from outcomes
 ``ProviderRunStatus`` is read carefully, because the difference between "asked and
 told nothing" and "could not ask" is the whole point of having a planner:
 
-* ``SUCCESS`` / ``NO_DATA`` — **covered**. The source was consulted and answered.
-  A ``NO_DATA`` provider must not be asked again; the right move is a different
-  source, and there is nothing to learn by repeating the question.
+* ``SUCCESS`` — **covered**. The source was consulted and answered with data.
+* ``NO_DATA`` — **answered, empty**. The source was consulted and held nothing.
+  It must not be asked again; the right move is a different source, and there
+  is nothing to learn by repeating the question. It covers the *dataset* that
+  answered, and it counts toward a family target -- except while another
+  dataset in the same family that serves the capability is still eligible and
+  unattempted. One dataset of a family holding nothing says nothing about a
+  sibling dataset built for a different question (Task 24 Phase 2): a URL
+  tracker's "nothing" about an address does not exhaust the family's IOC
+  tracker, and treating it as though it did is how an eligible source went
+  unasked while readiness reported the coverage inadequate.
 * ``PARTIAL`` — partial. Counts as *a* family for the capability but does not
   satisfy a multi-family target on its own.
 * everything else — no coverage. Unsupported, unconfigured, refused, throttled or
@@ -100,11 +108,22 @@ class PlanningState:
     #: for a *different* capability later — one dataset can hold several kinds of
     #: answer — but never the same question twice.
     attempted: set[tuple[str, ProviderCapability]] = field(default_factory=set)
+    #: ``(provider_id, capability)`` pairs one of this provider's responses
+    #: *answered*, which is wider than ``attempted`` exactly where a provider
+    #: declared that one read returns its whole document. Such a provider has
+    #: answered the capability whether or not it was asked by name, so it can
+    #: never be the "sibling still to ask" that keeps a family open.
+    answered: set[tuple[str, ProviderCapability]] = field(default_factory=set)
     #: Providers unusable for the remainder of this run.
     blocked: set[str] = field(default_factory=set)
 
-    #: capability -> source families that covered it.
+    #: capability -> source families that covered it with data.
     covered_families: dict[ProviderCapability, set[str]] = field(default_factory=dict)
+    #: capability -> source families whose every answer so far was ``NO_DATA``.
+    #: A family moves to ``covered_families`` the moment one of its datasets
+    #: returns data; until then it is answered-but-empty, and it satisfies a
+    #: target only once no sibling dataset that could still answer remains.
+    no_data_families: dict[ProviderCapability, set[str]] = field(default_factory=dict)
     #: capability -> source families that partially covered it.
     partial_families: dict[ProviderCapability, set[str]] = field(default_factory=dict)
 
@@ -182,7 +201,7 @@ class PlanningState:
         """
         if capability not in self.additional_coverage_capabilities:
             return base
-        return max(base, len(self.covered_families.get(capability, set())) + 1)
+        return max(base, len(self.answered_families(capability)) + 1)
 
     def in_focus(self, capability: ProviderCapability) -> bool:
         """Whether this round may pursue ``capability``."""
@@ -226,8 +245,10 @@ class PlanningState:
                 self.requested_capabilities if requested is None else requested
             ),
             attempted=set(self.attempted),
+            answered=set(self.answered),
             blocked=set(self.blocked),
             covered_families={key: set(value) for key, value in self.covered_families.items()},
+            no_data_families={key: set(value) for key, value in self.no_data_families.items()},
             partial_families={key: set(value) for key, value in self.partial_families.items()},
             malicious_families=set(self.malicious_families),
             benign_families=set(self.benign_families),
@@ -247,24 +268,44 @@ class PlanningState:
     # Questions the planner asks
     # ------------------------------------------------------------------ #
 
-    def families_for(self, capability: ProviderCapability) -> frozenset[str]:
-        """Families that covered ``capability``, fully or partially."""
+    def answered_families(self, capability: ProviderCapability) -> frozenset[str]:
+        """Families that answered ``capability`` in full, with data or with none."""
         return frozenset(
             self.covered_families.get(capability, set())
-            | self.partial_families.get(capability, set())
+            | self.no_data_families.get(capability, set())
+        )
+
+    def families_for(self, capability: ProviderCapability) -> frozenset[str]:
+        """Families that answered ``capability``, fully, empty, or partially."""
+        return frozenset(
+            self.answered_families(capability) | self.partial_families.get(capability, set())
         )
 
     def is_covered(self, capability: ProviderCapability) -> bool:
-        return bool(self.covered_families.get(capability))
+        return bool(self.answered_families(capability))
 
-    def satisfied(self, goal: CapabilityGoal, target_families: int) -> bool:
+    def satisfied(
+        self,
+        goal: CapabilityGoal,
+        target_families: int,
+        *,
+        open_families: frozenset[str] = frozenset(),
+    ) -> bool:
         """Whether ``goal`` has the independent coverage it asked for.
 
         Only *full* coverage counts towards a family target. A partial answer is
         real information and is recorded, but letting it satisfy a multi-family
         requirement would report a coverage level nobody achieved.
+
+        ``open_families`` are families whose only answer so far was ``NO_DATA``
+        and which still hold an eligible, unattempted dataset for this
+        capability. The planner supplies them, because eligibility is its
+        knowledge and not the state's. Such a family has not finished
+        answering, so it does not yet count -- which is what lets the sibling
+        dataset be considered instead of the goal closing on an empty answer.
         """
-        return len(self.covered_families.get(goal.capability, set())) >= target_families
+        answered = self.answered_families(goal.capability) - open_families
+        return len(answered) >= target_families
 
     @property
     def has_directional_evidence(self) -> bool:
@@ -333,9 +374,19 @@ class PlanningState:
 
         covered = outcome.status in COVERING_STATUSES
         partial = outcome.status in PARTIAL_STATUSES
-        if covered:
+        if covered or partial:
+            self.answered.update(
+                (call.provider_id, capability) for capability in call.answered_capabilities
+            )
+        if outcome.status is ProviderRunStatus.NO_DATA:
+            for capability in call.answered_capabilities:
+                if call.source_family not in self.covered_families.get(capability, set()):
+                    self.no_data_families.setdefault(capability, set()).add(call.source_family)
+        elif covered:
             for capability in call.answered_capabilities:
                 self.covered_families.setdefault(capability, set()).add(call.source_family)
+                # Data outranks an earlier empty answer from a sibling dataset.
+                self.no_data_families.get(capability, set()).discard(call.source_family)
         elif partial:
             for capability in call.answered_capabilities:
                 self.partial_families.setdefault(capability, set()).add(call.source_family)
@@ -425,7 +476,7 @@ class PlanningState:
         for goal in self.goals:
             capability = goal.capability
             target = depth_targets.get(capability, 1)
-            full = self.covered_families.get(capability, set())
+            full = self.answered_families(capability)
             partial = self.partial_families.get(capability, set())
             providers = considered.get(capability, ())
             if len(full) >= target:
