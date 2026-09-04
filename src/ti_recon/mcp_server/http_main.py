@@ -73,11 +73,14 @@ from ti_recon.mcp_server.runtime import build_remote_runtime
 
 __all__ = [
     "ENVIRONMENT",
+    "MINIMUM_PYJWT",
     "TENANT_KEY_VARIABLE",
+    "RemoteDependencyError",
     "RemoteDeployment",
     "build_remote_application",
     "load_deployment",
     "main",
+    "require_remote_dependencies",
 ]
 
 #: Every variable this process reads, and what it means.
@@ -203,11 +206,74 @@ async def build_remote_application(deployment: RemoteDeployment) -> RemoteHttpAp
     )
 
 
+#: The PyJWT release the remote verifier's security tests were written against.
+#:
+#: Below it, PyJWT's own defaults silently take back checks this layer relies
+#: on — key/algorithm binding, the RSA modulus floor, refusal of unknown
+#: critical header extensions. The ``remote`` extra floors the version in
+#: metadata; this is the same floor enforced on the environment that is
+#: actually running, because an environment installed without the extra
+#: carries whatever the MCP SDK's looser floor allowed.
+MINIMUM_PYJWT: Final[tuple[int, int]] = (2, 13)
+
+
+class RemoteDependencyError(RuntimeError):
+    """The remote surface's dependencies are missing or below their floor.
+
+    Raised before any configuration is read and before anything listens, so a
+    process that cannot verify a token the way its tests assume never serves
+    one. The message names the package and the extra, never an environment
+    value.
+    """
+
+
+def require_remote_dependencies() -> None:
+    """Refuse to serve unless the ``remote`` extra's guarantees actually hold.
+
+    Three checks, each explicit rather than a broad ``except ImportError``:
+    PyJWT importable and at or above :data:`MINIMUM_PYJWT`; PyJWT's asymmetric
+    algorithms available, which is the ``crypto`` extra (without it PyJWT can
+    only do HMAC, which a resource server must never verify with); and uvicorn
+    importable. Starlette is imported unconditionally by the gate module and
+    fails at import time on its own.
+    """
+    try:
+        import jwt
+        from jwt import algorithms
+    except ImportError as error:
+        msg = "PyJWT is not installed; install ti-recon[remote] to serve the remote surface"
+        raise RemoteDependencyError(msg) from error
+    version = tuple(int(part) for part in jwt.__version__.split(".")[:2])
+    if version < MINIMUM_PYJWT:
+        msg = (
+            f"PyJWT {jwt.__version__} is below the {MINIMUM_PYJWT[0]}.{MINIMUM_PYJWT[1]} "
+            "floor the remote verifier requires; install ti-recon[remote]"
+        )
+        raise RemoteDependencyError(msg)
+    if not algorithms.has_crypto:
+        msg = (
+            "PyJWT is installed without its crypto extra, so asymmetric verification is "
+            "unavailable; install ti-recon[remote]"
+        )
+        raise RemoteDependencyError(msg)
+    try:
+        import uvicorn  # noqa: F401
+    except ImportError as error:
+        msg = "uvicorn is not installed; install ti-recon[remote] to serve the remote surface"
+        raise RemoteDependencyError(msg) from error
+
+
 def main(argv: list[str] | None = None) -> int:
     """Serve the authenticated remote MCP application, on one worker."""
     parser = _parser()
     parser.parse_args(argv)
     _configure_logging()
+
+    try:
+        require_remote_dependencies()
+    except RemoteDependencyError as error:
+        logging.getLogger("ti_recon.mcp_server").error("dependency error: %s", error)
+        return 2
 
     import asyncio
 

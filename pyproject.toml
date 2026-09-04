@@ -16,32 +16,16 @@ dependencies = [
     # the development Inspector, and a runtime dependency is inherited by every
     # consumer of this library.
     "mcp>=2.1,<3",
-    # Declared rather than inherited. Both already arrive with `mcp`, and both
-    # are imported directly here — PyJWT to verify remote access tokens against
-    # an authorization server's JWKS, uvicorn to serve the remote ASGI app — so
-    # a future SDK release dropping either must be a resolution failure rather
-    # than an ImportError in production. The `crypto` extra is what supplies
-    # asymmetric (RS256/PS256/ES256) verification; without it PyJWT can only do
-    # HMAC, which this repository refuses for a resource server.
-    # Floored at 2.13 for security behaviour the remote verifier delegates to
-    # the library rather than reimplementing: PyJWK binding a key to the
-    # algorithm it was published for, `enforce_minimum_key_length` turning an
-    # undersized RSA modulus into an error instead of a warning, and rejection
-    # of unknown critical (`crit`) header extensions. This is the baseline the
-    # verifier's security tests were written and run against; an older release
-    # would silently move checks TI Recon depends on back into the library's
-    # permissive defaults. Not pinned exactly, so compatible 2.x security
-    # updates stay installable.
-    "pyjwt[crypto]>=2.13,<3",
-    "uvicorn>=0.34,<1",
-    # Same rule, and the one this branch nearly missed. `mcp_server/http.py`
-    # imports Starlette's application, request, response and ASGI types
-    # directly to build the preflight gate, so an SDK release that stopped
-    # depending on Starlette must fail resolution rather than import. The floor
-    # is the SDK's own; the ceiling is ours, because a 2.x reworking the ASGI
-    # surface is a change this gate would have to be reviewed against.
-    "starlette>=0.27,<2",
+    # What the remote HTTP surface additionally imports lives in the `remote`
+    # extra below. The local stdio server — the primary deployment, and what
+    # the Claude Code plugin runs — never imports PyJWT, uvicorn or Starlette
+    # itself. Note, and measure before assuming otherwise: the MCP SDK declares
+    # all three (`pyjwt[crypto]`, `uvicorn`, `starlette`) as its own hard
+    # requirements and imports `cryptography` when `mcp.server` is imported, so
+    # the extra changes what TI Recon *requires* and what its security floors
+    # cover, not what a local environment ends up containing.
 ]
+
 
 [project.scripts]
 # The analyst entry point (Task 20). Stdlib argparse only: the CLI adds no
@@ -56,6 +40,35 @@ ti-recon-mcp = "ti_recon.mcp_server.main:main"
 ti-recon-mcp-http = "ti_recon.mcp_server.http_main:main"
 
 [project.optional-dependencies]
+# The authenticated remote HTTP surface (`ti-recon-mcp-http`). Declared rather
+# than inherited: PyJWT verifies remote access tokens against an authorization
+# server's JWKS, uvicorn serves the remote ASGI app, and `mcp_server/http.py`
+# imports Starlette's application, request, response and ASGI types directly
+# to build the preflight gate — so a future SDK release dropping any of them
+# must be a resolution failure rather than an ImportError in production. The
+# `crypto` extra is what supplies asymmetric (RS256/PS256/ES256) verification;
+# without it PyJWT can only do HMAC, which this repository refuses for a
+# resource server.
+# PyJWT is floored at 2.13 for security behaviour the remote verifier
+# delegates to the library rather than reimplementing: PyJWK binding a key to
+# the algorithm it was published for, `enforce_minimum_key_length` turning an
+# undersized RSA modulus into an error instead of a warning, and rejection of
+# unknown critical (`crit`) header extensions. This is the baseline the
+# verifier's security tests were written and run against; an older release
+# would silently move checks TI Recon depends on back into the library's
+# permissive defaults. Not pinned exactly, so compatible 2.x security updates
+# stay installable. The remote process checks this floor at startup and
+# refuses to start below it — see `mcp_server/http_main.py` — because a floor
+# that is only a metadata declaration is not enforced on an environment that
+# was installed without the extra.
+# Starlette's floor is the SDK's own; the ceiling is ours, because a 2.x
+# reworking the ASGI surface is a change the gate would have to be reviewed
+# against.
+remote = [
+    "pyjwt[crypto]>=2.13,<3",
+    "uvicorn>=0.34,<1",
+    "starlette>=0.27,<2",
+]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",

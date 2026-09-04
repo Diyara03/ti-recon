@@ -732,14 +732,26 @@ def test_the_gate_adds_no_security_configuration_flag() -> None:
 KNOWN_UNDECLARED_IMPORTS = frozenset({"aiohttp", "pydantic_core"})
 
 
-def _declared_distributions() -> set[str]:
-    """Requirement names from ``pyproject``, normalised the way PyPI does."""
-    import re
+def _declared_requirements() -> list[str]:
+    """Core requirements plus the ``remote`` extra's.
+
+    Both are TI Recon's own declarations. The remote surface's imports live in
+    the extra since Task 23 split the local plugin runtime from the remote
+    HTTP profile; an import that is in neither is undeclared.
+    """
     import tomllib
 
     manifest = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    project = manifest["project"]
+    return [*project["dependencies"], *project["optional-dependencies"]["remote"]]
+
+
+def _declared_distributions() -> set[str]:
+    """Requirement names from ``pyproject``, normalised the way PyPI does."""
+    import re
+
     names = set()
-    for requirement in manifest["project"]["dependencies"]:
+    for requirement in _declared_requirements():
         name = re.split(r"[<>=!\[;~ ]", requirement, maxsplit=1)[0]
         names.add(name.strip().lower().replace("-", "_"))
     return names
@@ -801,12 +813,7 @@ def test_the_asgi_dependencies_the_gate_imports_are_declared_with_a_ceiling() ->
     lifespan messages and header lists directly, so a major that reworked any of
     them is a change to review rather than to receive.
     """
-    import tomllib
-
-    manifest = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
-    requirements = {
-        item.split(">=")[0].split("[")[0]: item for item in manifest["project"]["dependencies"]
-    }
+    requirements = {item.split(">=")[0].split("[")[0]: item for item in _declared_requirements()}
     for name in ("starlette", "uvicorn", "mcp"):
         assert name in requirements, f"{name} is imported and must be declared"
         assert "<" in requirements[name], f"{name} needs an upper bound: {requirements[name]}"
