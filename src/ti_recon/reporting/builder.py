@@ -228,6 +228,9 @@ def _basis_item(item: ClaimContribution, claim: NormalizedClaim | None) -> Basis
         claim_id=item.claim_id,
         evidence_id=item.evidence_id,
         reason_codes=tuple(sorted(item.reason_codes)),
+        qualification="unqualified" if claim is None else claim.qualification.value,
+        qualification_reasons=() if claim is None else claim.qualification_reasons,
+        highlights=() if claim is None else claim.highlights,
     )
 
 
@@ -249,6 +252,9 @@ def _unexplained(
             source_family=item.source_family,
             subject_key=(
                 "" if claims.get(item.claim_id) is None else claims[item.claim_id].subject_key
+            ),
+            highlights=(
+                () if claims.get(item.claim_id) is None else claims[item.claim_id].highlights
             ),
         )
         for item in sorted(found, key=lambda entry: (entry.semantic.value, entry.claim_id))

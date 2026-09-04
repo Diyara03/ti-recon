@@ -194,6 +194,47 @@ Implemented (Jira Tasks 1-19):
   and the floor is not weakened to reach it. See `docs/claude-plugin.md` and
   `docs/claude-plugin-pilot-checklist.md`.
 
+- Task 24 Phase 1 — GTI evidence quality and known-malware underclassification.
+  Reconstructed live: a sample every GTI sandbox called malicious reached
+  fusion carrying only an aggregated detection count, because
+  `sandbox_verdicts` was never normalized, the behaviour summary's own
+  `verdicts` were context only, a `FILE_BEHAVIOR`-only request below DEEP
+  re-fetched the primary object and mis-credited behaviour coverage, and
+  fusion recognised compatible propositions only across independence groups.
+  Fixed at the earliest boundary each time: `gti.sandbox_verdicts` (one record
+  per response, never `SUPPORTS_BENIGN`), `gti.behavior.verdict` with a closed
+  verdict-strength table and bounded highlights, a `NOT_SUPPORTED` refusal
+  (`GTI_FILE_BEHAVIOR_REQUIRES_DEEP`), exact translator entries for the five
+  `gti.threat_association.*` claim types a live DEEP run surfaced unmapped, the
+  `malicious.single_origin_compatible_propositions.v1` verdict rule at MEDIUM,
+  `highlights` carried through claims to the report, and a correlation graph
+  that refuses an over-long related object instead of ending the run.
+  Phase 1B closed the remaining policy gap: source independence and evidence
+  strength are different concepts, so a claim now carries a
+  `ClaimQualification` set only by its provider's own versioned test over its
+  own documented fields. GTI's consensus test (≥2 sandboxes, `malicious`, no
+  `harmless`, a malicious majority of all evaluations, ≥2 malicious verdicts
+  at or above `SANDBOX_CONFIDENCE_FLOOR` forming a majority of those that
+  stated a confidence — unstated confidence is neither for nor against) marks
+  `gti.sandbox_verdicts`
+  `STRONG_DIRECT`, and fusion lets a `STRONG_DIRECT` sandbox classification
+  decide alone at MEDIUM — after Task 16, so EICAR stays explained. GTI
+  exposes no execution-quality field for these verdicts, so none is modelled.
+  A `NOT_SUPPORTED` readiness check no longer inherits a directional yield
+  from the same provider's other call. `FUSION_POLICY_VERSION` and
+  `CLAIM_SEMANTICS_POLICY_VERSION` are `1.2.0`. Live, with only GTI and MISP
+  configured: see `docs/providers/gti.md` §7a and §12 and
+  `docs/reasoning/evidence-fusion.md` §5. Open decision, not an omission:
+  whether a curated family attribution may corroborate a same-origin sandbox
+  verdict (report and collection membership never may). Recorded, not fixed:
+  T24-FINDING-01 (MISP matching list name not surfaced), T24-FINDING-04
+  (correlation issues not projected into the analyst report), T24-FINDING-05
+  (`campaigns` sits past the DEEP file relationship budget), and
+  T24-CALIBRATION-01: `SANDBOX_CONFIDENCE_FLOOR` is TI Recon's own versioned
+  heuristic — the API documents `confidence` only as 0–100 and defines no
+  vendor threshold — and must be calibrated against more real malicious,
+  benign and false-positive samples.
+
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Task 13 chooses what
 to ask, Task 14 assembles what came back, Task 15 says what each finding means in
@@ -1054,8 +1095,8 @@ about it.
     `assessment_id` incorporate `Evidence.id`, so re-running fusion over stored
     evidence reproduces them exactly while a fresh collection of the same
     intelligence does not — the cross-run identity is the proposition
-    (`subject + semantic + scope`). `FUSION_POLICY_VERSION` 1.0.0 is the first
-    finalized policy; once a version has shipped or assessments are persisted
+    (`subject + semantic + scope`). `FUSION_POLICY_VERSION` 1.2.0 (Task 24,
+    succeeding 1.1.0) succeeds 1.0.0, the first finalized policy; once a version has shipped or assessments are persisted
     under it, any behavioural change to claim mapping, claim strength,
     compatibility, independence, verdict rules or confidence rules requires an
     explicit review and bump, because the version is what distinguishes the
@@ -1150,7 +1191,11 @@ about it.
      bundled as a secondary is still found, through
      `PlanningDecision.call.answered_capabilities` plus its `source_family` —
      never through a coverage item, which records candidacy rather than who
-     answered.
+     answered. And a check that did not complete yields nothing: directional
+     yield is keyed by provider because a claim does not name its call, so
+     `yield_for` grants `DIRECTIONAL` or `CONTEXT_ONLY` only to a completed,
+     evidence-producing attempt — a `NOT_SUPPORTED` behaviour query never
+     inherits the same provider's reputation answer (Task 24 Phase 1B).
 
 102d. **The benign challenge must be independent *and* relevant.** Independence
      alone is not enough: the challenging check has to be an adverse search, from
@@ -1989,6 +2034,101 @@ about it.
      answers, so no other test in that file can be passing because a fixture
      started something a real ASGI server would not.
 
+
+173. **A provider's sandbox block is one record, and a sandbox's negative is
+     never benign.** GTI's `sandbox_verdicts` — several sandboxes run by one
+     provider — becomes one `gti.sandbox_verdicts` evidence record whose
+     `verdict` is the strongest category present; `malicious` and `suspicious`
+     support malicious as a `CURATED_THREAT_ASSERTION`, `harmless` and
+     `undetected` are `CONTEXT_ONLY`, and nothing maps to `SUPPORTS_BENIGN`.
+     Divergence is recorded beside the verdict, never resolved. Several
+     sandboxes, fields or reports from one family are never independent
+     sources: `google_ti` stays one origin however many sandboxes it ran.
+
+174. **A verdict is a claim; activity is not.** The behaviour summary's own
+     `verdicts` list is read through a closed strength table
+     (`BEHAVIOR_VERDICT_STRENGTH`): a named malware class is asserted, a
+     greyware or suspicious class is suspected, and an unknown word leaves the
+     record context only. Process, registry, network and ATT&CK activity
+     without a verdict is never directional and never decisive — a test asserts
+     it. A directional behaviour record carries bounded `highlights` (Sigma
+     titles, technique ids, signature names) so a report can say why without
+     reproducing a sandbox report.
+
+175. **A depth-gated capability asked for below its depth is refused, not
+     answered with the wrong document.** A `FILE_BEHAVIOR`-only request below
+     DEEP returns `NOT_SUPPORTED` with `GTI_FILE_BEHAVIOR_REQUIRES_DEEP` and
+     makes no request. Re-fetching the primary object instead duplicated
+     reputation evidence and let coverage credit a check that never happened.
+     A bundled request naming behaviour beside other capabilities is still
+     answered for the others; the planner never bundles an elevated-cost
+     capability, so the refusal never hides a real answer.
+
+176. **One origin may corroborate itself only across compatible propositions,
+     and only to MEDIUM.** `malicious.single_origin_compatible_propositions.v1`
+     needs two unexplained, exact-scope, asserted, corroborative claims of
+     different but compatible semantics from one independence component —
+     what the object *is* and what it *did*. A hedged claim, an aggregate,
+     host scope, an unclassified basis or the same semantic twice does not
+     qualify, so this is never "one source equals malicious": a sandbox
+     verdict alone stays SUSPICIOUS. Confidence is
+     `medium.single_origin_compatible_propositions.v1`, never HIGH, and a
+     specific Task 16 explanation of either claim dissolves the pair.
+
+177. **Every claim type a provider can emit at any depth is mapped or refused
+     on purpose.** The semantic-coverage regression drives the real adapters
+     at DEEP over a fake client, because relationship pages are fetched rather
+     than inlined and a normalize-only fixture never saw them — which is how
+     five `gti.threat_association.*` claim types reached a live assessment as
+     `UNCLASSIFIED_DIRECTIONAL`. The expected set is derived from the spec
+     table, so a new threat-object relationship fails the suite until somebody
+     decides what its claim means. An attribution is asserted; a report mention
+     or a plain collection membership is suspected; none is decisive.
+
+178. **A related object the graph cannot hold costs one node, never the
+     investigation.** A provider can return a contacted URL of any length and a
+     node key is the whole canonical value, so the engine checks
+     `MAX_NODE_KEY_LENGTH` before building the node: one
+     `INVALID_RELATED_OBJECT` that echoes neither key nor value, and every
+     relationship naming the object dropped with it rather than reported as
+     dangling. A model validation error is a software fault; a long URL from a
+     third party is data.
+
+179. **Highlights are quotation, never weight.** A claim's `highlights` are at
+     most eight bounded lines built from named attributes — the source's own
+     words about its own claim. Fusion never reads them, the report copies
+     them, the text renderer neutralises them like every other provider
+     string, and a claim without any is weighed exactly the same.
+
+180. **Source independence and evidence strength are different concepts.**
+     One origin can supply strong, direct, exact-observable evidence — several
+     of its own sandboxes classifying one sample malicious with stated
+     confidence — and one origin can supply one hedged opinion. Both are one
+     source; they are not the same evidence. A claim therefore carries a
+     `ClaimQualification` (`UNQUALIFIED`, `STRONG_DIRECT`, `NOT_STRONG`) set
+     only by its provider's own translator, under a versioned test over the
+     provider's own documented fields, with stable reason codes. Fusion reads
+     the enum alone — never a count, a confidence or a provider name — and
+     `QUALIFIED_DECISIVE_SEMANTICS` lets a `STRONG_DIRECT` sandbox
+     classification decide alone. Independence is counted exactly as before:
+     the band stays MEDIUM until a separate origin agrees, and confidence is
+     still not a probability. A test artifact every sandbox flags is still
+     explained first, because strength is not a shortcut past Task 16.
+
+181. **A consensus test uses only fields the provider documents, and invents
+     no execution quality.** GTI's `sandbox_verdicts` carry `category` and
+     `confidence` per sandbox and nothing about runtime, processes or
+     connections, so the test asks how many sandboxes evaluated the sample,
+     whether the malicious verdicts are a majority, how many of them stated a
+     confidence at or above a floor and whether those are a majority of the
+     ones that stated any, and whether any sandbox said `harmless` — a
+     contradiction that is preserved on the record and defeats the
+     qualification rather than being averaged away. Confidence counts where
+     it is present: an unstated confidence is neither for nor against, and
+     the floor is a counting rule, never a weight — a verdict below it keeps
+     its direction. One sandbox is one opinion; a hedged verdict is
+     hedged; a report or collection association is never the second
+     proposition that turns SUSPICIOUS into MALICIOUS.
 
 ## Security rules
 

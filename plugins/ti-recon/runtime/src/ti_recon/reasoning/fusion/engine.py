@@ -38,11 +38,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from ti_recon.correlation.graph import InvestigationGraph
-from ti_recon.enums import EvidenceEffect, Verdict
+from ti_recon.enums import EvidenceEffect, MatchScope, Verdict
 from ti_recon.models.intel_object import IntelObject
 from ti_recon.providers.result import ProviderResultEnvelope
 from ti_recon.reasoning.claims.models import (
+    ClaimAssertionStrength,
     ClaimPropositionKey,
+    ClaimQualification,
     ClaimSemantic,
     NormalizedClaim,
 )
@@ -181,7 +183,7 @@ class EvidenceFusionEngine:
         )
 
         contributions = self._contributions(
-            claims, dispositions, basis_claim_ids, findings, verdict
+            claims, dispositions, basis_claim_ids, findings, verdict, verdict_rule
         )
         issues.extend(self._claim_issues(claims))
 
@@ -442,6 +444,15 @@ class EvidenceFusionEngine:
                 corroborated,
             )
 
+        # -- MALICIOUS C: two firm, compatible propositions from one origin --- #
+        single_origin = self._single_origin_basis(malicious)
+        if single_origin:
+            return (
+                Verdict.MALICIOUS,
+                VERDICT_RULES["malicious_single_origin"],
+                single_origin,
+            )
+
         # -- LIKELY_BENIGN: an unopposed directional benign assertion -------- #
         benign_basis = sorted(
             (item for item in benign if is_benign_basis(item)), key=lambda item: item.claim_id
@@ -560,6 +571,44 @@ class EvidenceFusionEngine:
         # a name comparison.
         return self._compatible_cross_proposition(claims, dispositions)
 
+    def _single_origin_basis(self, malicious: Sequence[NormalizedClaim]) -> tuple[str, ...]:
+        """Two different firm propositions about the exact object, one origin.
+
+        What this recognises is *kinds* of knowledge, not records: a curated
+        verdict that the object is malicious and a sandbox's classification of
+        the same object are different questions with compatible answers, and
+        one source having answered both firmly is more than one source having
+        said "malicious" once. What it refuses to recognise is repetition -- ten
+        sandbox records are one proposition, an aggregate never participates,
+        a hedged claim never participates, and nothing at host scope
+        participates. A single firm reputation claim, or a single firm sandbox
+        classification, still stops at SUSPICIOUS.
+        """
+        usable = sorted(
+            (
+                item
+                for item in malicious
+                if item.scope in {MatchScope.EXACT_OBSERVABLE}
+                and decision_role_for(item) is ClaimDecisionRole.CORROBORATIVE
+                and item.strength is ClaimAssertionStrength.ASSERTED
+            ),
+            key=lambda item: item.claim_id,
+        )
+        index = independence_index(usable) if usable else {}
+        for position, first in enumerate(usable):
+            for second in usable[position + 1 :]:
+                if first.subject_key != second.subject_key:
+                    continue
+                if first.semantic is second.semantic:
+                    continue
+                if index[first.claim_id] != index[second.claim_id]:
+                    # Different origins are the independent-corroboration rule's
+                    # business, and it has already declined.
+                    continue
+                if compatible(first.semantic, second.semantic):
+                    return (first.claim_id, second.claim_id)
+        return ()
+
     def _compatible_cross_proposition(
         self,
         claims: Sequence[NormalizedClaim],
@@ -608,6 +657,7 @@ class EvidenceFusionEngine:
         basis_claim_ids: tuple[str, ...],
         findings: Sequence[object],
         verdict: Verdict,
+        verdict_rule: str,
     ) -> tuple[ClaimContribution, ...]:
         """Why each claim mattered, or why it did not.
 
@@ -619,7 +669,9 @@ class EvidenceFusionEngine:
         found: list[ClaimContribution] = []
         for claim in claims:
             disposition = dispositions[claim.claim_id]
-            role, codes = self._role_for(claim, disposition, claim.claim_id in basis, verdict)
+            role, codes = self._role_for(
+                claim, disposition, claim.claim_id in basis, verdict, verdict_rule
+            )
             found.append(
                 ClaimContribution(
                     claim_id=claim.claim_id,
@@ -644,6 +696,7 @@ class EvidenceFusionEngine:
         disposition: ClaimDisposition,
         in_basis: bool,
         verdict: Verdict,
+        verdict_rule: str,
     ) -> tuple[ContributionRole, tuple[str, ...]]:
         codes: list[str] = []
         if claim.source_partial:
@@ -665,11 +718,14 @@ class EvidenceFusionEngine:
 
         if in_basis:
             role = decision_role_for(claim)
-            codes.append(
-                REASON_CODES["decisive_basis"]
-                if role is ClaimDecisionRole.DECISIVE
-                else REASON_CODES["corroborates"]
-            )
+            if role is ClaimDecisionRole.DECISIVE:
+                codes.append(REASON_CODES["decisive_basis"])
+                if claim.qualification is ClaimQualification.STRONG_DIRECT:
+                    codes.append(REASON_CODES["strong_direct"])
+            elif verdict_rule == VERDICT_RULES["malicious_single_origin"]:
+                codes.append(REASON_CODES["compatible_same_origin"])
+            else:
+                codes.append(REASON_CODES["corroborates"])
             return ContributionRole.SUPPORTS_VERDICT, tuple(sorted(codes))
 
         if decision_role_for(claim) is ClaimDecisionRole.WEAK:

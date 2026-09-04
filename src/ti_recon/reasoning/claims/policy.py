@@ -48,7 +48,7 @@ __all__ = [
 #:
 #: Recorded on every claim id, so a translation change produces different claims
 #: rather than silently reinterpreting stored ones.
-CLAIM_SEMANTICS_POLICY_VERSION: Final[str] = "1.0.0"
+CLAIM_SEMANTICS_POLICY_VERSION: Final[str] = "1.2.0"
 
 #: Semantics that may corroborate one another, stated symmetrically.
 #:

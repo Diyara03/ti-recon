@@ -19,6 +19,7 @@ from fixtures.hybrid_analysis import payloads as sandbox_payloads
 from fixtures.reasoning import (
     censys_host_envelope,
     greynoise_envelope,
+    gti_file_deep_envelope,
     gti_file_envelope,
     malwarebazaar_envelope,
     sandbox_envelope,
@@ -42,6 +43,7 @@ from ti_recon.reasoning.claims import (
 #: single happy-path fixture would not reach.
 REAL_ENVELOPES = (
     ("gti", gti_file_envelope),
+    ("gti_deep", gti_file_deep_envelope),
     ("urlscan", urlscan_scan_envelope),
     ("greynoise", greynoise_envelope),
     ("censys", censys_host_envelope),

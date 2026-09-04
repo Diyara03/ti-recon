@@ -80,6 +80,19 @@ separately from `malicious` and GTI has `VERDICT_SUSPICIOUS`; flattening both in
 one direction would throw that away, so the distinction rides here rather than
 doubling the semantic vocabulary. A suspected claim is never decisive.
 
+### Qualification (Task 24 Phase 1B)
+
+Beside its strength a claim carries a **`qualification`** —
+`ClaimQualification.UNQUALIFIED`, `STRONG_DIRECT` or `NOT_STRONG` — with
+bounded stable reason codes. It answers a question strength does not: not
+*how firmly* the source states the claim, but *how much stands behind it*, by
+the source's own documented record. Only a provider translator may set it,
+under its own versioned test over its own fields (today: GTI's sandbox
+consensus, `docs/providers/gti.md` §7a). Fusion reads the enum alone and lets
+`STRONG_DIRECT` promote a sandbox classification to decisive; `NOT_STRONG` is
+weighed exactly like `UNQUALIFIED`. Neither a count nor a confidence ever
+crosses into the generic layer, and no provider is named there.
+
 ## 5. Provider mapping
 
 Every translator lives in its own provider package and reads only its own
@@ -102,6 +115,10 @@ structured fields.
 | GTI | `gti_analysis_stats` | `AGGREGATED_REPUTATION` |
 | GTI | `gti.threat_actor_association` and siblings | `THREAT_ACTOR_ASSOCIATION` |
 | GTI | `gti.sandbox_verdict.malicious` | `SANDBOX_CLASSIFICATION` |
+| GTI | `gti.sandbox_verdicts`, verdict `malicious` / `suspicious` | `SANDBOX_CLASSIFICATION` (asserted / suspected), qualified by the consensus test |
+| GTI | `gti.behavior.verdict`, verdict `asserted` / `suspected` | `SANDBOX_CLASSIFICATION` (asserted / suspected) |
+| GTI | `gti.threat_association.malware-families`, `.related-threat-actors`, `.campaigns` | `THREAT_ACTOR_ASSOCIATION` |
+| GTI | `gti.threat_association.related-reports`, `.associations` | `THREAT_ACTOR_ASSOCIATION` (suspected) |
 | GTI | `gti.analyst_determination.*`, `gti.legitimate_software` | `MALICIOUS_`/`BENIGN_REPUTATION` |
 | urlscan | `urlscan_verdict` | `MALICIOUS_REPUTATION` |
 | urlscan | `urlscan_engine_aggregate`, `urlscan_community_votes` | `AGGREGATED_REPUTATION` |
@@ -149,5 +166,12 @@ Everything else corroborates only itself. In particular:
 
 `CLAIM_SEMANTICS_POLICY_VERSION` is folded into every claim id, so a translation
 change produces different claims rather than silently reinterpreting stored ones.
+It is `1.2.0` as of Task 24 Phase 1B (`1.1.0` added the GTI rows above;
+`1.2.0` added the claim qualification and the GTI consensus test).
+
+A claim may carry bounded **`highlights`** (Task 24): at most eight lines of at
+most 160 characters, built from named attributes only — the source's own words
+about its own claim, for the report to quote. They are presentation: fusion
+never reads them, and a claim without any weighs exactly the same.
 
 See [evidence-fusion.md](evidence-fusion.md) for what fusion does with these.

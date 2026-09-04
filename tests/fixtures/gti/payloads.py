@@ -291,22 +291,88 @@ def overall_quotas_payload(
     }
 
 
+def sandbox_verdicts(
+    *entries: tuple[str, str, int | None, tuple[str, ...]],
+) -> dict[str, Any]:
+    """A file-level ``sandbox_verdicts`` block: ``(name, category, confidence, labels)``.
+
+    The shape the API documents -- one entry per sandbox, keyed by its name,
+    with ``category`` in ``malicious`` / ``suspicious`` / ``harmless`` /
+    ``undetected`` -- and nothing a real response would not carry.
+    """
+    block: dict[str, Any] = {}
+    for name, category, confidence, labels in entries:
+        entry: dict[str, Any] = {"category": category, "sandbox_name": name}
+        if confidence is not None:
+            entry["confidence"] = confidence
+        if labels:
+            entry["malware_classification"] = list(labels)
+            entry["malware_names"] = [f"{label.lower()}.synthetic" for label in labels]
+        block[name] = entry
+    return block
+
+
 def behaviour_summary_payload(
     *,
     domains: tuple[str, ...] = ("c2.evil.example", "beacon.evil.example"),
     ips: tuple[str, ...] = ("198.51.100.9",),
     urls: tuple[str, ...] = ("http://c2.evil.example/gate",),
     dropped: tuple[str, ...] = (EMPTY_FILE_SHA256,),
+    verdicts: tuple[str, ...] | None = ("MALWARE",),
+    verdict_confidence: int | None = None,
+    with_findings: bool = False,
 ) -> dict[str, Any]:
-    """A trimmed ``behaviour_summary`` response."""
-    return {
-        "data": {
-            "dns_lookups": [{"hostname": name} for name in domains],
-            "ip_traffic": [{"destination_ip": address, "destination_port": 443} for address in ips],
-            "http_conversations": [{"url": target} for target in urls],
-            "files_dropped": [{"sha256": digest, "path": "C:\\Temp\\x.tmp"} for digest in dropped],
-            "tags": ["persistence", "network"],
-            "verdicts": ["MALWARE"],
-            "calls_highlighted": ["RegSetValueExW"],
-        }
+    """A trimmed ``behaviour_summary`` response.
+
+    ``verdicts=None`` omits the field entirely, which is how a summary that
+    observed activity but reached no classification arrives. ``with_findings``
+    adds bounded semantic findings -- Sigma results, ATT&CK techniques and
+    signature matches -- of the shape the API documents.
+    """
+    data: dict[str, Any] = {
+        "dns_lookups": [{"hostname": name} for name in domains],
+        "ip_traffic": [{"destination_ip": address, "destination_port": 443} for address in ips],
+        "http_conversations": [{"url": target} for target in urls],
+        "files_dropped": [{"sha256": digest, "path": "C:\\Temp\\x.tmp"} for digest in dropped],
+        "tags": ["persistence", "network"],
+        "calls_highlighted": ["RegSetValueExW"],
+        "processes_created": ["C:\\Windows\\System32\\cmd.exe /c whoami"],
+        "attack_techniques": [{"id": "T1082"}, {"id": "T1057"}],
     }
+    if verdicts is not None:
+        data["verdicts"] = list(verdicts)
+    if verdict_confidence is not None:
+        data["verdict_confidence"] = verdict_confidence
+    if with_findings:
+        data["sigma_analysis_results"] = [
+            {
+                "rule_title": "Shadow Copies Deletion Using Operating Systems Utilities",
+                "rule_level": "high",
+                "rule_id": "s-1",
+            },
+            {"rule_title": "Whoami Execution", "rule_level": "low", "rule_id": "s-2"},
+        ]
+        data["mitre_attack_techniques"] = [
+            {
+                "id": "T1486",
+                "severity": "HIGH",
+                "signature_description": "Encrypts files on the host",
+            },
+            {"id": "T1057", "severity": "INFO", "signature_description": "Process discovery"},
+        ]
+        data["signature_matches"] = [
+            {"name": "ransomware_file_encryption", "format": "SIG_FORMAT_YARA"},
+        ]
+    return {"data": data}
+
+
+def collection(
+    object_id: str, *, name: str | None = None, collection_type: str | None = None
+) -> dict[str, Any]:
+    """One GTI collection object (a family, actor, campaign, report or plain collection)."""
+    attributes: dict[str, Any] = {}
+    if name is not None:
+        attributes["name"] = name
+    if collection_type is not None:
+        attributes["collection_type"] = collection_type
+    return {"type": "collection", "id": object_id, "attributes": attributes}

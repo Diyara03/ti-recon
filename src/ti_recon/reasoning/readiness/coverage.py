@@ -108,6 +108,14 @@ _YIELD_ORDER: dict[InformationYield, int] = {
 }
 
 
+#: The completions under which an attempt can have returned information at
+#: all. A blocked, out-of-scope or unattempted check returned nothing, so it
+#: may not borrow a yield from another call.
+_YIELDING_COMPLETIONS: frozenset[CheckCompletion] = frozenset(
+    {CheckCompletion.COMPLETE, CheckCompletion.PARTIAL}
+)
+
+
 def completion_for(attempt: ProviderAttempt) -> CheckCompletion:
     """How far one attempt got, from the status *and* what it produced.
 
@@ -137,14 +145,27 @@ def yield_for(
     an absence of evidence, so "the source said it has nothing" never blurs into
     "we did not look". Directionality is read from whether a claim reached the
     assessment layer, which is Task 17's judgement rather than a fresh one.
+
+    Only an attempt that completed *and produced evidence* can have yielded
+    anything. The directional-provider set is keyed by provider, because a
+    claim does not record which call produced it; before Task 24 that let a
+    ``NOT_SUPPORTED`` behaviour query inherit ``DIRECTIONAL`` from the same
+    provider's reputation answer -- a refusal rendered as a finding. A refused,
+    unconfigured, errored or empty-handed attempt yields ``NONE`` whatever the
+    provider's other calls returned. What remains is the case of two
+    *completed, evidence-producing* calls to one provider, where a
+    context-only answer still reads ``DIRECTIONAL`` because the record cannot
+    say which call produced the claim. That is a retention limit of the
+    per-attempt record -- this function cannot return ``UNATTRIBUTED``, which
+    the capability ledger reserves for a call it has no attempt for at all.
     """
     if attempt.status is ProviderRunStatus.NO_DATA:
         return InformationYield.NO_DATA
+    if completion_for(attempt) not in _YIELDING_COMPLETIONS or not attempt.produced_evidence:
+        return InformationYield.NONE
     if attempt.provider_id in directional_providers:
         return InformationYield.DIRECTIONAL
-    if attempt.produced_evidence:
-        return InformationYield.CONTEXT_ONLY
-    return InformationYield.NONE
+    return InformationYield.CONTEXT_ONLY
 
 
 def directional_provider_ids(claims: Iterable[NormalizedClaim]) -> frozenset[str]:

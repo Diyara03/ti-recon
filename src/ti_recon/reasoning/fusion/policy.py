@@ -42,6 +42,7 @@ from typing import Final
 from ti_recon.enums import EvidenceEffect, MatchScope
 from ti_recon.reasoning.claims.models import (
     ClaimAssertionStrength,
+    ClaimQualification,
     ClaimSemantic,
     NormalizedClaim,
 )
@@ -51,6 +52,7 @@ __all__ = [
     "CONFIDENCE_RULES",
     "DECISIVE_SEMANTICS",
     "FUSION_POLICY_VERSION",
+    "QUALIFIED_DECISIVE_SEMANTICS",
     "VERDICT_RULES",
     "WEAK_SEMANTICS",
     "decision_role_for",
@@ -60,7 +62,7 @@ __all__ = [
 #:
 #: Recorded on the assessment and folded into its identity, so a policy change
 #: produces a new assessment rather than silently reinterpreting a stored one.
-FUSION_POLICY_VERSION: Final[str] = "1.0.0"
+FUSION_POLICY_VERSION: Final[str] = "1.2.0"
 
 #: Semantics specific enough that one unexplained exact-scope claim can justify a
 #: verdict without a second source.
@@ -79,6 +81,20 @@ DECISIVE_SEMANTICS: Final[frozenset[ClaimSemantic]] = frozenset(
         ClaimSemantic.MALWARE_SAMPLE_IDENTITY,
         ClaimSemantic.MALWARE_DISTRIBUTION,
     }
+)
+
+#: Semantics that may decide alone only when the claim carries a
+#: ``STRONG_DIRECT`` qualification from its own provider's documented test.
+#:
+#: A sandbox classification is a judgement about what the exact sample *did*
+#: when run. One hedged verdict, one sandbox, or a record its peers contradict
+#: corroborates; several evaluations agreeing with stated confidence and no
+#: contrary verdict is strong direct evidence from one origin -- and one origin
+#: is not the same thing as weak evidence. The test that separates the two is
+#: provider-owned (it reads documented provider fields) and versioned; this
+#: layer reads only the resulting enum.
+QUALIFIED_DECISIVE_SEMANTICS: Final[frozenset[ClaimSemantic]] = frozenset(
+    {ClaimSemantic.SANDBOX_CLASSIFICATION}
 )
 
 #: Semantics that can never carry a verdict alone, in any combination.
@@ -122,23 +138,24 @@ def decision_role_for(claim: NormalizedClaim) -> ClaimDecisionRole:
         return ClaimDecisionRole.CORROBORATIVE
     if claim.semantic in DECISIVE_SEMANTICS:
         return ClaimDecisionRole.DECISIVE
-    # A sandbox classification is never decisive on its own, whatever its
-    # evidence class. The rule that used to promote a ``DIRECT_OBSERVATION``
-    # sandbox claim read as "a sandbox watched the sample act, rather than a
-    # report of one" -- but nothing in a ``NormalizedClaim`` can tell those
-    # apart, and the only shipped claim it promoted was a *boolean contributing
-    # factor* on one provider's own assessment: no report, no environment, no
-    # runtime, no execution quality. Meanwhile the integration that carries a
-    # full report and Task 12's ``observed_execution`` classifies its assessment
-    # as a curated assertion and was only corroborative, so the promotion
-    # inverted the evidence hierarchy -- the claim with less behind it outranked
-    # the claim with more.
-    #
-    # Task 12 was explicit that a sandbox negative needs execution quality to be
-    # readable; a sandbox *positive* deserves the same care before it carries a
-    # verdict alone. Until a claim-level execution-quality signal exists -- a
-    # deliberate policy decision, not something to infer from an evidence class
-    # -- every sandbox classification corroborates and none decides.
+    if (
+        claim.semantic in QUALIFIED_DECISIVE_SEMANTICS
+        and claim.qualification is ClaimQualification.STRONG_DIRECT
+    ):
+        # The claim-level signal the previous policy waited for. The evidence
+        # class never distinguished a sandbox that watched a sample act from a
+        # boolean saying one did -- the rule that promoted ``DIRECT_OBSERVATION``
+        # sandbox claims reached only a contributing-factor flag with no report
+        # behind it, and inverted the hierarchy. ``STRONG_DIRECT`` is different
+        # in kind: the provider's own translator tested its own documented
+        # fields (evaluations, agreement, contrary verdicts, stated confidence)
+        # under a versioned policy and said so. Anything short of that stays
+        # corroborative below.
+        return ClaimDecisionRole.DECISIVE
+    # A sandbox classification without that qualification is never decisive,
+    # whatever its evidence class: one sandbox, one hedged verdict, a record
+    # its peers contradict, or a verdict with no stated confidence corroborates
+    # and does not decide.
     return ClaimDecisionRole.CORROBORATIVE
 
 
@@ -154,6 +171,13 @@ def decision_role_for(claim: NormalizedClaim) -> ClaimDecisionRole:
 VERDICT_RULES: Final[dict[str, str]] = {
     "malicious_decisive": "malicious.decisive_exact_claim.v1",
     "malicious_corroborated": "malicious.independent_corroboration.v1",
+    # One origin, but two *different kinds* of firm knowledge about the exact
+    # object -- a curated malicious verdict and a sandbox classification of the
+    # same sample, say -- that the compatibility table already says may
+    # corroborate. Not vendor voting: the rule counts propositions, never
+    # records, and both must be firm, exact-scope and unexplained. Confidence
+    # stays MEDIUM, because nobody independent has agreed.
+    "malicious_single_origin": "malicious.single_origin_compatible_propositions.v1",
     "suspicious_residual": "suspicious.unexplained_residual_support.v1",
     "suspicious_conflict": "suspicious.residual_support_under_conflict.v1",
     "likely_benign_explained": "likely_benign.all_malicious_claims_explained.v1",
@@ -170,6 +194,7 @@ CONFIDENCE_RULES: Final[dict[str, str]] = {
     "high_explained_complete": "high.complete_exact_explanation.v1",
     "medium_decisive": "medium.single_decisive_unopposed.v1",
     "medium_corroborated": "medium.multiple_independent_support.v1",
+    "medium_single_origin": "medium.single_origin_compatible_propositions.v1",
     "medium_explained": "medium.exact_explanation_complete.v1",
     "low_single_weak": "low.limited_or_qualified_support.v1",
     "unspecified_no_support": "unspecified.no_directional_support.v1",
@@ -206,7 +231,9 @@ CONFIDENCE_CAPS: Final[dict[str, str]] = {
 #: Reason codes attached to contributions. Stable, greppable, never prose.
 REASON_CODES: Final[dict[str, str]] = {
     "decisive_basis": "basis.decisive_exact_claim",
+    "strong_direct": "basis.strong_direct_classification",
     "corroborates": "basis.independent_corroboration",
+    "compatible_same_origin": "basis.compatible_proposition_same_origin",
     "weak_support": "basis.weak_support_only",
     "explained": "disposition.explained_by_alternative",
     "dependent": "disposition.dependent_on_counted_source",

@@ -472,7 +472,13 @@ async def test_behaviour_is_a_direct_observation_but_not_an_accusation() -> None
     assert behavior
     observations = [e for e in behavior if e.evidence_class is EvidenceClass.DIRECT_OBSERVATION]
     assert observations
+    # What the sample *did* -- contacts, drops, the overview -- is context, always.
+    # The summary's own *verdict* is a separate record, and the only one with a
+    # direction: a sandbox's classification, not an observation.
     for evidence in behavior:
+        if evidence.claim_type == "gti.behavior.verdict":
+            assert evidence.evidence_class is EvidenceClass.CURATED_THREAT_ASSERTION
+            continue
         assert evidence.effect is EvidenceEffect.CONTEXT_ONLY
 
 
@@ -610,5 +616,10 @@ async def test_no_verdict_comes_out_of_behaviour_alone() -> None:
 
     behavior = [e for e in outcome.evidence if e.claim_type.startswith("gti.behavior.")]
     assert behavior
-    assert not [e for e in behavior if e.effect is EvidenceEffect.SUPPORTS_MALICIOUS]
-    assert "verdict" not in outcome.model_dump()
+    # Observed behaviour never points anywhere by itself. Only the summary's
+    # stated verdict (``verdicts: ["MALWARE"]`` in the fixture) carries a
+    # direction, and it is a sandbox classification -- never a TI Recon verdict.
+    directional = [e for e in behavior if e.effect is EvidenceEffect.SUPPORTS_MALICIOUS]
+    assert [e.claim_type for e in directional] == ["gti.behavior.verdict"]
+    assert "Verdict" not in type(outcome).__name__
+    assert not hasattr(outcome, "verdict")

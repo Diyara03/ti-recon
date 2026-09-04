@@ -35,6 +35,7 @@ from ti_recon.normalization import normalize_observable
 from ti_recon.providers.result import ProviderResultEnvelope
 from ti_recon.reasoning.claims.models import (
     ClaimAssertionStrength,
+    ClaimQualification,
     ClaimSemantic,
     NormalizedClaim,
     claim_from,
@@ -311,13 +312,19 @@ def scenario(root: IntelObject) -> Scenario:
 # --------------------------------------------------------------------------- #
 
 
-def _semantic_translator(semantics: dict[str, str]) -> Any:
-    """A translator that assigns a semantic per evidence id.
+def _semantic_translator(
+    semantics: dict[str, str],
+    strengths: dict[str, str] | None = None,
+    qualifications: dict[str, str] | None = None,
+) -> Any:
+    """A translator that assigns a semantic (and optionally a strength) per evidence id.
 
     Lets a test state exactly which proposition each claim asserts without
     routing through a provider. That is the right level for a test about fusion:
     translation has its own suite, driven by the real adapters.
     """
+    hedged = strengths or {}
+    qualified = qualifications or {}
 
     def translate(item_envelope: Any, context: Any) -> tuple[NormalizedClaim, ...]:
         from ti_recon.reasoning.claims.translation import directional_evidence
@@ -327,8 +334,10 @@ def _semantic_translator(semantics: dict[str, str]) -> Any:
                 record,
                 policy_version=context.policy_version,
                 semantic=ClaimSemantic(semantics[record.id]),
+                strength=ClaimAssertionStrength(hedged.get(record.id, "asserted")),
                 subject_key=context.subject_key_for(record.subject_object_id),
                 source_partial=context.source_partial,
+                qualification=ClaimQualification(qualified.get(record.id, "unqualified")),
             )
             for record in directional_evidence(item_envelope)
         )
@@ -349,13 +358,20 @@ def fuse(scene: Scenario) -> Any:
     )
 
 
-def fuse_with_semantics(scene: Scenario, semantics: dict[str, str]) -> Any:
+def fuse_with_semantics(
+    scene: Scenario,
+    semantics: dict[str, str],
+    strengths: dict[str, str] | None = None,
+    qualifications: dict[str, str] | None = None,
+) -> Any:
     """Run fusion with each evidence item assigned a stated semantic."""
     from ti_recon.reasoning.fusion import EvidenceFusionEngine
 
     providers = {item.provider for item in scene.envelopes}
     engine = EvidenceFusionEngine(
-        translators={name: _semantic_translator(semantics) for name in providers}
+        translators={
+            name: _semantic_translator(semantics, strengths, qualifications) for name in providers
+        }
     )
     return engine.evaluate(
         qualification=scene.qualification(),

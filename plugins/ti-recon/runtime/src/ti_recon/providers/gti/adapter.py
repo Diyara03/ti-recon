@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from types import TracebackType
+from typing import Final
 
 from ti_recon.credentials.enums import CredentialStatus
 from ti_recon.credentials.models import CredentialMaterial
@@ -72,6 +73,7 @@ from ti_recon.providers.gti.normalizer import (
     normalize_file_behavior,
     normalize_inline_relationships,
     normalize_related_items,
+    normalize_sandbox_verdicts,
     normalize_threat_severity,
 )
 from ti_recon.providers.gti.policy import GTILookupPolicy, collection_for_object_type
@@ -91,7 +93,20 @@ from ti_recon.providers.quota import ProviderQuotaSnapshot
 from ti_recon.providers.request import ProviderRequest
 from ti_recon.providers.result import NormalizedPayload, ProviderResultEnvelope
 
-__all__ = ["GTIAdapter"]
+__all__ = ["GTI_BEHAVIOR_NEEDS_DEEP", "UNSUPPORTED_REASONS", "GTIAdapter"]
+
+#: Reported when ``FILE_BEHAVIOR`` was requested below DEEP. Not a failure and
+#: not an entitlement problem: a statement of this integration's own policy,
+#: made before any request is built.
+GTI_BEHAVIOR_NEEDS_DEEP: Final[str] = "GTI_FILE_BEHAVIOR_REQUIRES_DEEP"
+
+#: Plain reasons for a ``NOT_SUPPORTED`` envelope, keyed by warning.
+UNSUPPORTED_REASONS: Final[dict[str, str]] = {
+    GTI_BEHAVIOR_NEEDS_DEEP: (
+        "GTI sandbox behaviour is fetched only for DEEP investigations; the file was "
+        "not re-queried for it at this depth"
+    ),
+}
 
 _logger = logging.getLogger(__name__)
 
@@ -334,6 +349,8 @@ class GTIAdapter(ProviderAdapter):
             # into an active one.
             raise UnsupportedProviderOperation(GTI_PROVIDER_ID, operation="active_action")
         collection, object_id = self._locate(request.intel_object)
+        if self._behavior_out_of_depth(request):
+            return self._unsupported_envelope(request, GTI_BEHAVIOR_NEEDS_DEEP)
 
         async with self._client_for(credential) as client:
             try:
@@ -353,6 +370,41 @@ class GTIAdapter(ProviderAdapter):
             quota = await self._refresh_quota_if_stale(client, credential)
 
         return self._envelope(request, gti_object, quota=quota, extra=enrichment)
+
+    @staticmethod
+    def _behavior_out_of_depth(request: ProviderRequest) -> bool:
+        """A behaviour request this integration answers only at DEEP.
+
+        ``FILE_BEHAVIOR`` is an elevated-cost capability and the planner never
+        bundles it, so a request naming it *alone* is a request for the
+        detonation summary and nothing else. (A caller bundling it with other
+        capabilities is answered for those, as before.) Below DEEP the summary
+        is never fetched -- and answering a behaviour-only request with the
+        the request with the primary object anyway would spend an API call to
+        repeat reputation records already collected, and let the planner credit
+        *behaviour* coverage to a response that held none. Refused instead,
+        before any request is built, as ``NOT_SUPPORTED``: the honest statement
+        that this source does not answer that question at this depth.
+        """
+        return (
+            request.requested_capabilities == {ProviderCapability.FILE_BEHAVIOR}
+            and request.intel_object.object_type is IntelObjectType.FILE
+            and request.depth is not InvestigationDepth.DEEP
+        )
+
+    def _unsupported_envelope(
+        self, request: ProviderRequest, reason: str
+    ) -> ProviderResultEnvelope:
+        """A run that was never attempted, said plainly and contacting nothing."""
+        return ProviderResultEnvelope(
+            provider=GTI_PROVIDER_ID,
+            operation=request.operation,
+            status=ProviderRunStatus.NOT_SUPPORTED,
+            adapter_version=self._descriptor.adapter_version,
+            api_version=self._descriptor.api_version,
+            warnings=(reason,),
+            error_message=UNSUPPORTED_REASONS[reason],
+        )
 
     def _locate(self, intel_object: IntelObject) -> tuple[str, str]:
         """The GTI collection and object id for an observable.
@@ -462,6 +514,7 @@ class GTIAdapter(ProviderAdapter):
         enriched = enrich_primary_object(request.intel_object, gti_object)
         result = GTINormalization(objects=(enriched,))
         result = result.merge(normalize_assessment(context, gti_object))
+        result = result.merge(normalize_sandbox_verdicts(context, gti_object))
         result = result.merge(normalize_threat_severity(context, gti_object))
         return result.merge(normalize_analysis_stats(context, gti_object))
 

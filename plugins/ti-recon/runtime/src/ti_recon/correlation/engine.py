@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from ti_recon.correlation.graph import InvestigationGraph
 from ti_recon.correlation.identity import FileIdentityResolver, node_key_for
 from ti_recon.correlation.models import (
+    MAX_NODE_KEY_LENGTH,
     CorrelationIssue,
     CorrelationIssueType,
     GraphNode,
@@ -52,6 +53,9 @@ from ti_recon.models.intel_object import IntelObject
 from ti_recon.models.relationship import Relationship
 from ti_recon.normalization import NormalizationError, normalize_domain, normalize_ip
 from ti_recon.providers.result import ProviderResultEnvelope
+
+#: The issue filed for a related object the graph will not hold.
+_REFUSED = CorrelationIssueType.INVALID_RELATED_OBJECT
 
 __all__ = ["CorrelationEngine", "IngestionSummary"]
 
@@ -141,6 +145,11 @@ class CorrelationEngine:
         # objects by the ids minted inside this one envelope, so the mapping is
         # rebuilt per result and never leaks between them.
         keys: dict[str, str] = {}
+        # Object ids the graph refused to hold. A relationship naming one is
+        # dropped with the object rather than reported as dangling: the object
+        # was not absent from the result, it was refused, and that is already
+        # recorded once.
+        refused: set[str] = set()
         linked: set[str] = set()
         anchor = anchor_key if anchor_key is not None else self.graph.root_key
         if anchor is not None and self.graph.node(anchor) is not None:
@@ -155,11 +164,15 @@ class CorrelationEngine:
                 issues.append(issue)
                 self.graph.add_issue(issue)
             if key is None:
+                if issue is not None and issue.issue_type is _REFUSED:
+                    refused.add(related.id)
                 continue
             keys[related.id] = key
             merges += int(merged)
 
         for relationship in envelope.relationships:
+            if relationship.source_object_id in refused or relationship.target_object_id in refused:
+                continue
             issue = self._ingest_relationship(
                 relationship, envelope, keys, evidence_by_id, linked, hop=hop
             )
@@ -190,6 +203,23 @@ class CorrelationEngine:
         self, intel_object: IntelObject, provider_id: str, *, hop: int
     ) -> tuple[str | None, bool, CorrelationIssue | None]:
         """Insert a related object, resolving its identity first."""
+        if len(node_key_for(intel_object)) > MAX_NODE_KEY_LENGTH:
+            # A provider can return a related URL of any length, and the graph
+            # keys a node on the whole canonical value. The bound is the
+            # graph's, so the graph enforces it: the object is refused and
+            # recorded, and neither the key nor the value is echoed.
+            return (
+                None,
+                False,
+                CorrelationIssue(
+                    issue_type=_REFUSED,
+                    detail=(
+                        f"related {intel_object.object_type.value} refused: canonical key "
+                        f"exceeds {MAX_NODE_KEY_LENGTH} characters"
+                    ),
+                    provider_id=provider_id,
+                ),
+            )
         resolution = self._files.resolve(intel_object)
         node = GraphNode(
             node_key=resolution.node_key,

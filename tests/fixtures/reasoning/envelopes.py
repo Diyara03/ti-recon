@@ -29,6 +29,7 @@ from fixtures.abusech.fake_clients import (
 from fixtures.censys import payloads as censys_payloads
 from fixtures.greynoise import payloads as greynoise_payloads
 from fixtures.gti import payloads as gti_payloads
+from fixtures.gti.fake_client import FakeGTIClient, FakeGTIClientFactory
 from fixtures.hybrid_analysis import payloads as sandbox_payloads
 from fixtures.hybrid_analysis.fake_client import ClientFactory as SandboxClientFactory
 from fixtures.hybrid_analysis.fake_client import FakeHybridAnalysisClient
@@ -245,6 +246,91 @@ def gti_file_envelope(
     adapter = GTIAdapter()
     subject = file_object(sha256=str(payload["id"])) if subject is None else subject
     return _from_normalized(adapter, request_for(subject), payload)
+
+
+#: The association relationships a DEEP GTI file lookup can return, each with
+#: one named collection, so every association claim type the normalizer emits
+#: is exercised (Task 24: they surfaced unmapped in a live DEEP run).
+GTI_DEEP_ASSOCIATIONS: dict[str, dict[str, Any]] = {
+    "malware_families": {
+        "data": [
+            gti_payloads.collection(
+                "collection--m1", name="SyntheticRAT", collection_type="malware-family"
+            )
+        ]
+    },
+    "related_threat_actors": {
+        "data": [
+            gti_payloads.collection(
+                "collection--a1", name="APT-SYNTHETIC", collection_type="threat-actor"
+            )
+        ]
+    },
+    "campaigns": {
+        "data": [
+            gti_payloads.collection(
+                "collection--c1", name="Synthetic Campaign", collection_type="campaign"
+            )
+        ]
+    },
+    "related_reports": {
+        "data": [
+            gti_payloads.collection("report--r1", name="Synthetic Report", collection_type="report")
+        ]
+    },
+    "associations": {
+        "data": [
+            gti_payloads.collection(
+                "collection--x1", name="Synthetic Collection", collection_type="collection"
+            )
+        ]
+    },
+}
+
+
+def gti_file_deep_envelope(
+    *, subject: IntelObject | None = None, **attribute_overrides: Any
+) -> ProviderResultEnvelope:
+    """One GTI file at DEEP with every association relationship served.
+
+    Through the real adapter's ``lookup`` over a fake client, because
+    relationship pages are fetched rather than inlined: the pure ``normalize``
+    never sees them, which is exactly why a normalize-only fixture left the
+    association claims out of the semantic-coverage regression.
+    """
+    payload = gti_payloads.file_object(**attribute_overrides)
+    fake = FakeGTIClient()
+    fake.register_primary("files", payload)
+    for relationship, block in GTI_DEEP_ASSOCIATIONS.items():
+        fake.register_objects(
+            "files", str(payload["id"]), relationship, gti_payloads.object_page(*block["data"])
+        )
+    adapter = GTIAdapter(client_factory=FakeGTIClientFactory(client=fake), clock=ManualClock())
+    subject = file_object(sha256=str(payload["id"])) if subject is None else subject
+    request = ProviderRequest(
+        investigation_id="inv-1",
+        intel_object=subject,
+        operation=ProviderOperation.LOOKUP,
+        requested_capabilities=frozenset(
+            {
+                ProviderCapability.REPUTATION,
+                ProviderCapability.MALWARE_INTELLIGENCE,
+                ProviderCapability.THREAT_ASSOCIATIONS,
+                ProviderCapability.RELATIONSHIPS,
+            }
+        ),
+        depth=InvestigationDepth.DEEP,
+    )
+    material = CredentialMaterial(
+        connection_id="conn-gti",
+        user_id="analyst-a",
+        provider_id="gti",
+        credential_group="virustotal",
+        auth_type=AuthType.API_KEY,
+        secret=SecretStr(FAKE_KEY),
+    )
+    result: ProviderResultEnvelope = _run(adapter, request, material)
+    return result
 
 
 def urlscan_scan_envelope(
