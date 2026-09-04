@@ -44,6 +44,7 @@ from ti_recon.providers.result import ProviderResultEnvelope
 from ti_recon.reasoning.claims.models import (
     ClaimAssertionStrength,
     ClaimPropositionKey,
+    ClaimQualification,
     ClaimSemantic,
     NormalizedClaim,
 )
@@ -719,6 +720,8 @@ class EvidenceFusionEngine:
             role = decision_role_for(claim)
             if role is ClaimDecisionRole.DECISIVE:
                 codes.append(REASON_CODES["decisive_basis"])
+                if claim.qualification is ClaimQualification.STRONG_DIRECT:
+                    codes.append(REASON_CODES["strong_direct"])
             elif verdict_rule == VERDICT_RULES["malicious_single_origin"]:
                 codes.append(REASON_CODES["compatible_same_origin"])
             else:

@@ -46,7 +46,7 @@ def _pair(family: str = "alpha"):
 
 
 def test_the_policy_version_moved_with_the_rule() -> None:
-    assert FUSION_POLICY_VERSION == "1.1.0"
+    assert FUSION_POLICY_VERSION == "1.2.0"
     assert VERDICT_RULES["malicious_single_origin"].endswith(".v1")
 
 
