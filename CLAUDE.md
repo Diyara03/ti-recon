@@ -229,7 +229,11 @@ Implemented (Jira Tasks 1-19):
   verdict (report and collection membership never may). Recorded, not fixed:
   T24-FINDING-01 (MISP matching list name not surfaced), T24-FINDING-04
   (correlation issues not projected into the analyst report), T24-FINDING-05
-  (`campaigns` sits past the DEEP file relationship budget).
+  (`campaigns` sits past the DEEP file relationship budget), and
+  T24-CALIBRATION-01: `SANDBOX_CONFIDENCE_FLOOR` is TI Recon's own versioned
+  heuristic — the API documents `confidence` only as 0–100 and defines no
+  vendor threshold — and must be calibrated against more real malicious,
+  benign and false-positive samples.
 
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Task 13 chooses what
@@ -1091,8 +1095,8 @@ about it.
     `assessment_id` incorporate `Evidence.id`, so re-running fusion over stored
     evidence reproduces them exactly while a fresh collection of the same
     intelligence does not — the cross-run identity is the proposition
-    (`subject + semantic + scope`). `FUSION_POLICY_VERSION` 1.1.0 (Task 24)
-    succeeds 1.0.0, the first finalized policy; once a version has shipped or assessments are persisted
+    (`subject + semantic + scope`). `FUSION_POLICY_VERSION` 1.2.0 (Task 24,
+    succeeding 1.1.0) succeeds 1.0.0, the first finalized policy; once a version has shipped or assessments are persisted
     under it, any behavioural change to claim mapping, claim strength,
     compatibility, independence, verdict rules or confidence rules requires an
     explicit review and bump, because the version is what distinguishes the

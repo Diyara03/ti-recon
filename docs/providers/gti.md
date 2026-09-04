@@ -275,6 +275,16 @@ stated a confidence at or above the floor, how many stated none, the stated
 range) and the qualification with its reasons, so a report can say why the
 claim was or was not strong without a sandbox dump.
 
+**The floor is TI Recon policy, not a vendor threshold.** The API documents
+`confidence` only as an integer from 0 to 100; it defines no "strong" value,
+and nothing here should be read as a VirusTotal or GTI recommendation. The
+midpoint is a versioned internal heuristic chosen so that a sandbox stating
+less than even confidence is not counted as confident, and it is recorded as
+**T24-CALIBRATION-01**: it must be calibrated against additional real
+malicious, benign and false-positive samples before it is treated as more
+than a starting point. Changing it is a `CLAIM_SEMANTICS_POLICY_VERSION`
+bump.
+
 **GTI exposes no execution-quality field for these verdicts** — no runtime,
 process or connection totals, no "observed execution" as Hybrid Analysis
 carries — so none is modelled and none is invented. The qualification rests
