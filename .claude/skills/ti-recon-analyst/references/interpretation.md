@@ -65,7 +65,14 @@ heading. An item may carry `highlights`: the source's own bounded words about
 its claim (a sandbox verdict and classification, a Sigma rule title, a MITRE
 technique, a named family). Quote them as what that source said. They are
 presentation and carry no weight of their own — an item without highlights
-weighs exactly the same as one with eight.
+weighs exactly the same as one with eight. An item may also carry a
+`qualification` with `qualification_reasons`: `strong_direct` means the
+source's own record met its provider's documented consensus test (several
+sandboxes agreeing with stated confidence and no contrary verdict), which is
+why one origin could decide; `not_strong` means it was tested and fell short,
+and the reasons say why. It describes evidence strength from one origin,
+never independence — the same origin is still one source — and never a
+probability.
 
 **`opposing_evidence`** — claims that pushed the other way and did not prevail.
 Real, and shown separately. Putting them under "why" would read as though a

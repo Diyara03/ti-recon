@@ -209,15 +209,27 @@ Implemented (Jira Tasks 1-19):
   `malicious.single_origin_compatible_propositions.v1` verdict rule at MEDIUM,
   `highlights` carried through claims to the report, and a correlation graph
   that refuses an over-long related object instead of ending the run.
-  `FUSION_POLICY_VERSION` and `CLAIM_SEMANTICS_POLICY_VERSION` are `1.1.0`.
-  Live, with only GTI and MISP configured: EICAR stays LIKELY_BENIGN (now
-  MEDIUM), the known ransomware sample is SUSPICIOUS with a real sandbox basis
-  at STANDARD and DEEP; MALICIOUS there needs `gti_assessment` (a GTI
-  entitlement this account lacks) or an independent second family. Open
-  decisions, not omissions: whether a curated family attribution may
-  corroborate a same-origin sandbox verdict; a claim-level sandbox
-  execution-quality signal. See `docs/providers/gti.md` §7a and §12,
-  `docs/reasoning/evidence-fusion.md` §6.
+  Phase 1B closed the remaining policy gap: source independence and evidence
+  strength are different concepts, so a claim now carries a
+  `ClaimQualification` set only by its provider's own versioned test over its
+  own documented fields. GTI's consensus test (≥2 sandboxes, `malicious`, no
+  `harmless`, a malicious majority of all evaluations, ≥2 malicious verdicts
+  at or above `SANDBOX_CONFIDENCE_FLOOR` forming a majority of those that
+  stated a confidence — unstated confidence is neither for nor against) marks
+  `gti.sandbox_verdicts`
+  `STRONG_DIRECT`, and fusion lets a `STRONG_DIRECT` sandbox classification
+  decide alone at MEDIUM — after Task 16, so EICAR stays explained. GTI
+  exposes no execution-quality field for these verdicts, so none is modelled.
+  A `NOT_SUPPORTED` readiness check no longer inherits a directional yield
+  from the same provider's other call. `FUSION_POLICY_VERSION` and
+  `CLAIM_SEMANTICS_POLICY_VERSION` are `1.2.0`. Live, with only GTI and MISP
+  configured: see `docs/providers/gti.md` §7a and §12 and
+  `docs/reasoning/evidence-fusion.md` §5. Open decision, not an omission:
+  whether a curated family attribution may corroborate a same-origin sandbox
+  verdict (report and collection membership never may). Recorded, not fixed:
+  T24-FINDING-01 (MISP matching list name not surfaced), T24-FINDING-04
+  (correlation issues not projected into the analyst report), T24-FINDING-05
+  (`campaigns` sits past the DEEP file relationship budget).
 
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Task 13 chooses what
@@ -1175,7 +1187,11 @@ about it.
      bundled as a secondary is still found, through
      `PlanningDecision.call.answered_capabilities` plus its `source_family` —
      never through a coverage item, which records candidacy rather than who
-     answered.
+     answered. And a check that did not complete yields nothing: directional
+     yield is keyed by provider because a claim does not name its call, so
+     `yield_for` grants `DIRECTIONAL` or `CONTEXT_ONLY` only to a completed,
+     evidence-producing attempt — a `NOT_SUPPORTED` behaviour query never
+     inherits the same provider's reputation answer (Task 24 Phase 1B).
 
 102d. **The benign challenge must be independent *and* relevant.** Independence
      alone is not enough: the challenging check has to be an adverse search, from
@@ -2079,6 +2095,36 @@ about it.
      words about its own claim. Fusion never reads them, the report copies
      them, the text renderer neutralises them like every other provider
      string, and a claim without any is weighed exactly the same.
+
+180. **Source independence and evidence strength are different concepts.**
+     One origin can supply strong, direct, exact-observable evidence — several
+     of its own sandboxes classifying one sample malicious with stated
+     confidence — and one origin can supply one hedged opinion. Both are one
+     source; they are not the same evidence. A claim therefore carries a
+     `ClaimQualification` (`UNQUALIFIED`, `STRONG_DIRECT`, `NOT_STRONG`) set
+     only by its provider's own translator, under a versioned test over the
+     provider's own documented fields, with stable reason codes. Fusion reads
+     the enum alone — never a count, a confidence or a provider name — and
+     `QUALIFIED_DECISIVE_SEMANTICS` lets a `STRONG_DIRECT` sandbox
+     classification decide alone. Independence is counted exactly as before:
+     the band stays MEDIUM until a separate origin agrees, and confidence is
+     still not a probability. A test artifact every sandbox flags is still
+     explained first, because strength is not a shortcut past Task 16.
+
+181. **A consensus test uses only fields the provider documents, and invents
+     no execution quality.** GTI's `sandbox_verdicts` carry `category` and
+     `confidence` per sandbox and nothing about runtime, processes or
+     connections, so the test asks how many sandboxes evaluated the sample,
+     whether the malicious verdicts are a majority, how many of them stated a
+     confidence at or above a floor and whether those are a majority of the
+     ones that stated any, and whether any sandbox said `harmless` — a
+     contradiction that is preserved on the record and defeats the
+     qualification rather than being averaged away. Confidence counts where
+     it is present: an unstated confidence is neither for nor against, and
+     the floor is a counting rule, never a weight — a verdict below it keeps
+     its direction. One sandbox is one opinion; a hedged verdict is
+     hedged; a report or collection association is never the second
+     proposition that turns SUSPICIOUS into MALICIOUS.
 
 ## Security rules
 

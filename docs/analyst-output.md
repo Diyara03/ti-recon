@@ -78,6 +78,7 @@ their vocabulary inline, in the schema:
 | `source_checks[].cache_hit` | a real check that made no new request |
 | `related_observables[].assessed` | `false` means a relationship, not an indicator |
 | `assessment_basis[].highlights`, `unexplained_evidence[].highlights` | what the source said about its own claim, bounded; quoted by the text renderer as `said:` lines, never weighed |
+| `assessment_basis[].qualification`, `qualification_reasons` | what the provider's own versioned test said about the basis behind the claim (`strong_direct` / `not_strong` / `unqualified`); evidence strength from one origin, never independence and never a probability |
 | `*.source_family` | provenance, never a vote |
 
 Adding a description is not a semantic change and does not move

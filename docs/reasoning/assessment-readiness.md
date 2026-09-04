@@ -199,6 +199,17 @@ to the capability, so a secondary bundled capability never inherits the primary'
 `DIRECTIONAL`. That matters most for the challenge rules: a context requirement
 that inherited a directional yield would look like a search that had happened.
 
+**And a check that did not complete yields nothing (Task 24 Phase 1B).**
+Directionality is keyed by provider, because a claim does not record which
+call produced it — which once let a `NOT_SUPPORTED` behaviour query inherit
+`DIRECTIONAL` from the same provider's reputation answer, a refusal rendered
+as a finding. `yield_for` now grants `DIRECTIONAL` or `CONTEXT_ONLY` only to
+an attempt that completed (`COMPLETE` or `PARTIAL`) *and* produced evidence;
+`NOT_SUPPORTED`, `NOT_CONFIGURED`, an error, a quota refusal and an
+empty-handed success all yield `NONE` whatever the provider returned
+elsewhere. What remains unattributable is two completed, evidence-producing
+calls to one provider, which is the `UNATTRIBUTED` retention limit below.
+
 Where the coverage record proves a capability was answered but no attempt
 observed it, the yield is **`UNATTRIBUTED`**. Task 13 records outcomes per *call*,
 so a bundled response covers several capabilities while retaining content for

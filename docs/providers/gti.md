@@ -240,6 +240,51 @@ block produces `GTI_SANDBOX_VERDICTS_UNREADABLE` and a degraded result rather
 than an exception. The Task 17 translator reads `verdict` for strength —
 `malicious` asserted, `suspicious` suspected, anything else suspected.
 
+### The consensus test (Task 24 Phase 1B)
+
+Source independence and evidence strength are different concepts. Seven of
+GTI's sandboxes classifying one sample malicious with stated confidence are
+one origin — and strong, direct, exact-observable evidence. One malicious
+verdict beside three suspicious and two harmless is the same origin and is
+not. The translator in `claim_semantics.py` tells them apart with a
+provider-owned, versioned test over the documented fields only, and marks the
+claim `STRONG_DIRECT` or `NOT_STRONG` with stable reason codes:
+
+| Condition | Reason when it fails |
+|---|---|
+| at least 2 sandboxes evaluated the sample | `sandbox.too_few_evaluations` |
+| the record's verdict is `malicious`, not `suspicious` | `sandbox.verdict_hedged` |
+| no sandbox said `harmless` | `sandbox.harmless_verdict_present` |
+| the malicious verdicts are a strict majority of everything evaluated | `sandbox.malicious_not_majority` |
+| at least 2 malicious verdicts stated confidence ≥ the floor, and those are a strict majority of the malicious verdicts that stated a confidence at all | `sandbox.confident_malicious_below_threshold` |
+
+When every condition holds the reasons are `sandbox.unanimous_malicious` (or
+`sandbox.malicious_majority`), `sandbox.no_harmless_verdict` and
+`sandbox.confident_majority`. The normalizer counts
+`confident_malicious_count` over the *whole* block, not the bounded
+per-sandbox list, against `SANDBOX_CONFIDENCE_FLOOR` (50, the midpoint of the
+documented 0–100 range: a sandbox that states less than even confidence has
+not backed its verdict). The floor is a counting rule, never a weight — a
+verdict below it keeps its direction and its record and simply does not count
+toward consensus; a verdict with no stated confidence is counted separately
+(`malicious_without_confidence_count`) and is neither for nor against —
+confidence counts where it is present, a consensus nobody backed is not
+strong, and a stated confidence below the floor counts against. The claim's
+highlights carry one confidence summary line (how many malicious verdicts
+stated a confidence at or above the floor, how many stated none, the stated
+range) and the qualification with its reasons, so a report can say why the
+claim was or was not strong without a sandbox dump.
+
+**GTI exposes no execution-quality field for these verdicts** — no runtime,
+process or connection totals, no "observed execution" as Hybrid Analysis
+carries — so none is modelled and none is invented. The qualification rests
+on what the sandboxes stated and how many of them stated it. A `STRONG_DIRECT`
+sandbox classification may decide a MALICIOUS verdict alone
+(`docs/reasoning/evidence-fusion.md` §5); it still passes through Task 16
+first, so a test artifact every sandbox flags stays explained. The behaviour
+summary's own `gti.behavior.verdict` is one verdict list from one analysis,
+not several sandboxes agreeing, and is never qualified strong.
+
 ## 8. Top-level `threat_severity`
 
 GTI also returns a top-level `threat_severity` block, separate from the

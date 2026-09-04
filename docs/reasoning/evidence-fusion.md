@@ -127,23 +127,24 @@ kind a repository publishes after vetting it. The line is *specificity, not
 vendor reputation* — "a well-resourced provider judged this malicious" is
 `MALICIOUS_REPUTATION`, and it reaches SUSPICIOUS.
 
-> **A sandbox classification is not among them, and used to be.** The rule
-> promoted `SANDBOX_CLASSIFICATION` to decisive when its evidence class was
-> `DIRECT_OBSERVATION`, reading as "a sandbox watched the sample act rather than
-> a report of one". Nothing in a `NormalizedClaim` can tell those apart. The only
-> shipped claim it promoted was a **boolean contributing factor** on one
-> provider's own assessment — `{"factor": ..., "value": true}`, with no report,
-> environment, runtime or execution quality behind it — while the integration
-> that carries a full report and Task 12's `observed_execution` classifies its
-> assessment as a curated assertion and was merely corroborative. The promotion
-> inverted the evidence hierarchy: the claim with less behind it outranked the
-> claim with more, and one boolean reached MALICIOUS alone.
->
-> Task 12 insisted a sandbox *negative* needs execution quality to be readable. A
-> sandbox *positive* deserves the same care before it carries a verdict by
-> itself. Until a claim-level execution-quality signal exists — a deliberate
-> policy decision, not something to infer from an evidence class — every sandbox
-> classification corroborates and none decides.
+**A sandbox classification decides only when its own provider qualified it
+`STRONG_DIRECT` (Task 24 Phase 1B).** The rule that once promoted
+`SANDBOX_CLASSIFICATION` on `DIRECT_OBSERVATION` evidence was removed because
+nothing in a claim distinguished a sandbox that watched a sample act from a
+boolean saying one did, and the only claim it promoted was a contributing-factor
+flag with no report behind it. What replaced the wait for "a claim-level
+execution-quality signal" is a claim-level **qualification**: the provider's
+own translator tests its own documented fields — evaluations, agreement,
+contrary verdicts, stated confidence — under a versioned policy and records
+`ClaimQualification.STRONG_DIRECT`, `NOT_STRONG` or `UNQUALIFIED` with stable
+reasons. Fusion reads the enum alone; `QUALIFIED_DECISIVE_SEMANTICS` names the
+one semantic it applies to. Source independence and evidence strength are
+different concepts: one origin can supply strong direct evidence, and one
+origin is still one origin, so the band stops at MEDIUM
+(`medium.single_decisive_unopposed.v1`) until a separate origin agrees.
+Anything short of the test — one sandbox, a hedged verdict, a harmless verdict
+beside the malicious ones, confidence not stated — stays corroborative and
+reaches SUSPICIOUS, exactly as before.
 
 **ThreatFox source confidence is not TI Recon confidence.** ThreatFox accepts
 confirmed and vetted IOC submissions, and this v1 policy treats an exact,
@@ -174,7 +175,7 @@ said "suspicious" did not say "malicious".
 
 | Rule | When |
 |---|---|
-| `malicious.decisive_exact_claim.v1` | one unexplained decisive exact-scope malicious claim |
+| `malicious.decisive_exact_claim.v1` | one unexplained decisive exact-scope malicious claim — a decisive semantic, or a `STRONG_DIRECT` sandbox classification (`basis.strong_direct_classification`) |
 | `malicious.independent_corroboration.v1` | compatible non-weak support from ≥2 independent families |
 | `malicious.single_origin_compatible_propositions.v1` | two unexplained, exact-scope, asserted, corroborative claims of *different but compatible* semantics from one origin |
 | `likely_benign.unopposed_benign_claim.v1` | a genuine directional benign assertion, nothing malicious |
@@ -426,12 +427,13 @@ about the same claim. Saying more than that would overclaim.
 
 ### Policy versions
 
-`FUSION_POLICY_VERSION` is `1.1.0`. `1.0.0` was the first finalized Task 17
-policy; Task 24 added the single-origin verdict rule and its confidence rule
-and bumped it, and `CLAIM_SEMANTICS_POLICY_VERSION` moved to `1.1.0` in the same
-change with the GTI sandbox-verdict, behaviour-verdict and association
-mappings, so an assessment produced under either version is distinguishable by
-its ids. The pre-release corrections before `1.0.0` did not bump it because no
+`FUSION_POLICY_VERSION` is `1.2.0`. `1.0.0` was the first finalized Task 17
+policy; Task 24 Phase 1 added the single-origin verdict rule and its confidence
+rule (`1.1.0`), and Phase 1B let a `STRONG_DIRECT` sandbox classification
+decide (`1.2.0`). `CLAIM_SEMANTICS_POLICY_VERSION` moved in step — `1.1.0` with
+the GTI sandbox-verdict, behaviour-verdict and association mappings, `1.2.0`
+with the claim qualification and the GTI consensus test — so an assessment
+produced under any of them is distinguishable by its ids. The pre-release corrections before `1.0.0` did not bump it because no
 corpus existed under it.
 
 From the point at which a fusion policy version ships — or any assessment is
