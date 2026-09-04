@@ -22,7 +22,8 @@ nothing here depends on it and nothing here changes it.
 | --- | --- |
 | **Phase 1** (done) | proved the host mechanics with a developer-only proof: plugin loading, Skill discovery, MCP lifecycle, `userConfig` → environment → the existing credential resolver, no leakage. |
 | **Phase 2** (done) | made the plugin **self-contained and installable**: it bundles the TI Recon project and its lock, starts the server directly through `uv`, provisions a persistent Python environment under the plugin's data directory, and was installed through the real plugin manager from a disposable local marketplace and run from outside the repository. |
-| **Not yet** | an internal Enterprise marketplace, an Enterprise analyst pilot, Windows and macOS execution (statically resolved only), the `ti-recon[remote]` dependency split. |
+| **Phase 3** (done) | hardened for a pilot: the local/remote dependency boundary (`ti-recon[remote]`), a measured start-up profile and a halved warm start, the pilot marketplace definition at the repository root, a proved versioned upgrade, the package-index policy, the reset procedure and the endpoint pilot checklist. |
+| **Not yet** | hosting the marketplace in the organization's private repository, an Enterprise analyst pilot, Windows and macOS execution (statically resolved only), and the Intel Mac decision below. |
 
 The analyst experience this now supports:
 
@@ -79,6 +80,7 @@ files.
   ],
   "env": {
     "UV_PROJECT_ENVIRONMENT": "${CLAUDE_PLUGIN_DATA}/runtime-env",
+    "UV_COMPILE_BYTECODE": "1",
     "TI_RECON_CREDENTIAL_SETUP": "claude-plugin",
     "VIRUSTOTAL_API_KEY": "${user_config.virustotal_api_key}",
     "…": "one entry per option, see below"
@@ -96,30 +98,69 @@ files.
 | `--no-env-file` | no `.env` from the working directory is read, so a credential can only arrive from the plugin's configuration |
 | `--python 3.12` | the interpreter series derived from `requires-python`, stated identically in `.python-version`; `uv` provisions it if absent |
 | `UV_PROJECT_ENVIRONMENT` | the environment lives under `${CLAUDE_PLUGIN_DATA}`, which survives plugin updates; nothing mutable is ever placed under `${CLAUDE_PLUGIN_ROOT}` |
+| `UV_COMPILE_BYTECODE=1` | `uv` compiles every installed module at provisioning time, so the first start does not pay for compiling 1,100 files (measured: first-start import time 2.4 s → 1.2 s) |
 | `TI_RECON_CREDENTIAL_SETUP` | the server describes the plugin's credential step to a client, never an environment variable the plugin's mapping would overwrite |
 
-Measured on Claude Code 2.1.259 and `uv` 0.12.3, Linux x86-64:
+Measured on Claude Code 2.1.259 and `uv` 0.12.3, Linux x86-64, after Phase 3:
 
 | Behaviour | Result |
 | --- | --- |
-| first start, environment absent, warm `uv` cache, system Python present | `uv` creates the environment and installs 41 distributions in ~3 s, then the server starts |
-| first start, **empty** `uv` cache, no Python at all (managed download forced), online | **18.5 s** to a running interpreter with the package importable; 106 MB of interpreter, 54 MB of environment |
-| warm start | `uv` overhead **0.2 s**; the server itself then takes ~9–10 s to answer `initialize` on this machine |
-| observed through the host | first session connected in 15.2 s, warm sessions in 9.8–11.0 s |
-| environment | 41 distributions, 54 MB on disk (65 MB as the host reports it with byte-code) |
+| first start, environment absent, warm `uv` cache, system Python present | `uv` creates the environment, installs 41 distributions and compiles their byte-code in ~1.3 s, then the server starts; observed through the host, 2.5 s to connected |
+| first start, **empty** `uv` cache, no Python at all (managed download forced), online | **18.5 s** to a running interpreter with the package importable (Phase 2 measurement; unchanged by Phase 3) — 106 MB of interpreter, plus the environment |
+| warm start, through the host | **2.2–2.4 s** to connected (Phase 2 baseline on the same day: 3.1–3.4 s; the 9.8–11 s recorded in the Phase 2 report was not reproducible and is treated as a load artefact of that session) |
+| warm start, direct spawn to `initialize` through the exact plugin command | 2.1–2.6 s (before: 3.3–4.0 s) |
+| environment | 41 distributions; 54 MB, or 71 MB with byte-code compiled |
 | plugin update simulation (same environment, new plugin root) | the project is reinstalled from the new path; a source change under the same path is also detected, through `[tool.uv] cache-keys` |
-| a `pyproject.toml` change without a matching lock | refused by `--locked` with a message on stderr |
+| a `pyproject.toml` change without a matching lock | refused by `--locked` with a message on stderr (tested) |
 | two sessions starting on a fresh machine at once | both succeed; `uv` serialises the environment |
 | interpreter link removed, `pyvenv.cfg` emptied | repaired on the next start |
 | environment path is a plain file | fails closed: nonzero exit, message on stderr, nothing on stdout |
-| a package directory deleted from site-packages while its metadata remains | **not** repaired: `uv` audits installed metadata, so this exotic damage needs the environment removed — `claude plugin uninstall` deletes the data directory, or delete `runtime-env` by hand |
+| a package directory deleted from site-packages while its metadata remains | **not** repaired: `uv` audits installed metadata. See *Reset* below |
 | stdout | only the program's output; every `uv` message goes to stderr |
 | the plugin root | never written to |
 
-The ~10 s the server itself takes to initialize is unchanged from Phase 1 and
-is import and snapshot-loading time in TI Recon, not provisioning. It is
-tolerable for a session that starts once, and is recorded as a candidate for
-reduction rather than treated as a release blocker.
+### The start-up profile
+
+Instrumented in the provisioned environment with a phase-by-phase timeline
+and `cProfile`, before any change (interpreter start 0.01 s):
+
+| Phase | Before | After |
+| --- | --- | --- |
+| import of `ti_recon.mcp_server.main` (whole graph; the MCP SDK alone is ~0.7 s of it) | 1.2–1.5 s warm, 2.4 s on a first start without byte-code | 1.2–1.5 s warm, 1.2 s first start |
+| `build_default_adapters()` — eight adapters at ~0 s, **MISP warninglists at 1.5 s** | 1.5 s | 0.75 s |
+| application composition, planning registry, credential load | 0.005 s | 0.005 s |
+| `build_stdio_server()` (tool and resource registration, schemas) | 0.06 s | 0.06 s |
+| MCP `initialize`, `tools/list`, `provider_status` | 0.05 s | 0.05 s |
+| `uv run` overhead on a warm environment (`--locked`, online or offline) | 0.03 s | 0.03 s |
+
+The bottleneck was one thing: compiling the MISP snapshot's 80 `cidr` lists.
+`cProfile` attributed 4.5 of 6.5 profiled seconds to `_compile_cidr`, of which
+~2 s was 142,874 `ipaddress.ip_network()` constructions and ~2 s a
+per-character control-character scan over 6.4 million characters. Neither the
+JSON parse (0.02 s), the checksum verification nor the Pydantic models
+mattered. The snapshot is parsed eagerly, once, at adapter construction, and
+deliberately so: a broken snapshot is discovered when the process starts.
+
+Two changes, both keeping every answer byte-identical:
+
+* `parse_cidr` — a fast path for the one canonical IPv4 spelling
+  (`d.d.d.d` or `d.d.d.d/n`, no leading zeros, no whitespace), computing the
+  masked network address by hand; every other spelling, including all of
+  IPv6, goes to `ipaddress.ip_network(strict=False)` exactly as before. A test
+  compares the fast path with the standard library over every entry of every
+  shipped `cidr` list (140,000+ comparisons) and over the awkward spellings a
+  hand-written parser gets wrong.
+* the control-character scan is one compiled regular expression.
+
+Not done, on purpose: lazy index construction (it would move a broken
+snapshot's discovery to the first lookup), a pickled index cache in the data
+directory (a second on-disk format to invalidate), and any global mutable
+state. The remaining warm cost is dominated by importing the MCP SDK and the
+engine, which is not TI Recon's to remove.
+
+The MISP snapshot is 9.3 MB on disk in the repository and the plugin (2 MB
+compressed); it is the only part of start-up that scaled with data, and after
+the change it costs ~0.7 s of a ~2.3 s start.
 
 ### Runtime state and the two directories
 
@@ -132,6 +173,21 @@ reduction rather than treated as a release blocker.
 No credential is ever written under either. Credentials live in Claude Code's
 sensitive plugin storage and reach the server only as environment variables
 at start.
+
+**Change detection is `uv`'s, and it is cheap.** Every start audits the
+installed metadata against the lock (0.03 s); a new plugin root, a changed
+lock or a changed source file (through `[tool.uv] cache-keys`) reinstalls what
+changed; a missing interpreter or `pyvenv.cfg` is recreated. What it does not
+detect is a package directory removed from site-packages while its metadata
+remains, and adding a full reinstall to every start to catch that would cost
+every analyst every session for a corruption nobody has observed.
+
+**Reset, when needed, is manual and bounded.** Remove `runtime-env` under the
+plugin's own data directory — `~/.claude/plugins/data/ti-recon-<marketplace>/`
+— or run `claude plugin uninstall`, which removes that directory. Nothing in
+the plugin deletes anything on its own: an automated cleanup would have to
+prove a path lies inside `${CLAUDE_PLUGIN_DATA}` and belongs to TI Recon, and
+the host already provides exactly that operation as `uninstall`.
 
 ### Package source and network
 
@@ -150,8 +206,28 @@ PyPI**. Third-party dependencies and, where the workstation has no Python
 * fully offline after the first start (`--offline` was used for every test in
   the suite), and offline from the first start if IT pre-populates `uv`'s cache.
 
-The plugin sets none of these. It reads whatever `uv` configuration the
-workstation has, which is exactly the control point an organization wants.
+The plugin sets none of these, and tests assert it: no `UV_INDEX*` variable
+in `.mcp.json`, no index in the bundled `pyproject.toml`, and a lock whose
+only hosts are `pypi.org` and `files.pythonhosted.org` with no credential in
+any URL. It reads whatever `uv` configuration the workstation has, which is
+exactly the control point an organization wants:
+
+```toml
+# /etc/uv/uv.toml (system) or ~/.config/uv/uv.toml (user) — managed by IT
+[[index]]
+name = "internal"
+url = "https://pypi.example.internal/simple"   # placeholder
+default = true
+
+python-install-mirror = "https://python-mirror.example.internal/"  # placeholder
+```
+
+Index credentials go through `uv`'s own mechanisms — `UV_INDEX_INTERNAL_USERNAME`
+/ `UV_INDEX_INTERNAL_PASSWORD`, the keyring provider, or `netrc` — and are
+unrelated to TI provider keys: a package-index credential authenticates the
+workstation to a mirror, a provider key authenticates the analyst to a
+threat-intelligence service, and neither ever passes through a Claude prompt,
+the plugin's files, or the repository lock.
 
 ### Cross-platform status
 
@@ -160,16 +236,74 @@ workstation has, which is exactly the control point an organization wants.
 | Linux x86-64 | **executed**: every proof on this page |
 | Windows x86-64, macOS arm64, macOS x86-64 | **resolved statically only**: `uv sync --locked --python-platform … --dry-run` succeeds for each, and every locked distribution has a wheel for each — with one exception below. Not executed on real hardware. |
 
-The exception: **`cryptography` 50.0.1 publishes no macOS x86-64 wheel**, only
-arm64. On an Intel Mac `uv` would have to build it from source, which needs a
-Rust toolchain and OpenSSL headers — not a portable first start. `cryptography`
-enters the lock only through `pyjwt[crypto]`, which the **remote** JWT
-verifier needs and the local server never imports. This is the one place the
-`ti-recon[remote]` dependency split would matter for portability; per the
-Phase 2 instruction it is reported here and **not performed**. Every other
-distribution with native code (`pydantic-core`, `aiohttp`, `rpds-py`,
-`multidict`, `yarl`, `frozenlist`, `propcache`, `cffi`) has wheels for all four
-targets. `pywin32` is Windows-only by marker, as intended.
+### The local/remote dependency boundary
+
+Phase 3 moved what only the remote HTTP surface imports into an extra:
+
+| Declared by | Packages |
+| --- | --- |
+| `dependencies` (core) | `pydantic`, `httpx`, `idna`, `vt-py`, `mcp` |
+| `optional-dependencies.remote` | `pyjwt[crypto]>=2.13,<3`, `uvicorn>=0.34,<1`, `starlette>=0.27,<2` |
+| `optional-dependencies.dev` | the test and lint tools, unchanged |
+
+The local stdio server imports none of the three itself, and a test scans its
+modules to keep it so. The remote process enforces the extra **at startup**,
+explicitly and by name: `require_remote_dependencies` refuses to serve when
+PyJWT is missing, below the 2.13 floor the verifier's security tests assume,
+or installed without asymmetric algorithms (the `crypto` extra), and when
+uvicorn is missing — with no broad `except ImportError` and no environment
+value in the message. Nothing about JWT, JWKS, tenant derivation or the
+pre-authentication gate changed; the remote suite runs unchanged in the
+development environment, which installs `--all-extras`.
+
+**What the split does not do, measured rather than assumed.** The MCP SDK
+(`mcp` 2.1.1) declares `pyjwt[crypto]`, `uvicorn`, `starlette` and
+`sse-starlette` as its own hard requirements and imports `cryptography` when
+`mcp.server` is imported (blocking the import makes `import mcp.server` fail).
+So the local runtime's resolved closure is **unchanged**:
+
+| | Before | After |
+| --- | --- | --- |
+| distributions in the local closure | 41 | 41 |
+| environment size | 54 MB (71 MB with byte-code) | 54 MB (71 MB with byte-code) |
+| native-extension distributions | 9 | 9 |
+| `cryptography`, `pyjwt`, `uvicorn`, `starlette` present | yes | yes, through `mcp` |
+
+The extra therefore changes what TI Recon *declares* and *enforces* — its
+security floors are no longer a metadata claim that an environment installed
+without the extra could silently miss — not what an analyst's environment
+contains. Removing `cryptography` from a local install would require the SDK
+to drop its own requirement, which is outside this repository.
+
+### Intel Macs: the exact chain
+
+`cryptography` releases from 49.0.0 (2026-06-12) publish macOS wheels for
+arm64 only; 48.0.1 (2026-06-09) is the last with x86-64 / universal2 wheels.
+The chain is `mcp → pyjwt[crypto] → cryptography`, so it survives the split.
+On an Intel Mac, `uv` would fall back to the sdist and need Rust and OpenSSL
+headers, which the pilot forbids.
+
+Verified with a scratch lock: a marker-scoped constraint —
+
+```toml
+[tool.uv]
+constraint-dependencies = ["cryptography<49 ; sys_platform == 'darwin' and platform_machine == 'x86_64'"]
+```
+
+— resolves `cryptography==48.0.1` for `x86_64-apple-darwin` only and leaves
+50.0.1 on Windows, Linux and Apple silicon. It is **not applied**: PyPI records
+six advisories against 48.0.1 and none against 50.0.1, and although the local
+server never exercises `cryptography`, shipping a version with published
+advisories to one platform is a decision for the organization, not a
+default. The alternatives are recorded in the pilot checklist: apply the
+constraint and accept the advisories for Intel Macs, or exclude Intel Macs
+from the pilot. A test lists this as the single tolerated wheel gap and fails
+if any other appears — or if this one closes and the entry is stale.
+
+Every other distribution with native code has cp312 wheels for all four
+targets, no local package is source-only, and `uv sync --locked
+--python-platform … --dry-run` resolves for each target from the plugin's
+lock.
 
 The design avoids platform-specific mechanics: a direct executable, no shell,
 `pathlib` and `subprocess` in the tests, no `/tmp`, no `chmod`, no Unix file
@@ -325,6 +459,8 @@ Two layers, both with fake sentinel values and no provider contacted.
 | sentinel search over every result, debug log and stderr | 0 occurrences |
 | transport and auth | `transport: stdio` only; no OAuth, no JWKS, no HTTP server, no instruction truncation |
 | `uv` removed from `PATH` | `Connection failed (ENOENT): Executable not found in $PATH: "uv"`; no environment value in the message |
+| **Phase 3**, the repository itself as the pilot marketplace: `claude plugin validate --strict .`, `marketplace add <checkout>`, `plugin install ti-recon@ti-recon-pilot` | validated, added, installed at `~/.claude/plugins/cache/ti-recon-pilot/ti-recon/0.1.0`; sentinel configuration → `gti=true censys=true`; no configuration → only `misp_warninglists`; three tools; 0 sentinel occurrences; stdio only; 2.2–2.5 s to connected |
+| **Phase 3**, upgrade: install 0.1.0 from a scratch marketplace, replace it with a 0.1.1 build (version bumped in `plugin.json`, the marketplace entry, the runtime's `pyproject.toml`, lock and `__version__`; a marker appended to the Skill), `marketplace update`, `plugin update` | `serverVersion` 0.1.0 → 0.1.1; `installPath` `…/0.1.0` → `…/0.1.1`; the data directory and its `pyvenv.cfg` unchanged; `ti_recon-0.1.1.dist-info` replaces 0.1.0 with `Installed 1 package`; the cached Skill carries the marker; the configuration key `ti-recon@<marketplace>` is version-independent; the 0.1.0 cache directory stays until the host's grace period |
 
 One host detail worth knowing: for a marketplace added from a **local
 directory**, Claude Code resolved `${CLAUDE_PLUGIN_ROOT}` to the marketplace's
@@ -363,23 +499,81 @@ runtime *contains* the remote modules — it is the whole package — but nothin
 in the plugin starts them, references them, or imports them at startup; the
 plugin's own files are scanned for remote-authentication terms.
 
+## The pilot marketplace
+
+The repository is the marketplace. `.claude-plugin/marketplace.json` at the
+repository root lists the plugin at `./plugins/ti-recon` under the package
+version, so hosting a copy of this repository — or a repository that contains
+only `.claude-plugin/marketplace.json` and `plugins/ti-recon/` — in a private
+GitHub repository, an internal Git server or GitHub Enterprise Server is the
+whole distribution step. No hostname is written anywhere; the marketplace
+name is `ti-recon-pilot`, its owner a placeholder, and it has been validated
+with `claude plugin validate --strict`, installed from, and never pushed or
+registered anywhere.
+
+**Versioning.** The pilot release is `0.1.0`, and 1.0 is not used because the
+plugin works: it is reserved for after a real endpoint pilot. One version is
+stated in four places and tests hold them equal — `ti_recon.__version__`,
+`pyproject.toml`, `plugin.json` and the marketplace entry. Bumping all four
+(and relocking, since the lock records the project version) is a release;
+`claude plugin update` picks it up because the host gates updates on
+`plugin.json`'s `version`. `claude plugin tag` can create `ti-recon--v0.1.0`
+tags once the repository is hosted.
+
+### Enterprise administration (templates, nothing applied)
+
+Placeholders throughout: `acme-corp`, `ti-recon-marketplace`.
+
+Allow the internal marketplace and nothing else, in managed settings:
+
+```json
+{
+  "strictKnownMarketplaces": [
+    { "source": "github", "repo": "acme-corp/ti-recon-marketplace" }
+  ],
+  "disableSideloadFlags": true
+}
+```
+
+(`hostPattern` for a GitHub Enterprise Server host, or `pathPattern` for an
+approved local path, are the alternatives the host documents.
+`disableSideloadFlags` turns off `--plugin-dir`, which is the development
+route and not an analyst one.)
+
+Register the marketplace for a team automatically, in a project's
+`.claude/settings.json` or in managed settings:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "ti-recon-pilot": {
+      "source": { "source": "github", "repo": "acme-corp/ti-recon-marketplace" }
+    }
+  },
+  "enabledPlugins": { "ti-recon@ti-recon-pilot": true }
+}
+```
+
+Distribute through **Organization Settings → Plugins** on Team or Enterprise
+plans: the marketplace repository must be private or internal, and a private
+plugin is accepted when it lives inside the marketplace repository — which
+this layout satisfies — or shares the marketplace's GitHub owner. Analysts
+then install at user scope (`claude plugin install ti-recon@ti-recon-pilot`)
+or receive it through organization sync, and update with
+`claude plugin update ti-recon@ti-recon-pilot`. None of this has been applied,
+and no administrator has approved this repository; these are the settings the
+current host documents, written down so the pilot can start from them.
+
 ## What remains before an Enterprise analyst pilot
 
-1. **The internal marketplace** — a private repository holding
-   `.claude-plugin/marketplace.json` and this plugin, versioned by
-   `plugin.json`'s `version`, distributed at user scope or through
-   Organization Settings → Plugins, with `strictKnownMarketplaces` and
-   `disableSideloadFlags` in managed settings.
+1. **Hosting** the marketplace in the organization's private repository and
+   the managed-settings entries above, by an administrator.
 2. **`uv` on the endpoint** through endpoint management, and the index or
    mirror policy in `uv`'s settings; or IT-provisioned caches for offline
-   first starts.
-3. **Windows and macOS execution** of the whole path on real managed machines,
-   and the macOS x86-64 decision: the `ti-recon[remote]` split, or an Intel
-   Mac exclusion.
-4. **Sensitive-storage measurement** on a real Enterprise-authenticated
-   Windows and macOS workstation.
-5. **Startup time** — the server's own ~10 s initialize is worth reducing
-   before it is paid in every session.
+   first starts. The plugin never downloads `uv`.
+3. **The Intel Mac decision** (above), if the fleet still has them.
+4. **Windows and macOS execution** of `docs/claude-plugin-pilot-checklist.md`
+   on real managed machines, including the sensitive-storage observation.
 
 A signed self-contained executable remains the fallback if the organization
 declines the `uv` prerequisite.
