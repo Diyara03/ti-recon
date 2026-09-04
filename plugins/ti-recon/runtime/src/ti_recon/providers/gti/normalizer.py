@@ -763,6 +763,16 @@ SANDBOX_VERDICT_EFFECTS: Final[dict[str, EvidenceEffect]] = {
 #: changed shape is worth saying so about.
 GTI_SANDBOX_VERDICTS_UNREADABLE: Final[str] = "GTI_SANDBOX_VERDICTS_UNREADABLE"
 
+#: The stated confidence (0-100, as the API documents it) below which a
+#: sandbox's malicious verdict is not counted as *confident*. The midpoint of
+#: the documented range: a sandbox that states less than even confidence in
+#: its own verdict has not backed it. This is a counting floor for the
+#: consensus test in ``claim_semantics``, never a weight -- a verdict below it
+#: keeps its direction and its record, it simply does not count toward
+#: consensus. A verdict with no stated confidence is counted separately and
+#: never assumed confident.
+SANDBOX_CONFIDENCE_FLOOR: Final[int] = 50
+
 #: How many per-sandbox entries, and how many labels per entry, one record keeps.
 _MAX_SANDBOXES: Final[int] = 10
 _MAX_SANDBOX_LABELS: Final[int] = 5
@@ -840,6 +850,10 @@ def normalize_sandbox_verdicts(
     classifications = sorted(
         {label for item in agreeing for label in item.get("malware_classification", [])}
     )
+    malicious_entries = [item for item in entries if item["category"] == "malicious"]
+    malicious_confidences = [
+        item["confidence"] for item in malicious_entries if "confidence" in item
+    ]
     attributes: dict[str, Any] = {
         "verdict": verdict,
         "sandbox_count": len(entries),
@@ -850,8 +864,18 @@ def normalize_sandbox_verdicts(
         # Malicious beside harmless is environment-dependent malware describing
         # itself. Preserved, never averaged.
         "divergent": bool(counts["malicious"] and counts["harmless"]),
+        # Counted over every entry, not the bounded list below, so the
+        # consensus test in the claim layer sees the whole block.
+        "confidence_floor": SANDBOX_CONFIDENCE_FLOOR,
+        "confident_malicious_count": sum(
+            1 for value in malicious_confidences if value >= SANDBOX_CONFIDENCE_FLOOR
+        ),
+        "malicious_without_confidence_count": len(malicious_entries) - len(malicious_confidences),
         "sandboxes": entries[:_MAX_SANDBOXES],
     }
+    if malicious_confidences:
+        attributes["malicious_confidence_min"] = min(malicious_confidences)
+        attributes["malicious_confidence_max"] = max(malicious_confidences)
     if classifications:
         attributes["malware_classification"] = classifications[:_MAX_SANDBOX_LABELS]
     if len(entries) > _MAX_SANDBOXES:

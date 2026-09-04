@@ -304,6 +304,22 @@ class BasisItem(FrozenTiReconModel):
     claim_id: str = Field(min_length=1, max_length=64)
     evidence_id: str = Field(min_length=1, max_length=200)
     reason_codes: tuple[str, ...] = ()
+    #: What the provider's own versioned test said about the basis behind the
+    #: claim, and its stable reason codes. Copied from Task 17A, never
+    #: re-derived here.
+    qualification: str = Field(
+        default="unqualified",
+        max_length=40,
+        description=(
+            "What the provider's own versioned test said about the basis behind "
+            "this claim: strong_direct (enough evaluations agreeing with stated "
+            "confidence and no contrary verdict), not_strong (tested and short of "
+            "that; the reasons say why) or unqualified (no test applies). A "
+            "statement about evidence strength from one origin, never about "
+            "source independence and never a probability."
+        ),
+    )
+    qualification_reasons: tuple[str, ...] = Field(default=(), max_length=8)
     #: What the source actually said, in its own bounded terms.
     highlights: tuple[str, ...] = Field(
         default=(),

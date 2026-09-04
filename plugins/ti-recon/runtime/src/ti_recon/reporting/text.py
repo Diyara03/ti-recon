@@ -243,6 +243,9 @@ def _basis_lines(item: BasisItem) -> list[str]:
         f"      scope: {item.scope}",
         f"      source: {safe_text(item.source_family, limit=64)}",
     ]
+    if item.qualification != "unqualified":
+        reasons = ", ".join(safe_text(code, limit=64) for code in item.qualification_reasons)
+        lines.append(f"      qualification: {safe_text(item.qualification, limit=40)} ({reasons})")
     for highlight in item.highlights:
         lines.append(f"      said: {safe_text(highlight, limit=160)}")
     return lines

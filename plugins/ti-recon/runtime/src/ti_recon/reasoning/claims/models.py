@@ -47,8 +47,10 @@ __all__ = [
     "CLAIM_ID_LENGTH",
     "MAX_CLAIM_HIGHLIGHTS",
     "MAX_CLAIM_HIGHLIGHT_LENGTH",
+    "MAX_CLAIM_QUALIFICATION_REASONS",
     "ClaimAssertionStrength",
     "ClaimPropositionKey",
+    "ClaimQualification",
     "ClaimSemantic",
     "NormalizedClaim",
     "claim_id_for",
@@ -61,6 +63,9 @@ CLAIM_ID_LENGTH: Final[int] = 32
 #: Bounds on the presentation highlights a claim may carry.
 MAX_CLAIM_HIGHLIGHTS: Final[int] = 8
 MAX_CLAIM_HIGHLIGHT_LENGTH: Final[int] = 160
+
+#: Bound on the reason codes a qualification may carry.
+MAX_CLAIM_QUALIFICATION_REASONS: Final[int] = 8
 
 
 class ClaimSemantic(StrEnum):
@@ -131,6 +136,33 @@ class ClaimAssertionStrength(StrEnum):
     #: The source qualifies it -- "suspicious" rather than "malicious".
     #: Never decisive, whatever the semantic.
     SUSPECTED = "suspected"
+
+
+class ClaimQualification(StrEnum):
+    """What a provider-owned test said about the basis behind an asserted claim.
+
+    Source independence and evidence strength are different concepts. One
+    origin can supply strong, direct, exact-observable evidence -- several of
+    its own sandboxes classifying one sample malicious with stated confidence
+    -- and one origin can supply a single hedged opinion. Both are "one source";
+    they are not the same evidence. This field lets a translator say which,
+    from the provider's own documented fields, under a versioned policy that
+    lives in the provider package. Fusion reads only the enum: never a count,
+    never a confidence, never a provider name.
+    """
+
+    #: The translator made no statement. The claim is weighed as its semantic,
+    #: scope and strength alone allow.
+    UNQUALIFIED = "unqualified"
+    #: The source's own record met the provider's documented consensus test:
+    #: enough independent evaluations, agreement, no contrary verdict, and
+    #: adequate stated confidence. May let a semantic that is otherwise only
+    #: corroborative decide alone.
+    STRONG_DIRECT = "strong_direct"
+    #: The record was tested and did not meet it -- too few evaluations,
+    #: disagreement, a contrary verdict or insufficient confidence. The
+    #: reasons say which. Weighed exactly like an unqualified claim.
+    NOT_STRONG = "not_strong"
 
 
 #: Semantics that describe a *relationship-independent* property of the object
@@ -209,6 +241,13 @@ class NormalizedClaim(FrozenTiReconModel):
     #: like one with many. They exist so a report can say *why* without
     #: carrying the provider payload.
     highlights: tuple[str, ...] = Field(default=(), max_length=MAX_CLAIM_HIGHLIGHTS)
+    #: What a provider-owned, versioned test said about the basis behind this
+    #: claim. Fusion reads the enum alone; the reasons are stable codes for
+    #: the report, never weighed.
+    qualification: ClaimQualification = ClaimQualification.UNQUALIFIED
+    qualification_reasons: tuple[str, ...] = Field(
+        default=(), max_length=MAX_CLAIM_QUALIFICATION_REASONS
+    )
     #: ``True`` when TI Recon derived this claim from graph structure rather than
     #: a provider stating it. Such a claim names its derivation rule and can
     #: never be presented as something a provider reported.
@@ -287,6 +326,8 @@ def claim_from(
     target_key: str = "",
     source_partial: bool = False,
     highlights: tuple[str, ...] = (),
+    qualification: ClaimQualification = ClaimQualification.UNQUALIFIED,
+    qualification_reasons: tuple[str, ...] = (),
 ) -> NormalizedClaim:
     """Build a claim as a view over one piece of evidence.
 
@@ -319,5 +360,9 @@ def claim_from(
         source_partial=source_partial,
         highlights=tuple(item[:MAX_CLAIM_HIGHLIGHT_LENGTH] for item in highlights)[
             :MAX_CLAIM_HIGHLIGHTS
+        ],
+        qualification=qualification,
+        qualification_reasons=tuple(item[:64] for item in qualification_reasons)[
+            :MAX_CLAIM_QUALIFICATION_REASONS
         ],
     )
