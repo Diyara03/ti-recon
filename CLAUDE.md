@@ -144,7 +144,8 @@ Implemented (Jira Tasks 1-19):
   resources. Capability only: no reasoning, no provider selection, no credential
   input, no active operation.
 
-- Task 22 (in progress) — the authenticated remote MCP surface (`mcp_server/`).
+- Task 22 — the authenticated remote MCP surface (`mcp_server/`), complete and
+  merged; an optional deployment path beside the primary local one.
   TI Recon is an OAuth **resource server**: a deployment's own `TokenVerifier`
   proves a token and `StrictTokenVerifier` enforces the invariants the SDK does
   not — non-empty subject, exact issuer, and an audience naming this MCP
@@ -164,21 +165,26 @@ Implemented (Jira Tasks 1-19):
   identity provider has been contacted**; a staging OAuth acceptance test is the
   next phase.
 
-- Task 23, Phase 1 — the local Claude Code plugin (`plugins/ti-recon/`), as
-  architecture, host proof and developer proof only. The primary usage model is
-  Claude Enterprise → Claude Code on each analyst workstation → the plugin →
-  the local stdio `ti-recon-mcp` → that analyst's own provider credentials, with
-  **no shared deployment**. The plugin bundles the MCP server declaration and a
-  byte-identical copy of the analyst Skill; its `userConfig` declares one
+- Task 23 (in progress) — the local Claude Code plugin (`plugins/ti-recon/`).
+  The primary usage model is Claude Enterprise → Claude Code on each analyst
+  workstation → the plugin → the local stdio `ti-recon-mcp` → that analyst's
+  own provider credentials, with **no shared deployment**. Phase 1 proved the
+  host mechanics; Phase 2 made the plugin self-contained: `.mcp.json` starts
+  the server directly through `uv run --project ${CLAUDE_PLUGIN_ROOT}/runtime
+  --locked --no-dev --no-editable --no-env-file --python 3.12 ti-recon-mcp`,
+  with the environment under `${CLAUDE_PLUGIN_DATA}/runtime-env`
+  (`UV_PROJECT_ENVIRONMENT`). `runtime/` is a byte-identical, generated copy of
+  the project — `pyproject.toml`, `uv.lock`, `README.md`, `src/ti_recon/` and a
+  derived `.python-version` — kept by `tools/sync_plugin_runtime.py`; the Skill
+  copy is kept by `tools/sync_plugin_skill.py`. `userConfig` declares one
   optional `sensitive` option per credential group plus the non-secret Censys
   organization id, substituted by the host into the server's environment where
-  the existing loader already reads them. `TI_RECON_CREDENTIAL_SETUP` selects a
-  `LocalCredentialSetup` so the server states the plugin's setup step rather
-  than the environment one. **No runtime is bundled**: the committed launcher
-  fails closed, and `tools/build_dev_plugin.py` generates a NON-DISTRIBUTABLE
-  copy that runs this checkout for proof only. Runtime packaging (recommended:
-  a `uv`-provisioned environment in `${CLAUDE_PLUGIN_DATA}`), the internal
-  marketplace and Windows/macOS verification are later phases. See
+  the existing loader already reads them; `TI_RECON_CREDENTIAL_SETUP` selects a
+  `LocalCredentialSetup` so the server states the plugin's setup step. The only
+  workstation prerequisites are Claude Code and `uv`. Proved installed from a
+  disposable local marketplace on Linux x86-64; Windows and macOS are resolved
+  statically only. The internal marketplace, an Enterprise pilot and the
+  `ti-recon[remote]` dependency split are later phases. See
   `docs/claude-plugin.md`.
 
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
@@ -330,13 +336,14 @@ about it.
   prompt, into tool arguments and into a conversation transcript
 - Tenant-key rotation or migration, and any second identity scheme beside
   `tenant-v1:`
-- A bundled or provisioned plugin runtime, a cross-platform launcher, a
-  `ti-recon[remote]` extra, an internal plugin marketplace, a release tag flow,
-  and any plugin hook, agent or command. Phase 1 of Task 23 proves the host
-  mechanics; the committed launcher fails closed until a runtime exists
+- A `ti-recon[remote]` extra, an internal plugin marketplace, a release tag
+  flow, a self-contained signed executable, and any plugin hook, agent,
+  command or launcher script. The plugin starts the server through `uv`
+  directly; a shell launcher would need a shell, and a top-level `bin/` is
+  rejected by organization-managed distribution
 - A plugin-specific credential store, loader or repository; a `set_api_key`
-  tool; any `${user_config.*}` reference in Skill content; a development or
-  override path in the committed launcher (`TI_RECON_MCP_*`, `PATH` search)
+  tool; any `${user_config.*}` reference in Skill content; any runtime state
+  written under `${CLAUDE_PLUGIN_ROOT}`; any `.env` read by the plugin's server
 
 ## Architectural invariants
 
@@ -1879,7 +1886,7 @@ about it.
 
 166. **A plugin option reaches the engine only as an environment variable the
      loader already reads, and a secret never reaches model context.** The
-     path is plugin configuration → Claude Code secure storage →
+     path is plugin configuration → Claude Code sensitive plugin storage →
      `${user_config.KEY}` substituted into `.mcp.json` `env` → the server
      process environment, read once → `load_environment_credentials` → the
      per-user store → `CredentialResolver` → `_apply_auth`. It never passes
@@ -1911,18 +1918,33 @@ about it.
      2048 characters, and the deployment sentence is last in every profile, so
      each complete profile is held under that limit by a test.
 
-169. **The committed launcher fails closed and has one target.** It execs
-     `${CLAUDE_PLUGIN_ROOT}/runtime/bin/ti-recon-mcp` if present and otherwise
-     exits 1 with one line on stderr and nothing on stdout. No environment
-     override, no `PATH` search, no development mode: the developer proof is a
-     separately generated copy carrying a NON-DISTRIBUTABLE marker, an absolute
-     path and a `NON_DISTRIBUTABLE` file, and a test asserts the committed
-     plugin carries none of them.
+169. **The plugin starts the server through `uv` directly, from an immutable
+     root into a persistent data directory.** `.mcp.json` runs `uv run
+     --project ${CLAUDE_PLUGIN_ROOT}/runtime --locked --no-dev --no-editable
+     --no-env-file --python 3.12 ti-recon-mcp` with
+     `UV_PROJECT_ENVIRONMENT=${CLAUDE_PLUGIN_DATA}/runtime-env`: no shell, no
+     launcher, no top-level `bin/`, no working-directory dependency, no
+     `.env`, an exact lock that refuses a disagreeing `pyproject.toml`, a real
+     install rather than a link to the source, and a deterministic interpreter
+     series `uv` provisions if the workstation has none. Code lives under the
+     versioned root and is never written to; state lives under the data
+     directory, survives plugin updates, and holds no credential — those stay
+     in the host's sensitive plugin storage. Concurrent first starts are safe
+     (`uv` locks the environment); a damaged interpreter or metadata is
+     repaired on the next start; an environment path that is not a directory
+     fails closed on stderr with nothing on stdout. Tests run every one of
+     those through the real `uv` from outside the repository with a scrubbed
+     environment and assert no imported path leads back to the checkout.
 
-170. **The Skill has one canonical source.** `.claude/skills/ti-recon-analyst/`
-     is canonical; the plugin's copy is byte-identical, regenerated by
-     `tools/sync_plugin_skill.py`, never edited, never a symlink, and a test
-     fails on drift in either direction.
+170. **The Skill and the runtime each have one canonical source.**
+     `.claude/skills/ti-recon-analyst/` and the repository project are
+     canonical; the plugin's copies are byte-identical, regenerated by
+     `tools/sync_plugin_skill.py` and `tools/sync_plugin_runtime.py` from an
+     explicit manifest, never edited, never symlinks, and a test fails on
+     drift in either direction. The runtime manifest is `pyproject.toml`,
+     `uv.lock`, `README.md`, `src/ti_recon/` and a `.python-version` derived
+     from `requires-python` — nothing else, so an unrelated repository change
+     never obliges a resync and nothing a build does not need ships.
 
 153. **The gate is a raw ASGI wrapper, and lifespan ownership does not move.**
      Not a `Mount`: lifespan events pass through unexamined to the SDK
@@ -2254,10 +2276,12 @@ src/ti_recon/
                      credential or provider flags), main (streams, exit codes),
                      runtime (the one composition root a local invocation uses)
 plugins/ti-recon/    Task 23: the Claude Code plugin. .claude-plugin/plugin.json
-                     (manifest, userConfig), .mcp.json (the stdio server and its
-                     environment mapping), bin/ti-recon-mcp (fail-closed
-                     launcher), skills/ti-recon-analyst (byte-identical copy of
-                     the project Skill). No runtime is bundled yet
+                     (manifest, userConfig), .mcp.json (the stdio server started
+                     through uv, and its environment mapping), runtime/ (a
+                     generated byte-identical copy of the project: pyproject,
+                     lock, README, src/ti_recon, .python-version),
+                     skills/ti-recon-analyst (byte-identical copy of the
+                     project Skill). Never edited by hand: see tools/
   investigation/     Task 19: end-to-end orchestration. models (request, round,
                      stop reasons, directives, workflow version), analysis (the
                      one Task 15-18 pass), continuation (readiness -> capability
@@ -2310,9 +2334,9 @@ src/ti_recon/data/   Task 11: the pinned MISP warninglist snapshot (manifest +
 tools/               operator scripts. update_misp_warninglists.py (Task 11:
                      build a snapshot from a local checkout; the only code that
                      runs git), measure_misp_warninglists.py (footprint report),
-                     sync_plugin_skill.py (Task 23: keep the plugin's Skill copy
-                     identical), build_dev_plugin.py (Task 23: the
-                     NON-DISTRIBUTABLE developer proof plugin)
+                     sync_plugin_skill.py and sync_plugin_runtime.py (Task 23:
+                     keep the plugin's Skill and runtime copies identical to
+                     the repository; --check fails the suite on drift)
 docs/                scope, architecture, data model, credentials, provider
                      framework, provider execution, artifacts, sandbox, mcp,
                      remote-mcp, claude-plugin,

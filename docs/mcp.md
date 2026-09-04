@@ -36,8 +36,8 @@ tool call would land in a conversation transcript.
 
 **Or install the plugin.** The TI Recon Claude Code plugin (`plugins/ti-recon/`,
 see [`claude-plugin.md`](claude-plugin.md)) starts this same server itself and
-fills those variables from the plugin's configuration, which Claude Code stores
-in its secure storage. It sets `TI_RECON_CREDENTIAL_SETUP=claude-plugin` so the
+fills those variables from the plugin's configuration, which Claude Code keeps
+in its sensitive plugin storage. It sets `TI_RECON_CREDENTIAL_SETUP=claude-plugin` so the
 server describes *that* setup step to a client instead of the environment one;
 left unset, the server describes the environment. The variable selects
 instruction text only — the tools and credential resolution are identical.
