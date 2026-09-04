@@ -773,9 +773,13 @@ GTI_SANDBOX_VERDICTS_UNREADABLE: Final[str] = "GTI_SANDBOX_VERDICTS_UNREADABLE"
 #: never assumed confident.
 SANDBOX_CONFIDENCE_FLOOR: Final[int] = 50
 
-#: How many per-sandbox entries, and how many labels per entry, one record keeps.
+#: How many per-sandbox entries, how many labels per entry, and how long one
+#: label may be. A classification label or malware name is provider text, so
+#: its length is bounded like its count -- an unbounded string in an evidence
+#: attribute is a provider-controlled allocation.
 _MAX_SANDBOXES: Final[int] = 10
 _MAX_SANDBOX_LABELS: Final[int] = 5
+_MAX_SANDBOX_LABEL_LENGTH: Final[int] = 80
 
 #: The verdict rank used to pick the record's overall category: the strongest
 #: category any sandbox stated. Divergence is preserved beside it, never voted on.
@@ -831,9 +835,7 @@ def normalize_sandbox_verdicts(
         for field in ("malware_classification", "malware_names"):
             labels = raw.get(field)
             if isinstance(labels, list):
-                kept = [
-                    str(item).strip() for item in labels if isinstance(item, str) and item.strip()
-                ]
+                kept = [_label(item) for item in labels if isinstance(item, str) and item.strip()]
                 if kept:
                     entry[field] = kept[:_MAX_SANDBOX_LABELS]
         entries.append(entry)
@@ -906,6 +908,12 @@ def normalize_sandbox_verdicts(
         raw_reference_id=context.raw_reference_id,
     )
     return GTINormalization(evidence=(evidence,))
+
+
+def _label(value: str) -> str:
+    """One provider label: stripped, control characters removed, length capped."""
+    cleaned = "".join(ch for ch in value.strip() if ch.isprintable())
+    return cleaned[:_MAX_SANDBOX_LABEL_LENGTH]
 
 
 def _sandbox_name(entry: Mapping[str, Any], key: str) -> str:
@@ -1532,9 +1540,9 @@ _BEHAVIOR_SUMMARY_FIELDS: Final[tuple[str, ...]] = (
 #: The behaviour summary's own ``verdicts`` values that state a classification,
 #: and how firmly. An explicit table: the API documents ``verdicts`` as a list
 #: without enumerating it, so nothing here infers direction from a word it does
-#: not recognize. ``MALWARE`` and ``RANSOM`` are the ones GTI's sandboxes state
-#: for the samples that matter; the remaining rows are the families GTI's own
-#: classification vocabulary uses. Anything else -- including a benign-looking
+#: not recognize. The rows are the classes GTI's own classification vocabulary
+#: uses; the table is a closed category vocabulary and nothing keys on a
+#: malware family or a sample. Anything else -- including a benign-looking
 #: word -- is recorded by name and produces no direction, because a sandbox that
 #: saw nothing did not see safety.
 BEHAVIOR_VERDICT_STRENGTH: Final[dict[str, str]] = {
@@ -1661,7 +1669,7 @@ def _behavior_verdict_evidence(
     raw = summary.get("verdicts")
     if not isinstance(raw, list):
         return None
-    stated = [item.strip().upper() for item in raw if isinstance(item, str) and item.strip()]
+    stated = [_label(item).upper() for item in raw if isinstance(item, str) and item.strip()]
     if not stated:
         return None
     recognized = [item for item in stated if item in BEHAVIOR_VERDICT_STRENGTH]

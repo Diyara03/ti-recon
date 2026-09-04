@@ -358,3 +358,30 @@ async def test_a_bundled_request_below_deep_is_still_answered_for_the_rest() -> 
 
     assert envelope.status is ProviderRunStatus.SUCCESS
     assert not fake.operations("behaviour")
+
+
+async def test_sandbox_labels_and_behaviour_verdict_words_are_length_bounded() -> None:
+    """Provider label text is bounded in length as well as count (Task 24 audit)."""
+    from ti_recon.providers.gti.normalizer import _MAX_SANDBOX_LABEL_LENGTH
+
+    huge = "R" * 5000 + "\x1b[0m" + "\r\n" + "S" * 10
+    block = payloads.sandbox_verdicts(("Zenbox", "malicious", 100, (huge,)))
+    record = normalize_sandbox_verdicts(context(), _object(block)).evidence[0]
+    for label in (
+        *record.attributes["malware_classification"],
+        *record.attributes["sandboxes"][0]["malware_classification"],
+        *record.attributes["sandboxes"][0]["malware_names"],
+    ):
+        assert len(label) <= _MAX_SANDBOX_LABEL_LENGTH
+        assert "\x1b" not in label and "\r" not in label and "\n" not in label
+
+    envelope = await _lookup(
+        payloads.file_object(with_assessment=False),
+        depth=InvestigationDepth.DEEP,
+        behaviour=payloads.behaviour_summary_payload(verdicts=(huge, "MALWARE")),
+    )
+    verdict = next(e for e in envelope.evidence if e.claim_type == "gti.behavior.verdict")
+    assert all(len(word) <= _MAX_SANDBOX_LABEL_LENGTH for word in verdict.attributes["verdicts"])
+    assert all(
+        len(word) <= _MAX_SANDBOX_LABEL_LENGTH for word in verdict.attributes["unmapped_verdicts"]
+    )

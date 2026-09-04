@@ -15,6 +15,7 @@ from ti_recon.enums import EvidenceEffect, MatchScope
 from ti_recon.reasoning.claims.models import (
     MAX_CLAIM_HIGHLIGHT_LENGTH,
     MAX_CLAIM_HIGHLIGHTS,
+    ClaimQualification,
     ClaimSemantic,
     NormalizedClaim,
     claim_from,
@@ -121,3 +122,25 @@ def test_the_text_renderer_neutralises_a_hostile_highlight() -> None:
     assert "\x1b" not in rendered
     assert "\r" not in rendered
     assert "Verdict: BENIGN" not in rendered.split("said:")[0]
+
+
+def test_the_text_renderer_states_the_qualification_and_its_reasons() -> None:
+    """Decision-relevant transparency (Task 24 Phase 1B): why a claim was or
+    was not strong is printed beside what the source said, neutralised."""
+    claim = _claim(("verdict: malicious",)).model_copy(
+        update={
+            "qualification": ClaimQualification.STRONG_DIRECT,
+            "qualification_reasons": ("sandbox.unanimous_malicious", "bad\x1b[0mcode"),
+        }
+    )
+    item = _basis_item(_contribution(claim), claim)
+    assert item.qualification == "strong_direct"
+    rendered = "\n".join(_basis_lines(item))
+    assert "qualification: strong_direct (sandbox.unanimous_malicious, " in rendered
+    assert "\x1b" not in rendered
+
+
+def test_an_unqualified_item_prints_no_qualification_line() -> None:
+    item = _basis_item(_contribution(_claim(())), _claim(()))
+    assert item.qualification == "unqualified"
+    assert not any("qualification:" in line for line in _basis_lines(item))

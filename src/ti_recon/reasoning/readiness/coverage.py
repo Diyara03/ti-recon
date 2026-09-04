@@ -152,9 +152,12 @@ def yield_for(
     ``NOT_SUPPORTED`` behaviour query inherit ``DIRECTIONAL`` from the same
     provider's reputation answer -- a refusal rendered as a finding. A refused,
     unconfigured, errored or empty-handed attempt yields ``NONE`` whatever the
-    provider's other calls returned. What remains unattributable is the case
-    of two *completed, evidence-producing* calls to one provider; that is the
-    ``UNATTRIBUTED`` retention limit the capability ledger already names.
+    provider's other calls returned. What remains is the case of two
+    *completed, evidence-producing* calls to one provider, where a
+    context-only answer still reads ``DIRECTIONAL`` because the record cannot
+    say which call produced the claim. That is a retention limit of the
+    per-attempt record -- this function cannot return ``UNATTRIBUTED``, which
+    the capability ledger reserves for a call it has no attempt for at all.
     """
     if attempt.status is ProviderRunStatus.NO_DATA:
         return InformationYield.NO_DATA

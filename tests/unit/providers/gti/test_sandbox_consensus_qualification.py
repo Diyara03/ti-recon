@@ -228,3 +228,30 @@ def test_the_qualification_never_changes_direction_or_strength() -> None:
     record = _record(_unanimous(3, SANDBOX_CONFIDENCE_FLOOR - 10))
     assert record.effect is EvidenceEffect.SUPPORTS_MALICIOUS
     assert record.attributes["verdict"] == "malicious"
+
+
+def test_the_claim_carries_one_bounded_confidence_summary_line() -> None:
+    """The report can say how the verdicts were backed without a sandbox dump."""
+    from fixtures.reasoning import gti_file_envelope
+    from ti_recon.providers.gti.claim_semantics import translate
+    from ti_recon.reasoning.claims import CLAIM_SEMANTICS_POLICY_VERSION, ClaimTranslationContext
+
+    block = payloads.sandbox_verdicts(
+        ("A", "malicious", 100, ("RANSOM",)),
+        ("B", "malicious", 60, ("RANSOM",)),
+        ("C", "malicious", None, ()),
+    )
+    envelope = gti_file_envelope(
+        with_assessment=False, extra_attributes={"sandbox_verdicts": block}
+    )
+    context = ClaimTranslationContext.build(
+        objects=envelope.objects, policy_version=CLAIM_SEMANTICS_POLICY_VERSION
+    )
+    record = next(item for item in envelope.evidence if item.claim_type == "gti.sandbox_verdicts")
+    claim = next(item for item in translate(envelope, context) if item.evidence_id == record.id)
+    assert (
+        "confidence: 2 of 3 malicious verdicts stated >= 50, 1 stated none (stated range 60-100)"
+        in claim.highlights
+    )
+    assert claim.qualification is ClaimQualification.STRONG_DIRECT
+    assert len(claim.highlights) <= 8
