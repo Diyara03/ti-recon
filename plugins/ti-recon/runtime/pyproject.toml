@@ -1,0 +1,184 @@
+[project]
+name = "ti-recon"
+version = "0.1.0"
+description = "External Threat Intelligence enrichment and analysis platform (foundation)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+dependencies = [
+    "pydantic>=2.9",
+    "httpx>=0.27",
+    # IDNA/UTS-46 handling for internationalized domain normalization.
+    "idna>=3.7",
+    "vt-py>=0.22.0",
+    # Official Model Context Protocol SDK, v2 line (protocol revision
+    # 2026-07-28). Plain `mcp` rather than `mcp[cli]`: the CLI extra exists for
+    # the development Inspector, and a runtime dependency is inherited by every
+    # consumer of this library.
+    "mcp>=2.1,<3",
+    # What the remote HTTP surface additionally imports lives in the `remote`
+    # extra below. The local stdio server — the primary deployment, and what
+    # the Claude Code plugin runs — never imports PyJWT, uvicorn or Starlette
+    # itself. Note, and measure before assuming otherwise: the MCP SDK declares
+    # all three (`pyjwt[crypto]`, `uvicorn`, `starlette`) as its own hard
+    # requirements and imports `cryptography` when `mcp.server` is imported, so
+    # the extra changes what TI Recon *requires* and what its security floors
+    # cover, not what a local environment ends up containing.
+]
+
+
+[project.scripts]
+# The analyst entry point (Task 20). Stdlib argparse only: the CLI adds no
+# dependency that every consumer of the library would then inherit.
+ti-recon = "ti_recon.cli.main:main"
+# The local MCP server (Task 21). A server process spoken to over stdio by a
+# host, not a command a person runs interactively.
+ti-recon-mcp = "ti_recon.mcp_server.main:main"
+# Separate from `ti-recon-mcp`, which stays local stdio for one analyst.
+# Overloading one command would mean one process with two authentication models
+# and two tool surfaces.
+ti-recon-mcp-http = "ti_recon.mcp_server.http_main:main"
+
+[project.optional-dependencies]
+# The authenticated remote HTTP surface (`ti-recon-mcp-http`). Declared rather
+# than inherited: PyJWT verifies remote access tokens against an authorization
+# server's JWKS, uvicorn serves the remote ASGI app, and `mcp_server/http.py`
+# imports Starlette's application, request, response and ASGI types directly
+# to build the preflight gate — so a future SDK release dropping any of them
+# must be a resolution failure rather than an ImportError in production. The
+# `crypto` extra is what supplies asymmetric (RS256/PS256/ES256) verification;
+# without it PyJWT can only do HMAC, which this repository refuses for a
+# resource server.
+# PyJWT is floored at 2.13 for security behaviour the remote verifier
+# delegates to the library rather than reimplementing: PyJWK binding a key to
+# the algorithm it was published for, `enforce_minimum_key_length` turning an
+# undersized RSA modulus into an error instead of a warning, and rejection of
+# unknown critical (`crit`) header extensions. This is the baseline the
+# verifier's security tests were written and run against; an older release
+# would silently move checks TI Recon depends on back into the library's
+# permissive defaults. Not pinned exactly, so compatible 2.x security updates
+# stay installable. The remote process checks this floor at startup and
+# refuses to start below it — see `mcp_server/http_main.py` — because a floor
+# that is only a metadata declaration is not enforced on an environment that
+# was installed without the extra.
+# Starlette's floor is the SDK's own; the ceiling is ours, because a 2.x
+# reworking the ASGI surface is a change the gate would have to be reviewed
+# against.
+remote = [
+    "pyjwt[crypto]>=2.13,<3",
+    "uvicorn>=0.34,<1",
+    "starlette>=0.27,<2",
+]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+    "respx>=0.21",
+    # Blocks the connection half of the test network boundary. The resolution
+    # half is ours, in tests/fixtures/network.py, which explains why.
+    "pytest-socket>=0.8,<0.9",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ti_recon"]
+
+[tool.hatch.build.targets.sdist]
+# Local machine state is not source. Hatchling builds an sdist from the working
+# directory, so a developer's own Claude Code settings — untracked, and ignored
+# only by whatever global gitignore that developer happens to have — would
+# otherwise ship inside a published archive and make two builds of one commit
+# differ. The analyst Skill under .claude/skills/ is tracked repository content
+# and stays. The Claude Code plugin under plugins/ carries its own generated
+# copy of this package; publishing that inside the package's own sdist would
+# ship the source twice.
+exclude = ["**/settings.local.json", "plugins/"]
+
+[tool.uv]
+# What makes a non-editable install of this project stale. uv's default keys
+# on pyproject.toml alone, which is right for a published package and wrong
+# for the plugin's bundled runtime: there the project is installed from a
+# directory, and a source file changed without a metadata change would keep
+# running the previous build. A developer checkout installs editably and is
+# unaffected.
+cache-keys = [{ file = "pyproject.toml" }, { file = "uv.lock" }, { file = "src/**/*" }]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+# The plugin's bundled runtime is a generated, byte-identical copy of src/;
+# linting it would lint the same code twice and leave a cache inside the copy.
+extend-exclude = ["plugins/"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "N",    # pep8-naming
+    "C4",   # comprehensions
+    "DTZ",  # timezone-aware datetimes (a project invariant)
+    "SIM",  # simplify
+    "TID",  # tidy imports
+    "RUF",
+]
+ignore = [
+    "N818",  # error suffix on exception names; we use domain-specific names
+]
+
+[tool.ruff.lint.per-file-ignores]
+# SIM300 flags `assert MODULE_CONSTANT == expected` as a Yoda condition.
+"tests/**" = ["B011", "SIM300"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+no_implicit_reexport = true
+plugins = ["pydantic.mypy"]
+
+# vt-py ships no type stubs and no py.typed marker. The override is scoped to
+# that package so strict checking still applies to every line we write, and the
+# GTI client wrapper is the only module that imports it.
+[[tool.mypy.overrides]]
+module = ["vt.*"]
+ignore_missing_imports = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+# --disable-socket with --allow-hosts is pytest-socket's connection guard: every
+# test runs with external connections refused and loopback intact. It is half the
+# boundary — the resolution half lives in tests/fixtures/network.py, which
+# documents why this plugin cannot provide it without also breaking loopback.
+addopts = "-ra --strict-markers --strict-config --disable-socket --allow-hosts=127.0.0.1,::1"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+source = ["ti_recon"]
+branch = true
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@(abc\\.)?abstractmethod",
+    "\\.\\.\\.",
+]

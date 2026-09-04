@@ -34,6 +34,14 @@ documents, into the per-user credential store — the same mechanism the CLI use
 There are no credential arguments and no credential tool inputs: a secret in a
 tool call would land in a conversation transcript.
 
+**Or install the plugin.** The TI Recon Claude Code plugin (`plugins/ti-recon/`,
+see [`claude-plugin.md`](claude-plugin.md)) starts this same server itself and
+fills those variables from the plugin's configuration, which Claude Code keeps
+in its sensitive plugin storage. It sets `TI_RECON_CREDENTIAL_SETUP=claude-plugin` so the
+server describes *that* setup step to a client instead of the environment one;
+left unset, the server describes the environment. The variable selects
+instruction text only — the tools and credential resolution are identical.
+
 **This is the local deployment model, and it is not the hosted one.** A server
 started by an analyst on their own machine reads that machine's environment;
 somebody talking to a hosted deployment has no such environment and no process
@@ -207,7 +215,14 @@ No HTTP transport, no multi-user deployment, no persistence, and no active
 provider operation — nothing submits, detonates, rescans or downloads a sample.
 Provider selection stays with Task 13 and cannot be influenced from a tool call.
 
-Task 22 has since added the remote *authentication primitives* this server's
-identity model is built on — see [remote-mcp.md](remote-mcp.md). There is still
-no HTTP entry point: stdio remains the only transport, and this page describes
-it in full.
+Task 22 added the authenticated remote surface — see
+[remote-mcp.md](remote-mcp.md) — as an optional path. The primary usage model is
+this local server, per analyst, distributed through the Claude Code plugin
+described in [claude-plugin.md](claude-plugin.md).
+
+## The host's instruction budget
+
+Claude Code 2.1.259 truncates a server's `instructions` to 2048 characters and
+says so only at debug level. Each profile's deployment-specific sentence is the
+last thing in its instructions, so every profile has to fit whole; a test holds
+each one under the limit.

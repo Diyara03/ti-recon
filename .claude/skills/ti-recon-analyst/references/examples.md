@@ -122,12 +122,19 @@ Hosted deployment:
 > it is available for your account. Self-service provider credential setup isn't
 > available in this version, so I can't point you at a way to add one.
 
-Local stdio deployment:
+Local stdio deployment, started from the analyst's own environment:
 
 > One source that would have covered this was **not checked**: its credential
 > isn't configured on this machine. That's a local setup step in the repository
 > docs, and the MCP server has to be restarted or reconnected afterwards,
 > because configuration is read when it starts.
+
+Local stdio deployment, started by the Claude Code plugin:
+
+> One source that would have covered this was **not checked**: no credential for
+> it is entered in the plugin's configuration. Add it under `/plugin`, TI Recon,
+> Configure, then reconnect the server — it reads its configuration when it
+> starts.
 
 Never say the provider is offline, unreachable, or that it found nothing. Never
 ask for the key in chat, in either deployment.

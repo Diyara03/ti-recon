@@ -170,9 +170,13 @@ The server's own instructions say which one you are talking to.
   is not available in this version. Do not suggest configuring anything locally,
   editing a server environment variable, or reconnecting: the caller has no
   server to edit.
-- *Local stdio* — configuration is a real local step, documented in the
-  repository, and the server reads it at startup, so a new credential appears
-  after a restart or reconnect.
+- *Local stdio* — configuration is a real local step, read by the server at
+  startup, so a new credential appears after a restart or reconnect. Which step
+  depends on how the server was started, and its instructions say which: the
+  documented environment variables for a repository or CLI installation, or
+  the plugin's own configuration (`/plugin`, TI Recon, Configure) when TI
+  Recon runs as the Claude Code plugin. Never point a plugin user at an
+  environment variable — the plugin's configuration is the only place read.
 
 If you cannot tell which deployment it is, describe what was not checked and why
 and offer nothing further.

@@ -25,6 +25,7 @@ is the only thing that turns one into a running process.
 from __future__ import annotations
 
 import json
+from enum import StrEnum
 from typing import Annotated, Any
 
 from mcp.server import MCPServer
@@ -45,16 +46,43 @@ from ti_recon.reporting.schema import report_json_schema, request_json_schema
 
 __all__ = [
     "FILE_TOOL_META",
+    "PLUGIN_INSTRUCTIONS",
     "REMOTE_INSTRUCTIONS",
     "REPORT_SCHEMA_URI",
     "REQUEST_SCHEMA_URI",
     "SERVER_INSTRUCTIONS",
     "SERVER_NAME",
     "STDIO_INSTRUCTIONS",
+    "LocalCredentialSetup",
     "build_mcp_server",
     "build_remote_server",
     "build_stdio_server",
 ]
+
+
+class LocalCredentialSetup(StrEnum):
+    """How a credential comes to exist for a *local* stdio server.
+
+    The stdio profile always reads credentials from its own process environment,
+    read once at startup. What differs is who put them there, and therefore what
+    an analyst has to do to add one — which is the one thing a client must be
+    told accurately, because left unsaid it fills the gap with the model it
+    already knows and sends somebody to set an environment variable the plugin
+    will overwrite.
+
+    * ``ENVIRONMENT`` — the analyst owns the process and its environment: a
+      repository checkout, a CLI installation, a hand-written ``.mcp.json``.
+    * ``CLAUDE_PLUGIN`` — Claude Code started the server from the TI Recon
+      plugin and populated the environment from the plugin's configuration,
+      which is where a credential is entered and where it is stored.
+
+    Neither value reaches the engine: it selects instruction text and nothing
+    else. Credential resolution is identical in both cases.
+    """
+
+    ENVIRONMENT = "environment"
+    CLAUDE_PLUGIN = "claude-plugin"
+
 
 SERVER_NAME = "ti-recon"
 
@@ -100,40 +128,39 @@ FILE_TOOL_META: dict[str, Any] = {"anthropic/requiresUserInteraction": True}
 #: Still deliberately short. Detailed analyst procedure belongs in a Skill and in
 #: the schema field descriptions, which carry the per-field vocabulary; a
 #: handbook here would compete with both and go stale.
+#:
+#: **Short has a number.** Claude Code 2.1.259 truncates a server's instructions
+#: to 2048 characters and logs it only at debug level, so every profile — this
+#: core plus its deployment addendum — must fit inside that, or the sentence
+#: that differs by deployment is exactly the one cut off. The addenda are the
+#: last thing in each profile because the shared rules matter to every client;
+#: a test holds each complete profile under the limit.
 SERVER_INSTRUCTIONS = """\
 TI Recon performs passive external threat-intelligence investigation of URLs, \
-domains, IP addresses, file hashes and user-selected local files.
-
-Use its tools for a deterministic assessment, the confidence that assessment is \
-correct, how adequate the intelligence coverage was, the supporting and opposing \
-evidence, alternative explanations for a detection, and related observables.
+domains, IP addresses, file hashes and user-selected local files. A local \
+transport does not make collection local: an observable may be sent to \
+configured external providers.
 
 Provider selection is automatic and cannot be influenced from a tool call. \
 Sources are provenance, never votes: the engine does not count who agreed, so \
-never justify a verdict by how many sources said something. Datasets run by one \
-organisation share a source family and are one origin, not several.
-
-Running over a local transport does not make collection local. Investigating an \
-observable may send it to configured external intelligence providers.
+never justify a verdict by a count of sources. Datasets from one organisation \
+share a source family and are one origin.
 
 Reporting the result, in plain language before internal identifiers:
 - INCONCLUSIVE means the engine cannot justify either direction. It never means \
 clean, safe or not malicious.
-- A source with status not_configured was NOT checked, because no usable \
-credential is available for the caller. It is not offline, not unreachable, and \
-did not return nothing. no_data means it was checked and held nothing \
-applicable, which is not evidence of safety either.
-- Confidence is confidence that the assessment is correct. It is not a \
-probability that the observable is malicious, and not a severity.
-- Intelligence coverage (the readiness fields) describes evidence adequacy. It \
-is never permission to block, allow, remediate or close anything.
-- source_checks is the authority for what was actually consulted. A source this \
-installation ships, or one the caller has configured, was not thereby asked.
-- A related observable with assessed=false is a relationship, not a confirmed \
-indicator.
-- Anything you add from your own knowledge rather than from the report must be \
-labelled as yours, and must never be presented as TI Recon evidence, coverage \
-or provenance.\
+- not_configured means a source was NOT checked: no usable credential is \
+available for the caller. no_data means it was checked and held nothing \
+applicable, which is not evidence of safety.
+- Confidence is confidence that the assessment is correct, not a probability \
+that the observable is malicious, and not a severity.
+- Coverage (the readiness fields) is evidence adequacy, never permission to \
+block, allow, remediate or close anything.
+- source_checks is the authority for what was actually consulted; a shipped or \
+configured source was not thereby asked.
+- A related observable with assessed=false is a relationship, not an indicator.
+- Anything from your own knowledge must be labelled as yours and never be \
+presented as TI Recon evidence, coverage or provenance.\
 """
 
 #: The local profile's addendum: credential setup is a real local step here.
@@ -145,10 +172,31 @@ STDIO_INSTRUCTIONS = f"""\
 {SERVER_INSTRUCTIONS}
 
 This server runs locally for one analyst. Provider credentials are configured on \
-this machine through the documented environment variables and are read once at \
+this machine through the documented environment variables and read once at \
 startup, so a newly added one appears after the server is restarted or \
 reconnected. Never ask anyone to paste a provider API key into the conversation: \
 credentials are never tool arguments and never belong in a transcript.\
+"""
+
+#: The plugin profile's addendum: the credential step is the plugin's own.
+#:
+#: Still local stdio — one process, one analyst, environment read once — but
+#: the environment was populated by Claude Code from the plugin's configuration,
+#: so that is where a credential is added. Telling this caller to export a
+#: variable would be wrong twice: the plugin's mapping overwrites whatever the
+#: shell exported, and the key would land in a shell profile rather than in the
+#: host's secure storage.
+PLUGIN_INSTRUCTIONS = f"""\
+{SERVER_INSTRUCTIONS}
+
+This server runs locally for one analyst, started by the TI Recon Claude Code \
+plugin. Provider credentials are entered in the plugin's configuration (/plugin, \
+TI Recon, Configure), stored by Claude Code and read once at startup, so a new \
+one appears after a reconnect or a session restart. \
+Never advise setting an environment variable or editing a file: the plugin's \
+configuration is the only place read. Never ask anyone to paste a provider API \
+key into the conversation: credentials are never tool arguments and never belong \
+in a transcript.\
 """
 
 #: The hosted profile's addendum: there is no credential onboarding to point at.
@@ -164,15 +212,14 @@ credentials are never tool arguments and never belong in a transcript.\
 REMOTE_INSTRUCTIONS = f"""\
 {SERVER_INSTRUCTIONS}
 
-This server is hosted and serves many analysts, each identified by their own \
+This server is hosted and serves many analysts, each with their own \
 authenticated session. Where a source reports not_configured, say it was not \
-checked because no credential is available for this account, and stop there. \
-Do not tell the caller to configure a credential locally, to set a server \
-environment variable, or to reconnect: none of those applies to a hosted \
-deployment. Self-service provider credential setup is not available in this \
-version. Never ask anyone to paste a provider API key into the conversation, a \
-tool argument, a prompt or a request header — credentials are never accepted \
-here, and a secret sent that way lands in a transcript.\
+checked because no credential is available for this account, and stop there: do \
+not tell the caller to configure a credential locally, set a server environment \
+variable or reconnect. Self-service provider credential setup is not available \
+in this version. Never ask anyone to paste a provider API key into the \
+conversation, a tool argument, a prompt or a request header: a secret sent that \
+way lands in a transcript.\
 """
 
 
@@ -184,6 +231,7 @@ def build_mcp_server(
     local_file_tool: bool = True,
     instructions: str = SERVER_INSTRUCTIONS,
     hosted: bool = False,
+    credential_setup: LocalCredentialSetup = LocalCredentialSetup.ENVIRONMENT,
 ) -> MCPServer:
     """One server bound to one runtime.
 
@@ -207,6 +255,10 @@ def build_mcp_server(
     about it gets described by the local model every client already knows — "put
     the key in the environment and reconnect" — which is wrong, and unactionable,
     for somebody talking to a server they do not run.
+
+    ``credential_setup`` refines the local case the same way: it says *where* an
+    analyst adds a credential, and is ignored when ``hosted`` because a hosted
+    caller has nowhere to add one.
     """
     server: MCPServer = MCPServer(
         SERVER_NAME,
@@ -216,19 +268,40 @@ def build_mcp_server(
         auth=auth,
         token_verifier=token_verifier,
     )
-    _register_tools(server, runtime, local_file_tool=local_file_tool, hosted=hosted)
+    _register_tools(
+        server,
+        runtime,
+        local_file_tool=local_file_tool,
+        hosted=hosted,
+        credential_setup=credential_setup,
+    )
     _register_resources(server)
     return server
 
 
-def build_stdio_server(runtime: McpRuntime) -> MCPServer:
+def build_stdio_server(
+    runtime: McpRuntime,
+    *,
+    credential_setup: LocalCredentialSetup = LocalCredentialSetup.ENVIRONMENT,
+) -> MCPServer:
     """The local profile: three tools, one analyst, no authorization.
 
-    Unchanged from Task 21, and named explicitly now that a second profile
-    exists so neither can be reached by forgetting an argument.
+    The tool surface is the Task 21 one, unchanged. ``credential_setup`` selects
+    which true sentence describes how a credential is configured for *this*
+    process — the environment the analyst owns, or the plugin configuration
+    Claude Code owns — and changes nothing else.
     """
+    instructions = (
+        PLUGIN_INSTRUCTIONS
+        if credential_setup is LocalCredentialSetup.CLAUDE_PLUGIN
+        else STDIO_INSTRUCTIONS
+    )
     return build_mcp_server(
-        runtime, local_file_tool=True, instructions=STDIO_INSTRUCTIONS, hosted=False
+        runtime,
+        local_file_tool=True,
+        instructions=instructions,
+        hosted=False,
+        credential_setup=credential_setup,
     )
 
 
@@ -255,7 +328,12 @@ def build_remote_server(
 
 
 def _register_tools(
-    server: MCPServer, runtime: McpRuntime, *, local_file_tool: bool, hosted: bool
+    server: MCPServer,
+    runtime: McpRuntime,
+    *,
+    local_file_tool: bool,
+    hosted: bool,
+    credential_setup: LocalCredentialSetup,
 ) -> None:
     """The public surface: at most three tools, and never a fourth.
 
@@ -369,7 +447,7 @@ def _register_tools(
 
     @server.tool(
         title="Check intelligence source setup",
-        description=_provider_status_description(hosted=hosted),
+        description=_provider_status_description(hosted=hosted, credential_setup=credential_setup),
         annotations=ToolAnnotations(
             # Nothing outside this process is consulted, so the world it reads
             # is closed.
@@ -382,14 +460,18 @@ def _register_tools(
         return await tools.provider_status(runtime)
 
 
-def _provider_status_description(*, hosted: bool) -> str:
+def _provider_status_description(
+    *, hosted: bool, credential_setup: LocalCredentialSetup = LocalCredentialSetup.ENVIRONMENT
+) -> str:
     """What the setup diagnostic is, and what a caller may not conclude from it.
 
     Split by profile for one reason: the last sentence. "Configure it locally and
     reconnect" is accurate for the process an analyst started on their own
     machine and is nonsense addressed to a hosted deployment, where the caller
     has no server to edit and no restart to perform. Saying nothing is not
-    neutral — a client with no statement supplies the local one.
+    neutral — a client with no statement supplies the local one. And the local
+    one has two shapes: the environment the analyst owns, or the plugin
+    configuration Claude Code owns and the analyst edits through the host.
     """
     shared = (
         "Which intelligence sources this installation ships, what they cover, "
@@ -412,6 +494,18 @@ def _provider_status_description(*, hosted: bool) -> str:
             "reconnecting. Never ask for a provider API key in the "
             "conversation: this tool accepts no credential and no other tool "
             "here does either."
+        )
+    if credential_setup is LocalCredentialSetup.CLAUDE_PLUGIN:
+        return (
+            f"{shared}\n\n"
+            "This server is local to one analyst and was started by the TI Recon "
+            "Claude Code plugin. Provider credentials are entered in the plugin's "
+            "configuration (the /plugin menu, TI Recon, Configure), are stored by "
+            "Claude Code and are read once at startup, so a newly added one "
+            "appears after the server is reconnected or the session is "
+            "restarted. Do not advise setting an environment variable or editing "
+            "a file. Never ask for a provider API key in the conversation: this "
+            "tool accepts no credential and no other tool here does either."
         )
     return (
         f"{shared}\n\n"

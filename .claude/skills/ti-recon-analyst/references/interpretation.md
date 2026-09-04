@@ -121,9 +121,13 @@ server environment variable, a `.env` file or reconnecting: none of them is
 something a hosted caller can do, and suggesting it sends somebody to edit a
 server they do not run.
 
-**Local stdio.** Configuration is a genuine local step documented in the
-repository, read once at server startup, so a newly added credential appears
-after a restart or reconnect.
+**Local stdio.** Configuration is a genuine local step, read once at server
+startup, so a newly added credential appears after a restart or reconnect. The
+server's instructions say which step it is: the documented environment
+variables for a repository or CLI installation, or the plugin's configuration
+(`/plugin`, TI Recon, Configure) when TI Recon runs as the Claude Code plugin —
+in which case an environment variable is never the answer, because the plugin's
+configuration is the only place the server reads from.
 
 Both, without exception: **no provider API key is ever pasted into a
 conversation, a tool argument, a prompt or a header.** No tool accepts one, and
