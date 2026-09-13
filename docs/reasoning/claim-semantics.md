@@ -172,6 +172,11 @@ It is `1.2.0` as of Task 24 Phase 1B (`1.1.0` added the GTI rows above;
 A claim may carry bounded **`highlights`** (Task 24): at most eight lines of at
 most 160 characters, built from named attributes only — the source's own words
 about its own claim, for the report to quote. They are presentation: fusion
-never reads them, and a claim without any weighs exactly the same.
+never reads them, and a claim without any weighs exactly the same. GreyNoise's
+scanner claim quotes `raw_classification`, `observed_scanning`,
+`known_business_service`, `actor`, `last_seen` and the `access_path` that
+answered, precisely so that "observed scanning" and "classified malicious" stay
+two visibly separate statements: the direction of a `SCANNER_ACTIVITY` claim is
+the provider's classification of the scanning, never the fact of it.
 
 See [evidence-fusion.md](evidence-fusion.md) for what fusion does with these.

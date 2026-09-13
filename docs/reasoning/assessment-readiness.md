@@ -92,7 +92,7 @@ record, which is a different kind of fact:
 | `CONTEXT_ONLY` | something was learned that points neither way |
 | `NO_DATA` | the source answered and held nothing about this observable |
 | `NONE` | no usable result — nothing ran, or what ran produced nothing |
-| `UNATTRIBUTED` | the capability **was** answered, and what it returned is not retained |
+| `UNATTRIBUTED` | the capability **was** answered, and what it returned is not retained — unless a claim's own semantic names it (below) |
 
 A source queried about an exact hash that answers "nothing known" is
 `COMPLETE` + `NO_DATA`. That is strictly more coverage than a source nobody
@@ -178,9 +178,29 @@ so the secondary capability's gap is typed by what happened
 (`not_configured`, `temporarily_unavailable`, …) rather than
 `not_attempted`, and a continuation is not asked for a path the same call
 already showed to be blocked. A completed bundle's secondary carries
-`UNATTRIBUTED`: the call completed, and what that capability got back is not
-retained per capability. Never `DIRECTIONAL`, `CONTEXT_ONLY` or `NO_DATA` for
-a secondary.
+`UNATTRIBUTED` by default: the call completed, and what that capability got
+back is not retained per capability. Never `CONTEXT_ONLY` or `NO_DATA` for a
+secondary.
+
+**One deterministic exception (Task 24, GN-FINDING-03).** A claim's own
+proposition can name the question it answered. `CAPABILITY_ANSWERED_BY_SEMANTIC`
+in `policy.py` lists the semantics that name exactly one capability —
+`SCANNER_ACTIVITY → SCANNER_CONTEXT`, `SANDBOX_CLASSIFICATION → FILE_BEHAVIOR`,
+`MALWARE_SAMPLE_IDENTITY → MALWARE_INTELLIGENCE`,
+`THREAT_ACTOR_ASSOCIATION → THREAT_ASSOCIATIONS`, and the three reputation
+semantics → `REPUTATION`. Where a completed, evidence-producing bundled call's
+transport provider produced a claim whose semantic names the secondary
+capability, that secondary's yield is `DIRECTIONAL`: the claim *is* the answer
+to that question, and this is the same judgement the primary's yield already
+reads from Task 17. Everything else stays `UNATTRIBUTED`: a claim naming the
+primary and not the secondary, a semantic served by several capabilities
+(`MALWARE_DISTRIBUTION`, `C2_ASSOCIATION`,
+`THREAT_INFRASTRUCTURE_ASSOCIATION`), an unclassified claim, a bundled
+`NO_DATA`, and a claim from another provider. Attribution never reaches a
+capability the call did not carry, never creates evidence, and names no
+provider. Live shape: one GreyNoise call keyed on `reputation` carrying
+`scanner_context`, answered by a scanner classification, now reads
+`scanner_context: complete / directional` instead of `unattributed`.
 
 
 Task 13 bundles compatible goals into a single request wherever a provider
@@ -358,8 +378,9 @@ rules: an assessment can be correct and under-investigated at the same time.
 ## 13. Determinism and versioning
 
 `READINESS_POLICY_VERSION` is `1.0.0`, the first policy and not yet shipped — so
-the `UNATTRIBUTED` correction above landed without a bump, there being no
-persisted `1.0.0` result to reinterpret. **Once 1.0.0 ships, or any readiness
+the `UNATTRIBUTED` correction above, and the Task 24 semantic attribution of a
+bundled secondary's yield, landed without a bump, there being no persisted
+`1.0.0` result to reinterpret. **Once 1.0.0 ships, or any readiness
 result is persisted under it, a semantic change to the vocabularies or the rules
 requires an explicit version review**, exactly as Task 17's policy does.
 

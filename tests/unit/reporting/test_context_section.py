@@ -149,4 +149,5 @@ async def test_no_match_renders_no_context_section() -> None:
 
 
 def test_the_schema_version_moved_with_the_added_section() -> None:
-    assert ANALYST_REPORT_SCHEMA_VERSION == "1.1.0"
+    # 1.1.0 added this section; 1.2.0 added ``source_checks[].capabilities``.
+    assert ANALYST_REPORT_SCHEMA_VERSION == "1.2.0"

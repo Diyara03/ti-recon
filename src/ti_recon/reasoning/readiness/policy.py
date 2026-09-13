@@ -49,6 +49,7 @@ from __future__ import annotations
 from typing import Final
 
 from ti_recon.enums import CoverageRelevance, InvestigationDepth, ProviderCapability, Verdict
+from ti_recon.reasoning.claims.models import ClaimSemantic
 from ti_recon.reasoning.fusion.policy import FUSION_POLICY_VERSION, VERDICT_RULES
 from ti_recon.reasoning.readiness.models import (
     ContinuationState,
@@ -62,6 +63,7 @@ from ti_recon.reasoning.readiness.models import (
 __all__ = [
     "BASIS_RATIONALE",
     "BLOCKING_GAP_TYPES",
+    "CAPABILITY_ANSWERED_BY_SEMANTIC",
     "CONTINUABLE_GAP_TYPES",
     "DIRECTIONAL_SEARCH_CAPABILITIES",
     "READINESS_POLICY_VERSION",
@@ -125,6 +127,34 @@ DIRECTIONAL_SEARCH_CAPABILITIES: Final[frozenset[ProviderCapability]] = frozense
         ProviderCapability.THREAT_ASSOCIATIONS,
     }
 )
+
+#: Which capability a directional claim of each semantic demonstrably answers.
+#:
+#: The one place a claim's *proposition* may say which question of a bundled
+#: call it answered. Task 13 records outcomes per call, so a call that carried
+#: several capabilities leaves the ledger unable to say which of them produced
+#: a claim -- unless the claim's own semantic names the question. A sensor
+#: network's scanner classification is the answer to ``SCANNER_CONTEXT``
+#: whatever capability the planner keyed the call on; a sandbox verdict is the
+#: answer to ``FILE_BEHAVIOR``; a curated repository holding the exact sample
+#: is the answer to ``MALWARE_INTELLIGENCE``.
+#:
+#: Only semantics that name exactly one capability are listed. A malware
+#: distribution, C2 or infrastructure association is served by reputation and
+#: malware-intelligence datasets alike and stays ``UNATTRIBUTED`` under a
+#: bundle, as does an unclassified claim: attributing those would be a guess.
+#: This is attribution of a yield the record already holds, never new
+#: evidence, never coverage for a capability the call did not carry, and
+#: never a provider name (Task 24 scanner-context validation).
+CAPABILITY_ANSWERED_BY_SEMANTIC: Final[dict[ClaimSemantic, ProviderCapability]] = {
+    ClaimSemantic.SCANNER_ACTIVITY: ProviderCapability.SCANNER_CONTEXT,
+    ClaimSemantic.SANDBOX_CLASSIFICATION: ProviderCapability.FILE_BEHAVIOR,
+    ClaimSemantic.MALWARE_SAMPLE_IDENTITY: ProviderCapability.MALWARE_INTELLIGENCE,
+    ClaimSemantic.THREAT_ACTOR_ASSOCIATION: ProviderCapability.THREAT_ASSOCIATIONS,
+    ClaimSemantic.MALICIOUS_REPUTATION: ProviderCapability.REPUTATION,
+    ClaimSemantic.BENIGN_REPUTATION: ProviderCapability.REPUTATION,
+    ClaimSemantic.AGGREGATED_REPUTATION: ProviderCapability.REPUTATION,
+}
 
 #: Gap types where a path exists and only the current run stopped short.
 CONTINUABLE_GAP_TYPES: Final[frozenset[GapType]] = frozenset(

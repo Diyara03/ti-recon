@@ -34,6 +34,7 @@ from ti_recon.reporting.models import (
     AnalystInvestigationReport,
     BasisItem,
     ReportSection,
+    SourceCheckItem,
 )
 
 __all__ = [
@@ -479,7 +480,9 @@ def _sources(report: AnalystInvestigationReport) -> list[str]:
         lines += _empty("No source was consulted.")
         return lines
     for item in section.items:
-        detail = f"  - {safe_text(item.provider_id, limit=64)} / {item.capability}: {item.status}"
+        detail = (
+            f"  - {safe_text(item.provider_id, limit=64)} / {_capabilities(item)}: {item.status}"
+        )
         if item.error_category:
             detail = f"{detail} ({item.error_category})"
         meaning = STATUS_MEANING.get(item.status)
@@ -492,6 +495,18 @@ def _sources(report: AnalystInvestigationReport) -> list[str]:
             detail = f"{detail} [cached; source not contacted again]"
         lines.append(detail)
     return lines + _omitted(section)
+
+
+def _capabilities(item: SourceCheckItem) -> str:
+    """The primary capability, then the rest of the bundle the same call carried.
+
+    ``reputation (+scanner_context)`` says one call asked two questions. Printing
+    the primary alone read as though the other had never been asked.
+    """
+    others = [carried for carried in item.capabilities if carried != item.capability]
+    if not others:
+        return item.capability
+    return f"{item.capability} (+{', '.join(others)})"
 
 
 def _workflow(report: AnalystInvestigationReport) -> list[str]:

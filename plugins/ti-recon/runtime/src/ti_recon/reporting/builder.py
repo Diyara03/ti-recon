@@ -568,6 +568,10 @@ def _source_checks(result: InvestigationResult) -> list[SourceCheckItem]:
             provider_id=item.provider_id,
             source_family=item.source_family,
             capability=item.capability.value,
+            # The whole bundle, so a reader can see that one call carried
+            # several questions rather than reading the primary as the only
+            # one asked (Task 24 scanner-context validation, GN-FINDING-02).
+            capabilities=tuple(sorted(carried.value for carried in item.capabilities)),
             status=item.status.value,
             error_category="" if item.error_category is None else item.error_category.value,
             called_provider=item.called_provider,

@@ -86,7 +86,7 @@ __all__ = [
 #: Within 1.x, optional fields may be added. Removing or renaming a field,
 #: changing what an existing field means, or changing the meaning of a value
 #: requires a deliberate version review — consumers key on this string.
-ANALYST_REPORT_SCHEMA_VERSION: Final[str] = "1.1.0"
+ANALYST_REPORT_SCHEMA_VERSION: Final[str] = "1.2.0"
 
 # --------------------------------------------------------------------------- #
 # Bounds
@@ -647,7 +647,27 @@ class SourceCheckItem(FrozenTiReconModel):
             "however many product names they carry."
         ),
     )
-    capability: str = Field(min_length=1, max_length=64)
+    capability: str = Field(
+        min_length=1,
+        max_length=64,
+        description=(
+            "The capability this check was keyed on: the primary question of "
+            "the call. Where one call carried several questions, `capabilities` "
+            "lists all of them and this is one member of it."
+        ),
+    )
+    capabilities: tuple[str, ...] = Field(
+        default=(),
+        max_length=16,
+        description=(
+            "Every capability this one call asked for, sorted, the primary "
+            "included. One physical request can answer several questions -- a "
+            "scanner classification, a reputation, network ownership -- and "
+            "the engine bundles them rather than asking the source once per "
+            "question. One entry here is one call and one check, never one "
+            "check per capability, and never a count of anything."
+        ),
+    )
     status: str = Field(
         min_length=1,
         max_length=40,
@@ -682,7 +702,15 @@ class SourceCheckItem(FrozenTiReconModel):
     )
     produced_evidence: bool = Field(
         default=False,
-        description="Whether this check contributed any evidence to the investigation.",
+        description=(
+            "Whether this check contributed any evidence records to the "
+            "investigation -- including context records that describe the "
+            "check itself, such as which access path answered or that the "
+            "source holds no record of the observable. True beside 'no_data' "
+            "therefore means the source recorded what it did not find; it is "
+            "never directional evidence, never a finding about the observable "
+            "and never evidence of safety."
+        ),
     )
 
 

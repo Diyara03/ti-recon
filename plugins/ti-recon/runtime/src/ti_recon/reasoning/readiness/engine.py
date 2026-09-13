@@ -52,6 +52,7 @@ from ti_recon.reasoning.readiness.coverage import (
     capability_checks,
     capability_coverage_items,
     completion_for,
+    directional_capabilities_by_provider,
     directional_provider_ids,
 )
 from ti_recon.reasoning.readiness.gaps import (
@@ -159,6 +160,7 @@ class AssessmentReadinessEngine:
         checks_by_capability = capability_checks(
             planning.attempts,
             directional_providers=directional_provider_ids(fusion.normalized_claims),
+            attributed_capabilities=directional_capabilities_by_provider(fusion.normalized_claims),
         )
         inputs = EvaluationInputs(
             checks_by_capability=checks_by_capability,

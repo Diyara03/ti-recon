@@ -131,6 +131,28 @@ A Community call that succeeds *or* returns a legitimate `404` proves Community
 access works, and that level is remembered. Only a real response ever sets a
 level; a status code alone never does.
 
+### What a Business-Free key did, live (Task 24)
+
+The GreyNoise validation phase ran the installed plugin against one scanner
+address with a key whose `/ping` answer names the plan `Business - Free`. The
+account owner had seen `GET /v3/ip/{ip}?quick=true` answer `401` outside TI
+Recon. Through TI Recon, with the same key, the full context endpoint answered
+**`200`** — at STANDARD (`GET /v3/ip/{ip}`) and at QUICK
+(`GET /v3/ip/{ip}?quick=true`) alike — so the access level resolved to `full`,
+one physical request was made per investigation, and the Community fallback
+was never exercised live. That fallback is therefore proven deterministically
+(`tests/unit/providers/greynoise/test_community_access_tiers.py`: full-tier
+success, `403`/plan-limit → one Community attempt, `401` raised and never
+probed, Community `404` → `NO_DATA`), not by a live `401`.
+
+The `401` rule above is unchanged by that phase. A `401` from the full
+endpoint remains a rejected credential: it is raised, the credential is marked
+invalid, and nothing is probed. If a key that `/ping` accepts is ever observed
+to receive `401` from `/v3/ip` *and* answer on `/v3/community`, that is a new
+provider behaviour to design for explicitly — most likely by validating the
+key through `/ping`'s own answer before a single Community attempt — and not
+something to infer from the status code.
+
 ### Modes and levels are different vocabularies
 
 `GreyNoiseAccessMode` is configuration — `AUTO` (default), `FULL`, `COMMUNITY` —
@@ -242,6 +264,51 @@ traffic comes from a scanner it has identified as legitimate — Shodan's crawle
 a research scanner. That is an assertion. It is not the same thing as an absence,
 which is §8.
 
+### `noise` is not `classification`
+
+The Community document says `noise: true` (GreyNoise's sensors saw the address
+scanning) *and* `classification: malicious` (what GreyNoise concluded about
+that scanning). They are different facts and the integration keeps them apart:
+
+| Field | Where it goes | What it decides |
+|---|---|---|
+| `noise` / `found` | `observed_scanning` on the classification record | nothing — a fact about observation |
+| `classification` | `raw_classification`, and the record's `EvidenceEffect` per §7 | the direction, and only this |
+| `riot` / BSI `found` | `known_business_service` on the classification record | nothing — `true` is context (§10), `false` is the absence of that context |
+| `name` (Community) | `actor` when the address is scanning; the BSI record's `name` when only a RIOT entry matched | nothing |
+| `last_seen` | the record's `last_seen`, read by Task 15 as `LAST_OBSERVED` | nothing |
+
+So `noise: true` with `classification: unknown` is a `CONTEXT_ONLY` record and
+produces **no claim**: scanning is not malicious by itself. `riot: false` is
+never malicious evidence and `riot: true` is never proof of benignness. The
+claim translator (`claim_semantics.py`) reads the direction from the record
+the normalizer already pointed, and never from `observed_scanning`.
+
+### What reaches the analyst report (Task 24, GN-FINDING-01)
+
+A live run reduced all of the above to `scanner_activity → supports_malicious`
+by the time the report was rendered: the attributes stayed on the evidence
+record, and only a claim's `highlights` reach the report. The translator now
+quotes them, in this order and bounded to eight lines of 160 characters:
+
+```
+raw_classification: malicious
+observed_scanning: True
+known_business_service: False
+actor: unknown
+last_seen: 2026-09-11T00:00:00Z
+access_path: full            # or community — the door that answered
+```
+
+`access_path` is read from the same envelope's `greynoise_coverage` record —
+the only place the adapter writes the access level — because that record is
+context and never becomes a claim of its own. Where no classification claim
+exists (a `404`, an `unknown` classification) the access level stays on the
+coverage record inside the internal result and does not reach the report;
+`source_checks` still says the check ran and what it returned. The permalink is
+deliberately not quoted: it is a link, not something the source said. Highlights
+are quotation, never weight — see `docs/reasoning/claim-semantics.md`.
+
 ---
 
 ## 8. Absence is a coverage fact, never a benign verdict
@@ -260,6 +327,15 @@ exactly backwards.
 So a `404` produces a `NO_DATA` run carrying `greynoise_not_observed`, and a
 document that says `found: false` produces the same record alongside whatever
 else parsed.
+
+That is why an analyst report shows the GreyNoise source check as
+`status = no_data` **with** `produced_evidence = true`. The two records the
+run carries — `greynoise_coverage` (which door answered, at what depth) and
+`greynoise_not_observed` — are evidence *about the check*, not about the
+address: both are `EvidenceClass.CONTEXT`, `CONTEXT_ONLY`, and neither can
+reach a claim, the basis, the opposing evidence or a verdict. The field is
+kept rather than renamed, and its schema description now says exactly this
+(Task 24, §11 of the GreyNoise validation brief).
 
 ---
 
@@ -367,6 +443,41 @@ Stable facts are attached to the submitted object under a `greynoise` namespace 
 classification, ASN, organization, country, rDNS, last seen. Judgements stay in
 evidence, where they have a provenance and a moment of observation that a
 property cannot carry.
+
+**Where an ASN relationship comes from.** Only the full context document
+carries `internet_scanner_intelligence.metadata.asn`; the Community document
+has no metadata block at all. A `belongs-to-asn` relationship in a report
+therefore means the full endpoint answered (access level `full`), and the
+relationship's `raw_relationship_type` is `metadata.asn` with the
+`greynoise_network_context` record as its justification. The Task 24 live
+trace of one scanner address confirmed exactly that: one `GET /v3/ip/{ip}`
+answering `200`, and the ASN read from that document — never from a cache, a
+different response or another provider.
+
+---
+
+## 12a. One call, several capabilities (Task 24, GN-FINDING-02 and 03)
+
+The planning profile declares `capability_invariant_response = True`: one
+address read answers `REPUTATION`, `SCANNER_CONTEXT`, `NETWORK_OWNERSHIP` and
+`FALSE_POSITIVE_CONTEXT` together, so Task 13 bundles whichever of those are
+current goals into **one** request keyed on one primary capability. For an
+IPv4 address at STANDARD that primary is `reputation` and the bundle carries
+`scanner_context` beside it. Two consequences, both fixed in the presentation
+and readiness layers rather than by making a second request:
+
+* the report's `source_checks` entry names the whole bundle
+  (`capabilities: [reputation, scanner_context]`, rendered
+  `greynoise / reputation (+scanner_context)`), so `capability = reputation`
+  beside scanner evidence no longer reads as a contradiction;
+* the `scanner_context` requirement's `information_yield` is `directional`
+  rather than `unattributed`, because the scanner classification claim's own
+  semantic — `SCANNER_ACTIVITY` — names that capability and no other. See
+  `docs/reasoning/assessment-readiness.md`; the rule is provider-neutral and
+  a reputation-only claim would leave the secondary `unattributed` exactly as
+  before.
+
+One physical request, one source check, one budget unit.
 
 ---
 

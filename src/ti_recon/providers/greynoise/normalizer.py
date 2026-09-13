@@ -279,6 +279,41 @@ class GreyNoiseDocument:
         return cleaned.lower() if cleaned is not None else None
 
     @property
+    def actor(self) -> str | None:
+        """Who GreyNoise attributes the scanning to, if it said.
+
+        The full context spells it ``actor``. The flat Community document has
+        no such field: its top-level ``name`` names the actor when the address
+        is scanning noise, and names the business service instead when the
+        address is a RIOT entry that is *not* scanning. So ``name`` is read as
+        the actor only when GreyNoise also said the address was observed
+        scanning; otherwise it is not an actor and is not read as one.
+        """
+        value = text(self.scanner.get("actor"), _MAX_LABEL)
+        if value is not None:
+            return value
+        if self.scanner_found:
+            return text(self._payload.get("name"), _MAX_LABEL)
+        return None
+
+    @property
+    def business_name(self) -> str | None:
+        """The Business Services entry's name, if GreyNoise supplied one.
+
+        From the business block where there is one. From the flat Community
+        document's ``name`` only when the address *is* a business-service
+        entry and is not scanning noise -- in every other case that field is
+        the scanner actor (see :attr:`actor`) and reading it here would file
+        a scanner's name under a business service that does not exist.
+        """
+        value = text(self.business.get("name"), _MAX_LABEL)
+        if value is not None:
+            return value
+        if self.business_found and not self.scanner_found:
+            return text(self._payload.get("name"), _MAX_LABEL)
+        return None
+
+    @property
     def first_seen(self) -> datetime | None:
         return parse_utc_timestamp(
             text(self.scanner.get("first_seen", self._payload.get("first_seen")), 64)
@@ -375,12 +410,27 @@ def normalize_classification(
         effect = EvidenceEffect.CONTEXT_ONLY
 
     attributes: dict[str, Any] = {"raw_classification": classification}
-    actor = document.scanner_text("actor")
+    actor = document.actor
     if actor is not None:
         attributes["actor"] = actor
     found = document.scanner_found
     if found is not None:
+        # ``noise`` / ``found``: whether GreyNoise's sensors saw the address
+        # scanning. A fact about observation, carried beside the classification
+        # so nobody has to read one from the other: the *direction* of this
+        # record comes from ``classification`` alone, never from this flag.
         attributes["observed_scanning"] = found
+    business_found = document.business_found
+    if business_found is not None:
+        # ``riot`` / Business Services ``found``: whether GreyNoise lists the
+        # address as common business-service infrastructure. ``False`` is the
+        # absence of that context and points nowhere; ``True`` is context and
+        # never proof of benignness (§10 of the provider doc). Carried here
+        # because the record that would say "no business-service entry" adds
+        # nothing on its own and is deliberately not emitted, which left the
+        # answer's RIOT state visible only as a property of the address and
+        # never beside the classification it qualifies.
+        attributes["known_business_service"] = business_found
     # GreyNoise's own permalink for the address. Community sends it at the top
     # level and the full context nests it, which ``scanner_text`` handles.
     link = document.scanner_text("link", _MAX_TEXT)
@@ -453,7 +503,10 @@ def normalize_business_service(
         return GreyNoiseNormalization()
 
     attributes: dict[str, Any] = {"found": bool(found)}
-    for name in ("name", "category", "reference"):
+    business_name = document.business_name
+    if business_name is not None:
+        attributes["name"] = business_name
+    for name in ("category", "reference"):
         value = document.business_text(name)
         if value is not None:
             attributes[name] = value

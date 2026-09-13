@@ -32,7 +32,7 @@ provider ids.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 from ti_recon.enums import CoverageStatus, ProviderCapability, ProviderRunStatus
 from ti_recon.models.coverage import CoverageItem
@@ -43,16 +43,22 @@ from ti_recon.reasoning.readiness.models import (
     InformationYield,
     SourceCheck,
 )
+from ti_recon.reasoning.readiness.policy import CAPABILITY_ANSWERED_BY_SEMANTIC
 
 __all__ = [
     "STATUS_COMPLETION",
     "capability_checks",
     "checks_for",
     "completion_for",
+    "directional_capabilities_by_provider",
     "independent_families",
+    "secondary_yield_for",
     "worst_completion",
     "yield_for",
 ]
+
+#: Provider id -> the capabilities its directional claims demonstrably answered.
+AttributedCapabilities = Mapping[str, frozenset[ProviderCapability]]
 
 #: Every provider status, mapped on purpose. There is no default branch: a new
 #: status must be classified deliberately, because silently defaulting one to
@@ -178,35 +184,81 @@ def directional_provider_ids(claims: Iterable[NormalizedClaim]) -> frozenset[str
     return frozenset(claim.transport_provider for claim in claims)
 
 
+def directional_capabilities_by_provider(
+    claims: Iterable[NormalizedClaim],
+) -> dict[str, frozenset[ProviderCapability]]:
+    """Per transport provider, the capabilities its claims demonstrably answered.
+
+    Read from :data:`CAPABILITY_ANSWERED_BY_SEMANTIC`, so a claim attributes a
+    yield only where its own proposition names exactly one capability. Keyed
+    by transport like :func:`directional_provider_ids`, and for the same
+    reason: this is about which execution produced the claim.
+    """
+    found: dict[str, set[ProviderCapability]] = defaultdict(set)
+    for claim in claims:
+        answered = CAPABILITY_ANSWERED_BY_SEMANTIC.get(claim.semantic)
+        if answered is not None:
+            found[claim.transport_provider].add(answered)
+    return {provider: frozenset(items) for provider, items in found.items()}
+
+
+def secondary_yield_for(
+    attempt: ProviderAttempt,
+    capability: ProviderCapability,
+    *,
+    attributed_capabilities: AttributedCapabilities,
+) -> InformationYield:
+    """What one attempt returned for a capability it carried beside its primary.
+
+    Completion is the call's -- the provider was asked, and refused or answered
+    for the whole bundle -- so a call that did not complete yields ``NONE``.
+    A call that completed yields ``UNATTRIBUTED`` by default, because Task 13
+    retains what came back per *call* and not per capability. The one
+    exception is deterministic: where a directional claim this same provider
+    produced has a semantic that names this capability and no other
+    (:data:`CAPABILITY_ANSWERED_BY_SEMANTIC`), the claim *is* the answer to
+    this question, and the yield is ``DIRECTIONAL`` -- the same judgement the
+    primary's yield already reads from Task 17. Never ``CONTEXT_ONLY`` or
+    ``NO_DATA`` for a secondary: the record holds no context-only evidence
+    keyed to a capability, and a bundled call's ``NO_DATA`` is not retained
+    per question either (Task 24 scanner-context validation, GN-FINDING-03).
+    """
+    completion = completion_for(attempt)
+    if completion not in _YIELDING_COMPLETIONS:
+        return InformationYield.NONE
+    if attempt.produced_evidence and capability in attributed_capabilities.get(
+        attempt.provider_id, frozenset()
+    ):
+        return InformationYield.DIRECTIONAL
+    return InformationYield.UNATTRIBUTED
+
+
 def checks_for(
     attempts: Iterable[ProviderAttempt],
     *,
     directional_providers: frozenset[str],
     capability: ProviderCapability | None = None,
+    attributed_capabilities: AttributedCapabilities | None = None,
 ) -> tuple[SourceCheck, ...]:
     """One :class:`SourceCheck` per attempt, deterministically ordered.
 
     ``capability`` is the ledger bucket the checks are being built for. For
     the attempt's primary capability the yield is read from the attempt; for
-    another capability the same call *carried*, completion is the call's --
-    the provider was asked, and refused or answered for the whole bundle --
-    while the yield is ``UNATTRIBUTED`` if it completed and ``NONE`` if it did
-    not, because what that capability got back is not retained per
-    capability. Never ``DIRECTIONAL``, ``CONTEXT_ONLY`` or ``NO_DATA`` for a
+    another capability the same call *carried*, the yield comes from
+    :func:`secondary_yield_for` -- ``NONE`` if the call did not complete,
+    ``DIRECTIONAL`` where a claim's own semantic names this capability, and
+    otherwise ``UNATTRIBUTED``, because what that capability got back is not
+    retained per capability. Never ``CONTEXT_ONLY`` or ``NO_DATA`` for a
     secondary: those would assert content the record cannot support.
     """
+    attributed = {} if attributed_capabilities is None else attributed_capabilities
     found: list[SourceCheck] = []
     for attempt in attempts:
         bucket = attempt.capability if capability is None else capability
         if bucket is attempt.capability:
             yielded = yield_for(attempt, directional_providers=directional_providers)
         else:
-            completion = completion_for(attempt)
-            yielded = (
-                InformationYield.UNATTRIBUTED
-                if completion in _YIELDING_COMPLETIONS
-                else InformationYield.NONE
-            )
+            yielded = secondary_yield_for(attempt, bucket, attributed_capabilities=attributed)
         found.append(
             SourceCheck(
                 provider_id=attempt.provider_id,
@@ -228,7 +280,10 @@ def checks_for(
 
 
 def capability_checks(
-    attempts: Sequence[ProviderAttempt], *, directional_providers: frozenset[str]
+    attempts: Sequence[ProviderAttempt],
+    *,
+    directional_providers: frozenset[str],
+    attributed_capabilities: AttributedCapabilities | None = None,
 ) -> dict[ProviderCapability, tuple[SourceCheck, ...]]:
     """The ledger: every attempt grouped under every capability it carried.
 
@@ -237,6 +292,11 @@ def capability_checks(
     and a refusal, an outage or an unconfigured credential refused all of
     them. Keying on the primary alone typed the others "not attempted" when
     the provider had in fact answered NOT_CONFIGURED (Task 24 Phase 3).
+
+    ``attributed_capabilities`` is :func:`directional_capabilities_by_provider`
+    over the claims that reached the assessment: it lets a secondary bucket
+    read ``DIRECTIONAL`` where a claim's semantic demonstrably answers it, and
+    nothing else.
     """
     buckets: dict[ProviderCapability, list[ProviderAttempt]] = defaultdict(list)
     for attempt in attempts:
@@ -244,7 +304,10 @@ def capability_checks(
             buckets[carried].append(attempt)
     return {
         capability: checks_for(
-            items, directional_providers=directional_providers, capability=capability
+            items,
+            directional_providers=directional_providers,
+            capability=capability,
+            attributed_capabilities=attributed_capabilities,
         )
         for capability, items in buckets.items()
     }
