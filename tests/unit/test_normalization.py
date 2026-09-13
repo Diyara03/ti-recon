@@ -394,3 +394,20 @@ def test_url_with_a_bare_scheme_like_path_component_is_still_a_url() -> None:
 def test_url_with_userinfo_but_no_host_is_rejected() -> None:
     with pytest.raises(NormalizationError, match="missing a host"):
         normalize_url("http://user@/a")
+
+
+# --------------------------------------------------------------------------- #
+# IPv6 zone identifiers are not part of an address (Task 24 Phase 3)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("value", ["fe80::1%eth0", "[fe80::1%eth1]", "2001:db8::1%25"])
+def test_a_zoned_address_is_refused_not_split_into_several_observables(value: str) -> None:
+    from ti_recon.normalization.errors import NormalizationError
+
+    with pytest.raises(NormalizationError, match="zone"):
+        normalize_observable(value)
+
+
+def test_the_bare_ipv6_address_still_normalizes() -> None:
+    assert normalize_observable("fe80::1").intel_object.canonical_value == "fe80::1"
