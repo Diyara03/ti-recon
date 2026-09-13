@@ -627,3 +627,14 @@ def test_no_vxapi_dependency_is_taken() -> None:
                 imported.add(node.module)
         assert not any(name.startswith("vxapi") for name in imported)
         assert not any("falcon" in name for name in imported)
+
+
+@respx.mock
+async def test_a_stated_retry_after_reaches_the_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Task 6 waits exactly as long as the provider asked (Task 24 Phase 3)."""
+    respx.get(SEARCH_URL).mock(
+        return_value=httpx.Response(429, headers={"Retry-After": "5"}, json={"message": "no"})
+    )
+    with pytest.raises(ProviderRateLimitedError) as raised:
+        await HybridAnalysisAdapter().lookup(request_for(), credential())
+    assert raised.value.retry_after_seconds == 5.0
