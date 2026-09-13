@@ -101,7 +101,11 @@ class ClaimSemantic(StrEnum):
     # -- observed activity --------------------------------------------------- #
     #: A sensor network classified this address's internet-scanning behaviour.
     #: Deliberately its own dimension: scanning is not command and control, and
-    #: collapsing the two is the exact error Task 16 refused to risk.
+    #: collapsing the two is the exact error Task 16 refused to risk. The
+    #: direction is the provider's *classification* of that behaviour --
+    #: malicious, suspicious or benign -- never the fact that scanning was
+    #: observed: an address seen scanning with an unknown classification is
+    #: context and produces no claim of this semantic at all.
     SCANNER_ACTIVITY = "scanner_activity"
     #: A sandbox reached a verdict about what this sample did when run.
     SANDBOX_CLASSIFICATION = "sandbox_classification"
