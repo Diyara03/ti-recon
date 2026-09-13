@@ -1060,3 +1060,46 @@ async def test_an_operator_can_narrow_the_window_further() -> None:
     await adapter.lookup(make_request(depth=InvestigationDepth.DEEP), credential())
     query = next(detail for name, detail in fake.calls if name == "search")
     assert query.endswith("date:>now-14d")
+
+
+# --------------------------------------------------------------------------- #
+# Only a missing or refused document degrades; a provider failure is raised
+# (Task 24 Phase 3)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "category",
+    [
+        ProviderErrorCategory.RATE_LIMITED,
+        ProviderErrorCategory.QUOTA_EXCEEDED,
+        ProviderErrorCategory.AUTHENTICATION_ERROR,
+        ProviderErrorCategory.TRANSIENT_ERROR,
+        ProviderErrorCategory.PROVIDER_UNAVAILABLE,
+    ],
+)
+async def test_a_provider_failure_on_scan_retrieval_is_raised_not_swallowed(
+    category: ProviderErrorCategory,
+) -> None:
+    """A throttle or a rejected credential is about the provider, not the scan:
+    swallowing it kept spending requests, recorded no cooldown, and reported an
+    authentication failure as partial coverage."""
+    from ti_recon.providers.errors import ProviderError, provider_error_for
+
+    fake = FakeUrlscanClient(search_payload=payloads.search_payload(payloads.SCAN_ID))
+    fake.fail("result", provider_error_for(category, "urlscan"))
+    adapter, _ = make_adapter(fake)
+    with pytest.raises(ProviderError) as raised:
+        await adapter.lookup(make_request(), credential())
+    assert raised.value.category is category
+
+
+async def test_a_refused_or_missing_scan_still_degrades() -> None:
+    from ti_recon.providers.errors import provider_error_for
+
+    fake = FakeUrlscanClient(search_payload=payloads.search_payload(payloads.SCAN_ID))
+    fake.fail("result", provider_error_for(ProviderErrorCategory.PERMISSION_ERROR, "urlscan"))
+    adapter, _ = make_adapter(fake)
+    envelope = await adapter.lookup(make_request(), credential())
+    assert envelope.status is ProviderRunStatus.PARTIAL
+    assert URLSCAN_SCAN_UNRETRIEVABLE in envelope.warnings
