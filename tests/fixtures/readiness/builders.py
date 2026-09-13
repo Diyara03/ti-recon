@@ -88,12 +88,14 @@ def attempt(
     locality: ProviderLocality = ProviderLocality.REMOTE,
     produced_evidence: bool = True,
     sequence: int = 1,
+    capabilities: frozenset[ProviderCapability] = frozenset(),
 ) -> ProviderAttempt:
     """One recorded execution, described in generic terms."""
     return ProviderAttempt(
         sequence=sequence,
         provider_id=provider,
         capability=capability,
+        capabilities=capabilities,
         source_family=source_family or provider,
         locality=locality,
         cost_class=CallCostClass.LOW,

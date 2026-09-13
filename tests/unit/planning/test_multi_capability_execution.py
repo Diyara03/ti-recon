@@ -655,3 +655,23 @@ async def test_registration_order_does_not_change_a_bundle() -> None:
     await reverse.run()
     assert forward.capability_sets("multi") == reverse.capability_sets("multi")
     assert forward.capability_sets("other") == reverse.capability_sets("other")
+
+
+async def test_the_bundled_attempt_records_every_capability_it_carried() -> None:
+    """One attempt, naming the primary and carrying the bundle (Task 24 Phase 3)."""
+    harness = Harness(
+        (
+            FakeProviderSpec(
+                provider_id="multi",
+                source_family="multi_family",
+                capabilities=FILE_CAPABILITIES,
+                object_types=frozenset({IntelObjectType.FILE}),
+                capability_invariant_response=True,
+            ),
+        )
+    )
+    result = await harness.run()
+    (attempt,) = result.attempts  # type: ignore[attr-defined]
+    assert attempt.capability is ProviderCapability.REPUTATION
+    assert attempt.capability in attempt.capabilities
+    assert ProviderCapability.MALWARE_INTELLIGENCE in attempt.capabilities

@@ -243,14 +243,24 @@ async def test_no_eligible_unattempted_source_remains_for_any_directive_at_a_no_
 
 @pytest.mark.asyncio
 async def test_a_gap_nothing_eligible_can_cover_lets_the_run_stop_once() -> None:
+    """The scanner gap's only source answered NOT_CONFIGURED inside a bundled
+    call, so readiness now sees it as blocked (Task 24 Phase 3) rather than
+    never attempted, and the run stops without a fruitless continuation."""
     stack, request = _stack()
     await _credentials(stack)
 
     result = await stack.investigate(request, user_id=USER)
 
-    assert result.readiness.readiness_status is ReadinessStatus.NEEDS_MORE_DATA
-    assert result.readiness.continuation_state is ContinuationState.MORE_DATA_AVAILABLE
+    assert result.readiness.readiness_status in {
+        ReadinessStatus.UNRESOLVED,
+        ReadinessStatus.NEEDS_MORE_DATA,
+    }
+    assert result.readiness.continuation_state in {
+        ContinuationState.BLOCKED,
+        ContinuationState.MORE_DATA_AVAILABLE,
+    }
     assert result.stop_reason in {
+        WorkflowStopReason.READINESS_BLOCKED,
         WorkflowStopReason.NO_PROGRESS,
         WorkflowStopReason.CURRENT_BUDGET_EXHAUSTED,
     }

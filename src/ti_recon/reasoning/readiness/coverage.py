@@ -98,9 +98,9 @@ _COMPLETION_ORDER: dict[CheckCompletion, int] = {
 
 _YIELD_ORDER: dict[InformationYield, int] = {
     InformationYield.NONE: 0,
-    # Total by construction rather than by need: a SourceCheck is always derived
-    # from one attempt, so it can never carry UNATTRIBUTED. Leaving it out would
-    # make a hand-built check raise a KeyError instead of sorting.
+    # A check carries UNATTRIBUTED when it stands for a capability the attempt
+    # *carried* beside its primary: the call completed, and what that
+    # capability got back is not retained per capability (Task 24 Phase 3).
     InformationYield.UNATTRIBUTED: 1,
     InformationYield.NO_DATA: 2,
     InformationYield.CONTEXT_ONLY: 3,
@@ -179,25 +179,49 @@ def directional_provider_ids(claims: Iterable[NormalizedClaim]) -> frozenset[str
 
 
 def checks_for(
-    attempts: Iterable[ProviderAttempt], *, directional_providers: frozenset[str]
+    attempts: Iterable[ProviderAttempt],
+    *,
+    directional_providers: frozenset[str],
+    capability: ProviderCapability | None = None,
 ) -> tuple[SourceCheck, ...]:
-    """One :class:`SourceCheck` per attempt, deterministically ordered."""
-    found = [
-        SourceCheck(
-            provider_id=attempt.provider_id,
-            source_family=attempt.source_family,
-            capability=attempt.capability,
-            raw_status=attempt.status.value,
-            completion=completion_for(attempt),
-            information_yield=yield_for(attempt, directional_providers=directional_providers),
-            # A cache hit or a coalesced request is information that was
-            # available; readiness asks whether it was, not whether a socket
-            # was opened for it.
-            served_without_call=not attempt.called_provider,
-            local_source=attempt.locality is ProviderLocality.LOCAL,
+    """One :class:`SourceCheck` per attempt, deterministically ordered.
+
+    ``capability`` is the ledger bucket the checks are being built for. For
+    the attempt's primary capability the yield is read from the attempt; for
+    another capability the same call *carried*, completion is the call's --
+    the provider was asked, and refused or answered for the whole bundle --
+    while the yield is ``UNATTRIBUTED`` if it completed and ``NONE`` if it did
+    not, because what that capability got back is not retained per
+    capability. Never ``DIRECTIONAL``, ``CONTEXT_ONLY`` or ``NO_DATA`` for a
+    secondary: those would assert content the record cannot support.
+    """
+    found: list[SourceCheck] = []
+    for attempt in attempts:
+        bucket = attempt.capability if capability is None else capability
+        if bucket is attempt.capability:
+            yielded = yield_for(attempt, directional_providers=directional_providers)
+        else:
+            completion = completion_for(attempt)
+            yielded = (
+                InformationYield.UNATTRIBUTED
+                if completion in _YIELDING_COMPLETIONS
+                else InformationYield.NONE
+            )
+        found.append(
+            SourceCheck(
+                provider_id=attempt.provider_id,
+                source_family=attempt.source_family,
+                capability=bucket,
+                raw_status=attempt.status.value,
+                completion=completion_for(attempt),
+                information_yield=yielded,
+                # A cache hit or a coalesced request is information that was
+                # available; readiness asks whether it was, not whether a socket
+                # was opened for it.
+                served_without_call=not attempt.called_provider,
+                local_source=attempt.locality is ProviderLocality.LOCAL,
+            )
         )
-        for attempt in attempts
-    ]
     return tuple(
         sorted(found, key=lambda item: (item.capability.value, item.provider_id, item.raw_status))
     )
@@ -206,12 +230,22 @@ def checks_for(
 def capability_checks(
     attempts: Sequence[ProviderAttempt], *, directional_providers: frozenset[str]
 ) -> dict[ProviderCapability, tuple[SourceCheck, ...]]:
-    """The ledger: every attempt grouped under the capability it served."""
+    """The ledger: every attempt grouped under every capability it carried.
+
+    One call bundling several questions is one attempt in the trace and one
+    check under each of those questions: the provider was asked all of them,
+    and a refusal, an outage or an unconfigured credential refused all of
+    them. Keying on the primary alone typed the others "not attempted" when
+    the provider had in fact answered NOT_CONFIGURED (Task 24 Phase 3).
+    """
     buckets: dict[ProviderCapability, list[ProviderAttempt]] = defaultdict(list)
     for attempt in attempts:
-        buckets[attempt.capability].append(attempt)
+        for carried in attempt.capabilities:
+            buckets[carried].append(attempt)
     return {
-        capability: checks_for(items, directional_providers=directional_providers)
+        capability: checks_for(
+            items, directional_providers=directional_providers, capability=capability
+        )
         for capability, items in buckets.items()
     }
 

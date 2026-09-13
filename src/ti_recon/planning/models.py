@@ -563,6 +563,13 @@ class ProviderAttempt(FrozenTiReconModel):
     sequence: int = Field(ge=0)
     provider_id: str = Field(min_length=1, max_length=64)
     capability: ProviderCapability
+    #: Every capability the request *carried* -- the bundle, primary included.
+    #: One attempt, one call, several questions: a failure answered none of
+    #: them and a refusal refused all of them, and a ledger keyed on the
+    #: primary alone typed the others "not attempted" when the provider had in
+    #: fact been asked and said NOT_CONFIGURED (Task 24 Phase 3). Never the
+    #: *answered* set: what a success credited is Task 13's coverage record.
+    capabilities: frozenset[ProviderCapability] = frozenset()
     source_family: str = Field(min_length=1, max_length=64)
     locality: ProviderLocality
     cost_class: CallCostClass
@@ -582,6 +589,16 @@ class ProviderAttempt(FrozenTiReconModel):
     #: Whether it produced any evidence at all. Never "was it benign".
     produced_evidence: bool = False
     recorded_at: UtcDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def _validate_capabilities(self) -> ProviderAttempt:
+        """An empty bundle is the primary alone; a bundle always contains it."""
+        if not self.capabilities:
+            object.__setattr__(self, "capabilities", frozenset({self.capability}))
+        elif self.capability not in self.capabilities:
+            msg = "an attempt's bundle must include its primary capability"
+            raise ValueError(msg)
+        return self
 
 
 class AdaptiveEnrichmentResult(FrozenTiReconModel):

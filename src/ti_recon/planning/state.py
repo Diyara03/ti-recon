@@ -413,6 +413,7 @@ class PlanningState:
             sequence=self.sequence,
             provider_id=call.provider_id,
             capability=call.capability,
+            capabilities=call.capabilities,
             source_family=call.source_family,
             locality=call.locality,
             cost_class=call.cost_class,
