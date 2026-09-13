@@ -98,6 +98,10 @@ class PivotSkipReason(StrEnum):
     ALREADY_ENRICHED = "already_enriched"
     NON_GLOBAL_IP = "non_global_ip"
     SENSITIVE_URL = "sensitive_url"
+    #: The provider-returned value does not survive TI Recon's own normalizer
+    #: unchanged, so it is not an observable this engine would accept from an
+    #: analyst and is never sent to a third party (Task 24 Phase 3).
+    UNNORMALIZABLE_TARGET = "unnormalizable_target"
     UNLINKED_OBJECT = "unlinked_object"
     UNSUPPORTED_TARGET = "unsupported_target"
     HOP_LIMIT = "hop_limit"

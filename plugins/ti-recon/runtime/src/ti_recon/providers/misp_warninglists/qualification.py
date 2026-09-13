@@ -93,6 +93,15 @@ def _match_signals(evidence: Evidence, context: QualificationContext) -> list[Co
         matcher = entry.get("matcher")
         if isinstance(matcher, str) and matcher:
             detail["matcher"] = matcher[:200]
+        # The list's name and the entry that matched make the signal
+        # reportable and checkable: "Reserved IPv4 (rfc5735), matched
+        # 192.0.2.0/24" (Task 24 Phase 3). Bounded like every detail value.
+        name = entry.get("list_name")
+        if isinstance(name, str) and name:
+            detail["list_name"] = name[:200]
+        matched = entry.get("matched_entry")
+        if isinstance(matched, str) and matched:
+            detail["matched_entry"] = matched[:200]
 
         found.append(
             ContextSignal(

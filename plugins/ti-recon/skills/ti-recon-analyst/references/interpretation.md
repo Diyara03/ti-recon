@@ -92,6 +92,21 @@ false-positive case; the case is false-positive only if the final assessment
 says so. `does_not_establish` records what the explanation explicitly does not
 prove — worth quoting when a user over-reads it.
 
+**`context`** — what a source *lists* the object as, in the source's own
+terms: "Matched misp list: Reserved IPv4 (rfc5735) — reserved or special-use
+address space; matched 192.0.2.0/24". Context only. It is never a verdict,
+never evidence of safety, and never a reason to discount evidence on its own;
+if it explains a detection, that appears under `alternative_explanations`.
+An item marked host-component-only describes a URL's host and says nothing
+about the URL.
+
+**`issues`** — what a layer could not do during this run: a correlation
+issue means something a source returned was deliberately not graphed (a
+related URL too long to hold, two samples kept apart because their stronger
+digests disagree), so the related observables may be incomplete. Say so when
+the user asks about related infrastructure. Never a finding about the
+observable.
+
 ## Coverage vocabulary
 
 Each check carries a completion *and* a yield, and they answer different things.

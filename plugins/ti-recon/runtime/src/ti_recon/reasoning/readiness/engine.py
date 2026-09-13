@@ -143,7 +143,9 @@ class AssessmentReadinessEngine:
         skipped = tuple(
             candidate for decision in planning.decisions for candidate in decision.skipped
         )
-        attempted = frozenset(attempt.capability for attempt in planning.attempts)
+        attempted = frozenset(
+            carried for attempt in planning.attempts for carried in attempt.capabilities
+        )
 
         requirements = requirements_from_goals(
             goals,

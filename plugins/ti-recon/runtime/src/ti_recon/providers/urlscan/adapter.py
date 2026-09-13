@@ -139,6 +139,20 @@ __all__ = [
 
 _logger = logging.getLogger(__name__)
 
+#: Failure categories that degrade one scan or artifact to "unretrievable"
+#: rather than failing the lookup: the document is gone, private to another
+#: team, or refused for this plan. Everything else -- rate limiting, quota,
+#: authentication, transport failures -- is about the provider, not the
+#: document, and is raised so Task 6 can retry, cool down or stop.
+_DEGRADABLE_CATEGORIES: Final[frozenset[ProviderErrorCategory]] = frozenset(
+    {
+        ProviderErrorCategory.NOT_FOUND,
+        ProviderErrorCategory.PERMISSION_ERROR,
+        ProviderErrorCategory.PLAN_LIMITED,
+        ProviderErrorCategory.INVALID_REQUEST,
+    }
+)
+
 #: Reported when urlscan indexes nothing that could answer for an observable —
 #: an MD5, say, where only SHA-256 response bodies are indexed. A coverage gap,
 #: never an absence of findings.
@@ -577,6 +591,13 @@ class UrlscanAdapter(ProviderAdapter):
         try:
             result = await client.get_result(scan_id=candidate.scan_id, credential=credential)
         except ProviderError as error:
+            if error.category not in _DEGRADABLE_CATEGORIES:
+                # A throttle, a spent quota, a rejected credential or an
+                # outage is not "this one scan is missing": swallowing it
+                # would keep spending requests on the remaining candidates,
+                # record no cooldown, and report an auth failure as partial
+                # coverage. Task 6 owns those decisions, so it gets the error.
+                raise
             _logger.info(
                 "urlscan scan result unavailable",
                 extra={
@@ -774,6 +795,8 @@ class UrlscanAdapter(ProviderAdapter):
         try:
             artifact = await awaitable
         except ProviderError as error:
+            if error.category not in _DEGRADABLE_CATEGORIES:
+                raise
             _logger.info(
                 "urlscan artifact unavailable",
                 extra={
