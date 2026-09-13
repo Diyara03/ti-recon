@@ -147,12 +147,36 @@ def render_text(report: AnalystInvestigationReport) -> str:
     lines += _coverage(report)
     lines += _related(report)
     lines += _sources(report)
+    lines += _issues(report)
     lines += _workflow(report)
     return "\n".join(lines) + "\n"
 
 
 def _heading(title: str) -> list[str]:
     return ["", title]
+
+
+def _issues(report: AnalystInvestigationReport) -> list[str]:
+    """What a layer could not do cleanly, when there is anything to say.
+
+    Rendered only when an issue exists, under a gloss that says what the
+    section is: a correlation issue means something a source returned was
+    deliberately not graphed, so the related observables may be incomplete;
+    it is never a finding about the observable.
+    """
+    if not report.issues.items:
+        return []
+    lines = _heading(
+        "Issues (recorded by the engine about this run; not findings about the observable)"
+    )
+    for item in report.issues.items:
+        source = f" [{safe_text(item.provider_id, limit=64)}]" if item.provider_id else ""
+        lines.append(
+            f"  - {safe_text(item.layer, limit=32)}/{safe_text(item.issue_type, limit=64)}"
+            f"{source}: {safe_text(item.detail, limit=160)}"
+        )
+    lines += _omitted(report.issues)
+    return lines
 
 
 def _label(value: str) -> str:

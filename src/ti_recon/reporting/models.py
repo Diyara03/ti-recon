@@ -648,9 +648,22 @@ class SourceCheckItem(FrozenTiReconModel):
 class IssueItem(FrozenTiReconModel):
     """Something a layer recorded rather than swallowed."""
 
-    layer: str = Field(min_length=1, max_length=32)
+    layer: str = Field(
+        min_length=1,
+        max_length=32,
+        description=(
+            "Which layer recorded it: workflow, fusion or correlation. A "
+            "correlation issue means a related object or relationship a source "
+            "returned was deliberately not graphed -- refused for a bound, or "
+            "kept as two samples because their stronger digests disagree -- so "
+            "related_observables may be incomplete. Never a finding about the "
+            "observable."
+        ),
+    )
     issue_type: str = Field(min_length=1, max_length=64)
     detail: str = Field(default="", max_length=300)
+    #: The source whose data the issue concerns, when a layer recorded one.
+    provider_id: str = Field(default="", max_length=64)
 
 
 class InvestigationSummary(FrozenTiReconModel):

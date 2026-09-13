@@ -22,7 +22,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterable, Sequence
 
-from ti_recon.correlation.models import GraphEdge, GraphNode, RelationBasis
+from ti_recon.correlation.models import CorrelationIssueType, GraphEdge, GraphNode, RelationBasis
 from ti_recon.investigation.results import InvestigationResult
 from ti_recon.reasoning.claims.models import NormalizedClaim
 from ti_recon.reasoning.false_positive.models import LinkRelation, ReasoningRole
@@ -525,6 +525,20 @@ def _source_checks(result: InvestigationResult) -> list[SourceCheckItem]:
     return sorted(found, key=lambda item: (item.provider_id, item.capability))
 
 
+#: The correlation issues an analyst needs to see, because each one means the
+#: related-observable picture is deliberately incomplete or split. The other
+#: kinds -- a dangling reference, an unknown relationship type, an endpoint
+#: mismatch -- are diagnostics about a provider's payload and stay in the
+#: internal result.
+MATERIAL_CORRELATION_ISSUES: frozenset[CorrelationIssueType] = frozenset(
+    {
+        CorrelationIssueType.INVALID_RELATED_OBJECT,
+        CorrelationIssueType.FILE_HASH_CONFLICT,
+        CorrelationIssueType.GRAPH_LIMIT_REACHED,
+    }
+)
+
+
 def _issues(result: InvestigationResult) -> list[IssueItem]:
     """What each layer recorded rather than swallowed."""
     found = [
@@ -535,4 +549,25 @@ def _issues(result: InvestigationResult) -> list[IssueItem]:
         IssueItem(layer="fusion", issue_type=item.issue_type.value, detail=item.detail)
         for item in result.assessment.issues
     ]
+    # Correlation issues that change what the analyst sees: a related object
+    # refused for a bound, two samples kept apart, a ceiling that dropped the
+    # rest. Diagnostics about a provider's payload shape stay internal.
+    # Selection, not weighing: which kinds are material is a fixed list, and
+    # repeated refusals of the same kind from one source are one line.
+    seen: set[tuple[str, str, str]] = set()
+    for issue in result.correlation.correlation_issues:
+        if issue.issue_type not in MATERIAL_CORRELATION_ISSUES:
+            continue
+        key = (issue.issue_type.value, issue.provider_id or "", issue.detail)
+        if key in seen:
+            continue
+        seen.add(key)
+        found.append(
+            IssueItem(
+                layer="correlation",
+                issue_type=issue.issue_type.value,
+                detail=issue.detail,
+                provider_id=issue.provider_id or "",
+            )
+        )
     return sorted(found, key=lambda item: (item.layer, item.issue_type, item.detail))
