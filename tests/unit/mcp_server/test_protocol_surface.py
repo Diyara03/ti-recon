@@ -127,6 +127,7 @@ async def test_the_input_schema_carries_the_task_20_defaults() -> None:
     assert properties["depth"]["default"] == "standard"
     assert properties["pivot_mode"]["default"] == "recommend"
     assert properties["allow_remote_pivot_lookup"]["default"] is False
+    assert properties["objective"]["default"] == "triage"
     assert "observable" in tools["investigate_observable"].input_schema["required"]
 
 

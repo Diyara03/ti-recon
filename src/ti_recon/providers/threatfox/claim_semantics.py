@@ -22,6 +22,7 @@ from ti_recon.reasoning.claims.models import ClaimSemantic, NormalizedClaim, cla
 from ti_recon.reasoning.claims.translation import (
     ClaimTranslationContext,
     directional_evidence,
+    highlights_from,
     text_attribute,
 )
 
@@ -41,6 +42,27 @@ THREAT_TYPE_SEMANTICS: Final[dict[str, ClaimSemantic]] = {
 #: The directional claim types this provider emits.
 _IOC_CLAIM: Final[str] = "threatfox_ioc"
 _HASH_CLAIM: Final[str] = "threatfox_hash_association"
+
+#: What the report may quote about each claim, from named attributes only.
+#:
+#: For an address the record that matched is an ``ip:port`` IOC, and the
+#: report has to be able to say so: which IOC matched, that it matched the
+#: *host* component, which port, what ThreatFox called the threat and the
+#: family. ``confidence_level`` is deliberately absent: the contributor's own
+#: number stays provider data and reaches no claim in any form (invariant
+#: 94b), and a regression asserts the serialized claim never carries it.
+HIGHLIGHT_ATTRIBUTES: Final[dict[str, tuple[str, ...]]] = {
+    _IOC_CLAIM: (
+        "ioc",
+        "ioc_type",
+        "matched_component",
+        "port",
+        "threat_type",
+        "malware_printable",
+        "is_compromised",
+    ),
+    _HASH_CLAIM: ("malware_printable", "threat_type", "matched_records"),
+}
 
 
 def translate(
@@ -68,6 +90,9 @@ def translate(
                 semantic=semantic,
                 subject_key=context.subject_key_for(evidence.subject_object_id),
                 source_partial=context.source_partial,
+                highlights=highlights_from(
+                    evidence.attributes, HIGHLIGHT_ATTRIBUTES.get(evidence.claim_type, ())
+                ),
             )
         )
     return tuple(claims)

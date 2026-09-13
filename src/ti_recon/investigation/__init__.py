@@ -54,6 +54,7 @@ from ti_recon.investigation.metrics import (
 from ti_recon.investigation.models import (
     INVESTIGATION_WORKFLOW_VERSION,
     ContinuationDirective,
+    InvestigationObjective,
     InvestigationRequest,
     InvestigationRound,
     RoundTrigger,
@@ -72,6 +73,7 @@ __all__ = [
     "InvestigationError",
     "InvestigationMetric",
     "InvestigationMetricsSink",
+    "InvestigationObjective",
     "InvestigationOrchestrator",
     "InvestigationRequest",
     "InvestigationResult",

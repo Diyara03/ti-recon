@@ -49,6 +49,7 @@ __all__ = [
     "NO_DATA_QUERY_STATUSES",
     "QUERY_STATUS_CATEGORIES",
     "SUCCESS_QUERY_STATUSES",
+    "UNREADABLE_QUERY_STATUS",
     "category_for_query_status",
     "category_for_status",
     "credential_status_for",
@@ -69,7 +70,12 @@ __all__ = [
 ABUSE_CH_STATUS_CATEGORIES: Final[dict[int, ProviderErrorCategory]] = {
     401: ProviderErrorCategory.AUTHENTICATION_ERROR,
     403: ProviderErrorCategory.PERMISSION_ERROR,
-    404: ProviderErrorCategory.NOT_FOUND,
+    # These APIs report an absent record only in the body
+    # (``query_status``); an HTTP 404 is a retired path or a misrouted host,
+    # never "IOC unknown". Mapping it to NOT_FOUND turned an endpoint failure
+    # into a checked-with-no-data answer that the planner counted as coverage
+    # (Task 24 Phase 3).
+    404: ProviderErrorCategory.SCHEMA_ERROR,
     405: ProviderErrorCategory.INVALID_REQUEST,
     400: ProviderErrorCategory.INVALID_REQUEST,
     413: ProviderErrorCategory.INVALID_REQUEST,
@@ -210,20 +216,33 @@ def category_for_status(status_code: int) -> ProviderErrorCategory:
     return ProviderErrorCategory.UNKNOWN_ERROR
 
 
-def query_status_of(payload: Any) -> str | None:
-    """The body's ``query_status``, shape-checked, or ``None``.
+#: The token substituted for a ``query_status`` that is present but not an
+#: enum-shaped string. Distinct from an *absent* field, which some responses
+#: legitimately omit and which means success: a field that is there and
+#: unreadable -- ``"Unknown Auth-Key"``, a number, an empty string -- is a
+#: response this integration cannot interpret, and reading it as success
+#: turned refusals into cached NO_DATA answers (Task 24 Phase 3). Enum-shaped
+#: itself, so everything downstream that expects a validated token still does.
+UNREADABLE_QUERY_STATUS: Final[str] = "unreadable_query_status"
 
-    Validated before it is used as an error code or a lookup key: it is provider
-    text that ends up in an exception message and in metrics, and an
-    enum-shaped token is the only form worth trusting.
+
+def query_status_of(payload: Any) -> str | None:
+    """The body's ``query_status``, shape-checked.
+
+    ``None`` only when the field is absent (or the body is not an object).
+    A present value that is not an enum-shaped token becomes
+    :data:`UNREADABLE_QUERY_STATUS`, which maps to a schema error: provider
+    text ends up in exception messages and metrics, so an enum-shaped token is
+    the only form worth trusting, and a value that is there but unusable is a
+    shape change rather than a clean answer.
     """
-    if not isinstance(payload, dict):
+    if not isinstance(payload, dict) or "query_status" not in payload:
         return None
     raw = payload.get("query_status")
     if not isinstance(raw, str):
-        return None
+        return UNREADABLE_QUERY_STATUS
     candidate = raw.strip().lower()
-    return candidate if _QUERY_STATUS_PATTERN.fullmatch(candidate) else None
+    return candidate if _QUERY_STATUS_PATTERN.fullmatch(candidate) else UNREADABLE_QUERY_STATUS
 
 
 def category_for_query_status(status: str) -> ProviderErrorCategory | None:
@@ -236,6 +255,8 @@ def category_for_query_status(status: str) -> ProviderErrorCategory | None:
         return None
     if status in NO_DATA_QUERY_STATUSES:
         return ProviderErrorCategory.NOT_FOUND
+    if status == UNREADABLE_QUERY_STATUS:
+        return ProviderErrorCategory.SCHEMA_ERROR
     return QUERY_STATUS_CATEGORIES.get(status, ProviderErrorCategory.UNKNOWN_ERROR)
 
 

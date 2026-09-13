@@ -25,6 +25,7 @@ from ti_recon import __version__
 from ti_recon.application.models import ObservableInputType
 from ti_recon.correlation.policy import PivotMode
 from ti_recon.enums import InvestigationDepth
+from ti_recon.investigation.models import InvestigationObjective
 
 __all__ = ["OUTPUT_FORMATS", "SCHEMA_TARGETS", "build_parser"]
 
@@ -119,6 +120,17 @@ def _add_investigate(commands: argparse._SubParsersAction[argparse.ArgumentParse
             "used only with --pivot enrich. Allows eligible related observables "
             "to be queried through configured external providers, which discloses "
             "them to third parties and consumes provider quota. Off by default."
+        ),
+    )
+    command.add_argument(
+        "--objective",
+        choices=[item.value for item in InvestigationObjective],
+        default=InvestigationObjective.TRIAGE.value,
+        help=(
+            "what to stop on (default: %(default)s). corroborate spends at most one "
+            "extra round after coverage is adequate, seeking an adverse search from a "
+            "source family independent of the assessment's basis, if one is eligible "
+            "and the budget permits"
         ),
     )
     command.add_argument(

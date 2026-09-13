@@ -416,6 +416,14 @@ a screenshot.
 
 ## 10. Quota, rate limits and errors
 
+Only a missing, refused or plan-limited scan degrades the lookup to `PARTIAL`
+(`URLSCAN_SCAN_UNRETRIEVABLE`). A throttle, a spent quota, a rejected
+credential or a transport failure during per-scan or artifact retrieval is
+raised, so Task 6 can retry, cool down or stop (Task 24 Phase 3); swallowing
+it kept spending requests on the remaining candidates and reported an
+authentication failure as partial coverage.
+
+
 `/user/quotas/` reports an allowance per action. Only the **read** actions gate
 execution:
 

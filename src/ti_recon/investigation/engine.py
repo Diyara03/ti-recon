@@ -61,7 +61,11 @@ from ti_recon.enums import ProviderCapability
 from ti_recon.execution.clock import Clock, SystemClock
 from ti_recon.execution.models import ExecutionContext
 from ti_recon.investigation.analysis import AnalysisPass, ReasoningEngines, run_analysis_pass
-from ti_recon.investigation.continuation import directives_for, wants_continuation
+from ti_recon.investigation.continuation import (
+    corroboration_directives,
+    directives_for,
+    wants_continuation,
+)
 from ti_recon.investigation.merge import merge_enrichment_results
 from ti_recon.investigation.metrics import (
     InvestigationMetric,
@@ -72,6 +76,7 @@ from ti_recon.investigation.models import (
     INVESTIGATION_WORKFLOW_VERSION,
     ContinuationDirective,
     ContinuationNeed,
+    InvestigationObjective,
     InvestigationRequest,
     InvestigationRound,
     RoundTrigger,
@@ -131,6 +136,8 @@ class _RunState:
     issues: list[WorkflowIssue] = field(default_factory=list)
     correlation: CorrelatedEnrichmentResult | None = None
     attempted_capabilities: set[str] = field(default_factory=set)
+    #: Whether the caller's corroboration round has been spent. One per run.
+    corroborated: bool = False
 
     #: The capabilities Task 13 admitted for this root at this depth, frozen
     #: from the first round.
@@ -201,6 +208,32 @@ class InvestigationOrchestrator:
         )
         stop_reason = self._terminal_reason(analysis)
 
+        while True:
+            analysis, stop_reason = await self._continue_until_terminal(
+                request, context, policy, state, analysis, stop_reason
+            )
+            if not self._wants_corroboration(request, state, stop_reason):
+                break
+            # The caller's objective, not readiness: adequate coverage is the
+            # default stopping point, and this asks for one bounded round past
+            # it. Spent exactly once, whatever it yields.
+            state.corroborated = True
+            analysis, stop_reason = await self._corroborate(
+                request, context, policy, state, analysis, stop_reason
+            )
+
+        return self._compose(request, state, analysis, policy, stop_reason)
+
+    async def _continue_until_terminal(
+        self,
+        request: InvestigationRequest,
+        context: ExecutionContext,
+        policy: PivotPolicy,
+        state: _RunState,
+        analysis: AnalysisPass,
+        stop_reason: WorkflowStopReason | None,
+    ) -> tuple[AnalysisPass, WorkflowStopReason]:
+        """The readiness-driven continuation loop, unchanged in substance."""
         while stop_reason is None:
             if len(state.rounds) >= _MAX_ROUNDS:  # pragma: no cover - defensive
                 msg = f"investigation exceeded {_MAX_ROUNDS} rounds without terminating"
@@ -248,8 +281,83 @@ class InvestigationOrchestrator:
                 stop_reason = self._no_progress_reason(state)
                 break
             stop_reason = self._terminal_reason(analysis)
+        return analysis, stop_reason
 
-        return self._compose(request, state, analysis, policy, stop_reason)
+    @staticmethod
+    def _wants_corroboration(
+        request: InvestigationRequest, state: _RunState, stop_reason: WorkflowStopReason
+    ) -> bool:
+        """Only an explicit objective, only once, and only past adequate readiness.
+
+        A run that stopped for any other reason -- blocked, exhausted, out of
+        budget, nothing actionable -- has not reached the point the objective
+        speaks to, and asking for a second source there would be asking for a
+        first one.
+        """
+        return (
+            request.objective is InvestigationObjective.CORROBORATE
+            and not state.corroborated
+            and stop_reason is WorkflowStopReason.READINESS_TERMINAL
+        )
+
+    async def _corroborate(
+        self,
+        request: InvestigationRequest,
+        context: ExecutionContext,
+        policy: PivotPolicy,
+        state: _RunState,
+        analysis: AnalysisPass,
+        stop_reason: WorkflowStopReason,
+    ) -> tuple[AnalysisPass, WorkflowStopReason | None]:
+        """One bounded round seeking an independent adverse search.
+
+        Everything about *what may be asked* is the planner's: the directives
+        raise the family target of the admitted adverse-search capabilities by
+        one and bar the families the verdict already rests on, and Task 13
+        still ranks, refuses an attempted call, honours the blocked set and has
+        to afford the call. Whether the answer really was independent is Task
+        17's to settle from the returned provenance; the round's evidence is
+        recomputed through every stage like any other, and if readiness then
+        asks for more the ordinary continuation loop resumes. If nothing could
+        be asked, the run keeps its terminal reason and says so in an issue --
+        never a lower confidence, never a different verdict.
+        """
+        directives = corroboration_directives(analysis.fusion, admissible=state.admissible)
+        if not directives:
+            state.issues.append(
+                WorkflowIssue(
+                    issue_type=WorkflowIssueType.CORROBORATION_NOT_OBTAINED,
+                    detail="no adverse-search capability is admissible at the requested depth",
+                    round_index=len(state.rounds),
+                )
+            )
+            return analysis, stop_reason
+        analysis = await self._collect_and_analyse(
+            request,
+            context,
+            policy,
+            state,
+            trigger=RoundTrigger.CORROBORATION,
+            directives=directives,
+        )
+        # Obtained means a source *answered* -- with data or with none -- not
+        # that the planner recorded an attempt. An unconfigured, blocked or
+        # errored candidate moves the attempt count and corroborates nothing,
+        # and a round that reached only such candidates must say so.
+        answered = any(item.coverage_gained for item in state.enrichments[-1].attempts)
+        if not answered:
+            state.issues.append(
+                WorkflowIssue(
+                    issue_type=WorkflowIssueType.CORROBORATION_NOT_OBTAINED,
+                    detail=(
+                        "no eligible source independent of the assessment's basis "
+                        "answered within the remaining allowance"
+                    ),
+                    round_index=len(state.rounds) - 1,
+                )
+            )
+            return analysis, stop_reason
+        return analysis, self._terminal_reason(analysis)
 
     # ------------------------------------------------------------------ #
     # One round
@@ -483,6 +591,7 @@ class InvestigationOrchestrator:
             requested_depth=request.depth,
             pivot_mode=policy.mode.value,
             allow_remote_pivot_lookup=policy.allow_remote_pivot_lookup,
+            objective=request.objective.value,
             enrichment=merged,
             correlation=state.correlation,
             qualification=analysis.qualification,

@@ -56,6 +56,7 @@ from ti_recon.credentials import (
 )
 from ti_recon.enums import InvestigationDepth
 from ti_recon.investigation.engine import InvestigationError
+from ti_recon.investigation.models import InvestigationObjective
 from ti_recon.planning.catalog import build_default_planning_registry
 from ti_recon.providers.adapter import ProviderAdapter
 from ti_recon.reporting.models import AnalystInvestigationReport
@@ -335,6 +336,7 @@ def _request_from(args: argparse.Namespace) -> AnalystInvestigationRequest:
         depth=InvestigationDepth(args.depth),
         pivot_mode=PivotMode(args.pivot_mode),
         allow_remote_pivot_lookup=args.allow_remote_pivot_lookup,
+        objective=InvestigationObjective(args.objective),
     )
 
 

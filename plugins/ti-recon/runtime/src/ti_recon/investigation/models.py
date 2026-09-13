@@ -39,6 +39,7 @@ __all__ = [
     "RESULT_ID_LENGTH",
     "ContinuationDirective",
     "ContinuationNeed",
+    "InvestigationObjective",
     "InvestigationRequest",
     "InvestigationRound",
     "RoundTrigger",
@@ -60,6 +61,24 @@ INVESTIGATION_WORKFLOW_VERSION: Final[str] = "1.0.0"
 RESULT_ID_LENGTH: Final[int] = 32
 
 
+class InvestigationObjective(StrEnum):
+    """What the caller wants the collection to stop on.
+
+    The structured form of an analyst's intent, so nothing below the interface
+    has to read prose. ``TRIAGE`` is the default and is what every existing
+    caller gets: collection stops when readiness says the coverage is adequate
+    for triage. ``CORROBORATE`` asks for one bounded extra round *after* that
+    point -- an adverse search from a source family independent of the ones the
+    assessment rests on, if one is eligible and the budget permits. It adds no
+    capability, raises no depth, names no provider and never repeats a call;
+    it changes only whether an adequate result is also asked to be corroborated
+    before the run stops. It is never inferred from a verdict.
+    """
+
+    TRIAGE = "triage"
+    CORROBORATE = "corroborate"
+
+
 class RoundTrigger(StrEnum):
     """Why a round of evidence collection happened."""
 
@@ -67,6 +86,9 @@ class RoundTrigger(StrEnum):
     INITIAL = "initial"
     #: Task 18 reported a material gap with an applicable path remaining.
     READINESS_CONTINUATION = "readiness_continuation"
+    #: The caller's objective asked for an independent second source after
+    #: readiness was already adequate. At most one per investigation.
+    CORROBORATION = "corroboration"
 
 
 class WorkflowStopReason(StrEnum):
@@ -102,6 +124,9 @@ class WorkflowIssueType(StrEnum):
     UNACTIONABLE_INFORMATION_NEED = "unactionable_information_need"
     #: A continuation round produced no new execution or coverage.
     CONTINUATION_WITHOUT_PROGRESS = "continuation_without_progress"
+    #: The caller asked for corroboration and no independent eligible source
+    #: could be asked: nothing admissible, nothing unattempted, or no budget.
+    CORROBORATION_NOT_OBTAINED = "corroboration_not_obtained"
 
 
 class WorkflowIssue(FrozenTiReconModel):
@@ -128,6 +153,10 @@ class InvestigationRequest(FrozenTiReconModel):
     root: IntelObject
     depth: InvestigationDepth = InvestigationDepth.STANDARD
     requested_capabilities: frozenset[ProviderCapability] = frozenset()
+    #: What to stop on. ``TRIAGE`` stops when readiness is adequate;
+    #: ``CORROBORATE`` spends at most one more round on an independent adverse
+    #: search after that, if one is eligible and affordable.
+    objective: InvestigationObjective = InvestigationObjective.TRIAGE
     #: Passed to Task 13 unchanged. ``max_remote_provider_runs`` there is
     #: reduction-only, which is what makes an investigation-wide budget safe.
     max_remote_provider_runs: int | None = Field(default=None, ge=0)

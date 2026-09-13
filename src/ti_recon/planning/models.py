@@ -202,6 +202,15 @@ class StopReason(StrEnum):
     REMOTE_LOOKUPS_DISABLED = "remote_lookups_disabled"
 
 
+#: Depth ordering for the per-capability floor; mirrors ``goals.DEPTH_ORDER``
+#: without importing it, because ``goals`` imports this module.
+_DEPTH_RANK: dict[InvestigationDepth, int] = {
+    InvestigationDepth.QUICK: 0,
+    InvestigationDepth.STANDARD: 1,
+    InvestigationDepth.DEEP: 2,
+}
+
+
 class ProviderPlanningProfile(FrozenTiReconModel):
     """What the planner needs to know about a provider, beyond its descriptor.
 
@@ -235,6 +244,26 @@ class ProviderPlanningProfile(FrozenTiReconModel):
     #: budget without a decision — and, for retrieved page content, a way around
     #: the rule that forensics needs an explicit request.
     elevated_cost_capabilities: frozenset[ProviderCapability] = frozenset()
+
+    #: Capabilities this provider serves only from a deeper investigation than
+    #: :attr:`minimum_depth`, declared per capability (Task 24 Phase 3).
+    #:
+    #: A provider can answer reputation at QUICK and detonation data only at
+    #: DEEP. Without this the planner selected the shallow-depth call, the
+    #: adapter refused it as ``NOT_SUPPORTED``, and the refusal was charged as
+    #: a remote run -- a budget unit and a decision spent on an answer the
+    #: catalogue could have declined for free. Declared by the provider, like
+    #: every other planning fact, and enforced before cost and budget.
+    capability_minimum_depth: dict[ProviderCapability, InvestigationDepth] = Field(
+        default_factory=dict
+    )
+
+    def minimum_depth_for(self, capability: ProviderCapability) -> InvestigationDepth:
+        """The shallowest depth at which this provider serves ``capability``."""
+        declared = self.capability_minimum_depth.get(capability)
+        if declared is None:
+            return self.minimum_depth
+        return max(declared, self.minimum_depth, key=lambda item: _DEPTH_RANK[item])
 
     #: ``True`` when one read returns everything this provider knows about an
     #: observable, whatever capabilities the request named.
@@ -534,6 +563,13 @@ class ProviderAttempt(FrozenTiReconModel):
     sequence: int = Field(ge=0)
     provider_id: str = Field(min_length=1, max_length=64)
     capability: ProviderCapability
+    #: Every capability the request *carried* -- the bundle, primary included.
+    #: One attempt, one call, several questions: a failure answered none of
+    #: them and a refusal refused all of them, and a ledger keyed on the
+    #: primary alone typed the others "not attempted" when the provider had in
+    #: fact been asked and said NOT_CONFIGURED (Task 24 Phase 3). Never the
+    #: *answered* set: what a success credited is Task 13's coverage record.
+    capabilities: frozenset[ProviderCapability] = frozenset()
     source_family: str = Field(min_length=1, max_length=64)
     locality: ProviderLocality
     cost_class: CallCostClass
@@ -553,6 +589,16 @@ class ProviderAttempt(FrozenTiReconModel):
     #: Whether it produced any evidence at all. Never "was it benign".
     produced_evidence: bool = False
     recorded_at: UtcDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def _validate_capabilities(self) -> ProviderAttempt:
+        """An empty bundle is the primary alone; a bundle always contains it."""
+        if not self.capabilities:
+            object.__setattr__(self, "capabilities", frozenset({self.capability}))
+        elif self.capability not in self.capabilities:
+            msg = "an attempt's bundle must include its primary capability"
+            raise ValueError(msg)
+        return self
 
 
 class AdaptiveEnrichmentResult(FrozenTiReconModel):

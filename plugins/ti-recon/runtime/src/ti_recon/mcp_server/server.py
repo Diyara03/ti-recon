@@ -38,6 +38,7 @@ from ti_recon import __version__
 from ti_recon.application.models import ObservableInputType
 from ti_recon.correlation.policy import PivotMode
 from ti_recon.enums import InvestigationDepth
+from ti_recon.investigation.models import InvestigationObjective
 from ti_recon.mcp_server import tools
 from ti_recon.mcp_server.models import ProviderStatusReport
 from ti_recon.mcp_server.runtime import McpRuntime
@@ -407,6 +408,22 @@ def _register_tools(
                 )
             ),
         ] = False,
+        objective: Annotated[
+            InvestigationObjective,
+            Field(
+                description=(
+                    "What the collection stops on. triage (default) stops when "
+                    "coverage is adequate for triage. corroborate spends at most "
+                    "one extra round after that, seeking an adverse search from a "
+                    "source family independent of the assessment's basis, if one "
+                    "is eligible and the budget permits -- use it only when the "
+                    "user asks to confirm, corroborate or check with another "
+                    "source. It adds no depth, names no provider and never "
+                    "guarantees a second source exists; a verdict alone is never "
+                    "a reason to choose it."
+                )
+            ),
+        ] = InvestigationObjective.TRIAGE,
     ) -> AnalystInvestigationReport:
         """Passive threat-intelligence investigation of one observable.
 
@@ -440,6 +457,7 @@ def _register_tools(
             depth=depth,
             pivot_mode=pivot_mode,
             allow_remote_pivot_lookup=allow_remote_pivot_lookup,
+            objective=objective,
         )
 
     if local_file_tool:

@@ -100,6 +100,10 @@ class _BaseList(FrozenTiReconModel):
     """What every compiled list shares."""
 
     slug: str = Field(min_length=1, max_length=200)
+    #: The upstream list's human name, bounded, so a match can be reported as
+    #: "Reserved IPv4 (rfc5735)" rather than by slug alone (Task 24 Phase 3).
+    #: The description is deliberately not carried: it is upstream prose.
+    name: str = Field(default="", max_length=200)
     matcher: str = Field(min_length=1, max_length=32)
     attribute_types: frozenset[str] | None = None
     entry_count: int = Field(default=0, ge=0)
@@ -280,6 +284,7 @@ class _ListMeta(TypedDict):
     """The fields every compiled list shares, kept typed rather than as a dict."""
 
     slug: str
+    name: str
     matcher: str
     attribute_types: frozenset[str] | None
     entry_count: int
@@ -298,6 +303,7 @@ def compile_list(slug: str, raw: RawWarningList) -> tuple[CompiledList | None, L
     )
     common: _ListMeta = {
         "slug": slug,
+        "name": raw.name.strip()[:200],
         "matcher": raw.type,
         "attribute_types": attribute_types,
         "entry_count": len(raw.list),

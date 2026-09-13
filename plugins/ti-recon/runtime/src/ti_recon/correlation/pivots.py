@@ -44,6 +44,8 @@ from ti_recon.correlation.relationships import definition_for
 from ti_recon.enums import IntelObjectType, RelationshipType
 from ti_recon.models.base import FrozenTiReconModel
 from ti_recon.models.intel_object import IntelObject
+from ti_recon.normalization import normalize_observable
+from ti_recon.normalization.errors import NormalizationError
 from ti_recon.security import SENSITIVE_KEY_PATTERN
 
 __all__ = [
@@ -124,6 +126,27 @@ class PivotCandidate(FrozenTiReconModel):
             self.hop,
             self.target_node_key,
         )
+
+
+def is_canonical_observable(intel_object: IntelObject) -> bool:
+    """Whether a provider-returned target is exactly what the normalizer would make of it.
+
+    Related objects are built by provider normalizers from provider text, and
+    several of them do less than the analyst-facing normalizer does: a domain
+    kept in upper case, a URL with an unsupported scheme, a host carrying a
+    port or an invisible character. Sending such a value to a third party would
+    disclose something TI Recon would have refused from an analyst, and would
+    fragment identity and cache keys. Fail closed: the value must normalize,
+    to the same type, to the same canonical value.
+    """
+    try:
+        normalized = normalize_observable(intel_object.canonical_value).intel_object
+    except (NormalizationError, ValueError):
+        return False
+    return (
+        normalized.object_type is intel_object.object_type
+        and normalized.canonical_value == intel_object.canonical_value
+    )
 
 
 def non_global_address(intel_object: IntelObject) -> bool:
@@ -336,6 +359,8 @@ class PivotPlanner:
         """
         if node.object_type not in PIVOTABLE_TYPES:
             return PivotSkipReason.UNSUPPORTED_TARGET
+        if not is_canonical_observable(node.intel_object):
+            return PivotSkipReason.UNNORMALIZABLE_TARGET
         if non_global_address(node.intel_object):
             return PivotSkipReason.NON_GLOBAL_IP
         if is_sensitive_url(node.intel_object):

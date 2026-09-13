@@ -15,10 +15,11 @@ import httpx
 import pytest
 
 from ti_recon.credentials.enums import CredentialStatus
-from ti_recon.enums import ProviderErrorCategory
+from ti_recon.enums import ProviderErrorCategory, ProviderRunStatus
 from ti_recon.providers.abusech.errors import (
     NO_DATA_QUERY_STATUSES,
     SUCCESS_QUERY_STATUSES,
+    UNREADABLE_QUERY_STATUS,
     category_for_query_status,
     category_for_status,
     credential_status_for,
@@ -50,7 +51,9 @@ LEAKY = "abusech-key-SHOULD-NOT-LEAK-1234567890"
     [
         (401, ProviderErrorCategory.AUTHENTICATION_ERROR),
         (403, ProviderErrorCategory.PERMISSION_ERROR),
-        (404, ProviderErrorCategory.NOT_FOUND),
+        # Absence is reported only in the body; an HTTP 404 is an endpoint
+        # fact, never "IOC unknown", so it is a shape error rather than NO_DATA.
+        (404, ProviderErrorCategory.SCHEMA_ERROR),
         (405, ProviderErrorCategory.INVALID_REQUEST),
         (429, ProviderErrorCategory.RATE_LIMITED),
         (408, ProviderErrorCategory.TRANSIENT_ERROR),
@@ -153,11 +156,12 @@ def test_a_message_is_length_bounded() -> None:
         ({"query_status": "ok"}, "ok"),
         ({"query_status": "OK"}, "ok"),
         ({"query_status": " hash_not_found "}, "hash_not_found"),
-        ({"query_status": ""}, None),
-        ({"query_status": "has spaces"}, None),
-        ({"query_status": "9leading_digit"}, None),
-        ({"query_status": "x" * 200}, None),
-        ({"query_status": 7}, None),
+        ({"query_status": ""}, UNREADABLE_QUERY_STATUS),
+        ({"query_status": "has spaces"}, UNREADABLE_QUERY_STATUS),
+        ({"query_status": "Unknown Auth-Key"}, UNREADABLE_QUERY_STATUS),
+        ({"query_status": "9leading_digit"}, UNREADABLE_QUERY_STATUS),
+        ({"query_status": "x" * 200}, UNREADABLE_QUERY_STATUS),
+        ({"query_status": 7}, UNREADABLE_QUERY_STATUS),
         ({}, None),
         ("not a dict", None),
     ],
@@ -167,6 +171,16 @@ def test_a_body_status_is_validated_before_it_is_trusted(
 ) -> None:
     """It ends up in an exception message and in metrics."""
     assert query_status_of(payload) == expected
+
+
+def test_an_unreadable_status_is_a_schema_error_never_success_or_no_data() -> None:
+    """Present but unusable is a shape change; absent means success (Task 24 Phase 3)."""
+    assert category_for_query_status(UNREADABLE_QUERY_STATUS) is ProviderErrorCategory.SCHEMA_ERROR
+    error = translate_query_status(UNREADABLE_QUERY_STATUS, provider_id="threatfox", operation="x")
+    assert error is not None
+    assert error.category is ProviderErrorCategory.SCHEMA_ERROR
+    assert error.run_status is not ProviderRunStatus.NO_DATA
+    assert translate_query_status(None, provider_id="threatfox", operation="x") is None
 
 
 def test_success_and_absence_are_different_answers() -> None:

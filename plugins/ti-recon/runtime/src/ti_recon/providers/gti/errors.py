@@ -67,7 +67,22 @@ GTI_ERROR_CATEGORIES: Final[dict[str, ProviderErrorCategory]] = {
     "TransientError": ProviderErrorCategory.TRANSIENT_ERROR,
     "DeadlineExceededError": ProviderErrorCategory.TRANSIENT_ERROR,
     "FailedDependencyError": ProviderErrorCategory.TRANSIENT_ERROR,
+    # --- vt-py's own shaping of a response it could not read -----------------
+    # vt-py returns ``APIError("ServerError", <body text>)`` for every status
+    # of 500 and above, and ``APIError("ClientError", <body text>)`` for a 4xx
+    # whose body is not JSON -- an edge proxy's HTML page, say. Neither is a
+    # GTI error code, and before Task 24 Phase 3 both fell to UNKNOWN_ERROR:
+    # an outage was never retried, never put the provider on cooldown, and
+    # the raw body travelled into the error message. A 5xx is transient; a
+    # non-JSON 4xx says nothing this layer can act on beyond "not now".
+    "ServerError": ProviderErrorCategory.TRANSIENT_ERROR,
+    "ClientError": ProviderErrorCategory.PROVIDER_UNAVAILABLE,
 }
+
+#: Codes whose ``message`` is a raw response body rather than a GTI sentence.
+#: The body is never kept: it is an HTML page or a proxy's text at best, and
+#: the generic redactor cannot vouch for it.
+_BODY_TEXT_CODES: Final[frozenset[str]] = frozenset({"ServerError", "ClientError"})
 
 #: The one code whose meaning depends on what was being attempted.
 ENTITLEMENT_SENSITIVE_CODE: Final[str] = "ForbiddenError"
@@ -131,13 +146,24 @@ def translate_gti_error(
 
     if isinstance(error, APIError):
         code = str(error.code)
-        detail = scrub_secret(str(error.message), secret) if include_detail else None
+        if code in _BODY_TEXT_CODES:
+            detail = "provider returned an unreadable error response"
+        else:
+            detail = scrub_secret(str(error.message), secret) if include_detail else None
         category = category_for_gti_code(code, entitlement_sensitive=entitlement_sensitive)
     elif isinstance(error, TimeoutError):
         # On 3.11+ asyncio.TimeoutError is an alias of the builtin, so this one
         # check covers both vt-py's and aiohttp's timeout paths.
         category = ProviderErrorCategory.TRANSIENT_ERROR
         detail = "request timed out"
+    elif isinstance(error, aiohttp.ContentTypeError | ValueError):
+        # A 200 whose body is not the JSON the client asked for (aiohttp
+        # refuses to decode it) or JSON that does not parse: a response shape
+        # this integration cannot read, not an unreachable provider. Checked
+        # before the generic aiohttp branch, because ContentTypeError is a
+        # ClientError and would otherwise read as "unreachable" and be retried.
+        category = ProviderErrorCategory.SCHEMA_ERROR
+        detail = "provider response could not be read"
     elif isinstance(error, aiohttp.ClientError):
         # Connection refused, DNS failure, TLS problem: the provider is not
         # reachable rather than misbehaving.

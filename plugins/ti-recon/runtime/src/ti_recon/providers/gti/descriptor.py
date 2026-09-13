@@ -141,6 +141,10 @@ def build_gti_planning_profile() -> ProviderPlanningProfile:
         planning_capabilities=GTI_CAPABILITIES,
         elevated_cost_capabilities=frozenset({ProviderCapability.FILE_BEHAVIOR}),
         minimum_depth=InvestigationDepth.QUICK,
+        # Detonation data is fetched only at DEEP (the adapter refuses a
+        # FILE_BEHAVIOR-only request below it), so the planner is told the same
+        # thing and never spends a decision or a budget unit on the refusal.
+        capability_minimum_depth={ProviderCapability.FILE_BEHAVIOR: InvestigationDepth.DEEP},
         priority=70,
         # The response is shaped by the request: `relationship_plan` is filtered by
         # exactly the capabilities asked for, and the behaviour summary is fetched

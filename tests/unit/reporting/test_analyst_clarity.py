@@ -74,8 +74,10 @@ async def test_an_unconfigured_source_is_a_coverage_gap_and_not_a_verdict() -> N
     gaps = {item.capability: item for item in report.gaps.items}
     assert "reputation" in gaps
     assert gaps["reputation"].gap_type == "not_configured"
-    # And the gap is distinguishable from a capability nobody even planned for.
-    assert {item.gap_type for item in report.gaps.items} >= {"not_configured", "not_attempted"}
+    # Every capability the unconfigured source's one call carried is typed by
+    # what actually happened -- not_configured -- never "not attempted"
+    # (Task 24 Phase 3).
+    assert {item.gap_type for item in report.gaps.items} == {"not_configured"}
 
 
 @pytest.mark.asyncio

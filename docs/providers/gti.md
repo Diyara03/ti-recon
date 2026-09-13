@@ -285,6 +285,26 @@ malicious, benign and false-positive samples before it is treated as more
 than a starting point. Changing it is a `CLAIM_SEMANTICS_POLICY_VERSION`
 bump.
 
+### Calibration plan (T24-CALIBRATION-01)
+
+The floor is TI Recon's own heuristic and was validated on two samples. It is
+not to be recalibrated from those two; the plan is to run each class below
+through the real adapter, record the sandbox block's shape, and decide the
+floor and the majority rules against the whole table. No policy change until
+the table shows a correctness defect.
+
+| Sample class | What to record | What would move the policy |
+|---|---|---|
+| obvious malware (widely detected, several sandboxes) | evaluated, malicious, stated confidences | a unanimous block failing the confident-majority rule on stated low confidences |
+| commodity malware (loaders, stealers) | as above, plus `malware_classification` spread | classifications disagreeing while categories agree |
+| ransomware | as above | none expected; the live sample is this class |
+| PUA / adware | `suspicious` and `harmless` mix | a `suspicious`-only block reaching strong (must not) |
+| hacktool / admin tool | `malicious` beside `harmless` | a divergent block reaching strong (must not) |
+| signed benign software | `harmless` / `undetected` only | any directional claim at all (must not) |
+| installer / updater | mixed, often `undetected` | a malicious minority reaching strong (must not) |
+| EICAR / test artifact | unanimous malicious, explained by Task 16 | the explanation failing to cover the qualified claim (must not) |
+| conflicting sandbox verdicts | `divergent: true` | anything but `NOT_STRONG` with `sandbox.harmless_verdict_present` |
+
 **GTI exposes no execution-quality field for these verdicts** — no runtime,
 process or connection totals, no "observed execution" as Hybrid Analysis
 carries — so none is modelled and none is invented. The qualification rests
@@ -383,6 +403,19 @@ The direction is deliberately asymmetric:
 No ratio, no threshold, no score. The counters travel in the attributes so the
 fusion layer can weigh them with context this layer does not have.
 
+**Mixed counts stay one weak claim (T24-FINDING-08, reviewed and left).** An
+address that ten engines flagged and forty-seven called harmless produces one
+`AGGREGATED_REPUTATION` claim supporting malicious, weighed `WEAK`, and no
+opposing claim. That is the representation intended, not a conflict hidden:
+"harmless" from most engines means "not in my database", which is also true
+of every threat nobody has caught, so it can never be a benign *assertion*
+(invariant 14); and turning the split into an explicit opposition would make
+fusion's conflict rule read engine counts against each other, which is the
+vote-counting the engine refuses. The counts are quoted in the claim's
+highlights so an analyst sees the split; the verdict rests on nothing an
+aggregate alone can carry. A principled improvement would need a source
+that *asserts* benignness, not a larger harmless count.
+
 ## 10. Relationships
 
 ### Depth profiles
@@ -427,6 +460,21 @@ the depth allows does not get to raise a safety cap. Pagination is never
 followed — one page per relationship — and the running total stops the walk early
 rather than trimming afterwards, so a cap prevents calls instead of discarding
 their results.
+
+**The file DEEP plan lists eleven relationships and the cap is ten
+(T24-FINDING-05, reviewed and kept as policy).** The plan is ordered by what a
+file investigation learns first: what the sample did (`contacted_*`,
+`dropped_files`, `embedded_domains`, `itw_urls`), then who says what it is
+(`malware_families`, `associations`, `related_threat_actors`,
+`related_reports`) and, last, which `campaigns` GTI ties it to. Each
+relationship is one request, and a campaign is the least specific of the
+threat objects for a *file*: a family names what the sample is, an actor and
+a report name who used it, and a campaign restates those at a coarser grain.
+Raising the cap to eleven would buy that request on every DEEP file
+investigation; reordering would starve a more specific relationship
+instead. So `campaigns` is reachable only when a caller raises the
+relationship-type cap, which is the configuration seam the limits already
+offer. Not a bug: a bounded plan with its lowest-value member past the bound.
 
 ### Descriptor-first
 
@@ -611,6 +659,15 @@ relationship. What a key may actually do is discovered at request time, where a
 refusal becomes `PLAN_LIMITED` for that one operation.
 
 ## 15. Errors
+
+vt-py's own shaping of a response it could not read is mapped explicitly
+(Task 24 Phase 3): `ServerError` (every status of 500 and above) is
+`TRANSIENT_ERROR`, retried and put on cooldown like any outage;
+`ClientError` (a 4xx whose body is not JSON — an edge proxy's page) is
+`PROVIDER_UNAVAILABLE`. Neither keeps the body: the message is fixed text. A
+200 whose body cannot be read (`ContentTypeError`, a JSON decode failure) is
+`SCHEMA_ERROR`, not an outage.
+
 
 vt-py's `APIError.code` values map onto Task 5 categories:
 

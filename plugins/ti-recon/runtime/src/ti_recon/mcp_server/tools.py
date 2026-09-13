@@ -50,6 +50,7 @@ from ti_recon.correlation.policy import PivotMode
 from ti_recon.enums import InvestigationDepth
 from ti_recon.execution.models import ExecutionContext
 from ti_recon.investigation.engine import InvestigationError
+from ti_recon.investigation.models import InvestigationObjective
 from ti_recon.mcp_server.auth import RemoteAuthenticationError
 from ti_recon.mcp_server.limits import TenantBusyError
 from ti_recon.mcp_server.models import ProviderStatusReport
@@ -86,6 +87,7 @@ async def investigate_observable(
     depth: InvestigationDepth,
     pivot_mode: PivotMode,
     allow_remote_pivot_lookup: bool,
+    objective: InvestigationObjective = InvestigationObjective.TRIAGE,
 ) -> AnalystInvestigationReport:
     """One investigation, through the public application boundary."""
     request = _request(
@@ -94,6 +96,7 @@ async def investigate_observable(
         depth=depth,
         pivot_mode=pivot_mode,
         allow_remote_pivot_lookup=allow_remote_pivot_lookup,
+        objective=objective,
     )
     return await _investigate(runtime, request)
 

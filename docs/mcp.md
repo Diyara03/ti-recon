@@ -71,6 +71,7 @@ have available.
 | `depth` | `standard` | `quick` minimal · `standard` normal · `deep` broader, more quota |
 | `pivot_mode` | `recommend` | what to do with related observables |
 | `allow_remote_pivot_lookup` | `false` | effective only with `enrich` |
+| `objective` | `triage` | `triage` stops when coverage is adequate; `corroborate` spends at most one extra round seeking an adverse search from a source family independent of the assessment's basis, if one is eligible and the budget permits |
 
 Returns `AnalystInvestigationReport` as structured output. The output schema is
 derived from the Task 20 model, so there is one definition of what a report is.

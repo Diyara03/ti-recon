@@ -171,6 +171,18 @@ larger allowance would answer.
 
 ### One call can answer several capabilities
 
+A bundled attempt is one row in the trace and one check under **every**
+capability it carried (Task 24 Phase 3). The provider was asked all of them,
+and a refusal, an outage or an unconfigured credential refused all of them —
+so the secondary capability's gap is typed by what happened
+(`not_configured`, `temporarily_unavailable`, …) rather than
+`not_attempted`, and a continuation is not asked for a path the same call
+already showed to be blocked. A completed bundle's secondary carries
+`UNATTRIBUTED`: the call completed, and what that capability got back is not
+retained per capability. Never `DIRECTIONAL`, `CONTEXT_ONLY` or `NO_DATA` for
+a secondary.
+
+
 Task 13 bundles compatible goals into a single request wherever a provider
 declares that one read returns its whole document, and it records **one**
 `ProviderAttempt` carrying that call's *primary* capability. The capabilities the

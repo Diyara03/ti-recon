@@ -58,6 +58,16 @@ new tool call to explain a result you already have.**
 **Broader collection** — `deep`, pivot enrichment, external pivot enrichment.
 These contact providers, spend quota, and may disclose more observables.
 
+**Corroboration** — `objective=corroborate` is for a user who asks to confirm,
+corroborate, double-check or "check with another source". It spends at most
+one extra round after coverage is adequate, seeking an adverse search from a
+source family independent of the assessment's basis, if one is eligible and
+the budget permits. It is not deeper collection, it does not pick a provider,
+and it never guarantees a second source exists: if none was eligible the
+report carries a `corroboration_not_obtained` issue and the assessment is
+unchanged. A suspicious or malicious verdict is never a reason to choose it
+on your own.
+
 If a request like *"give me more data"* or *"can you check more?"* could mean
 either, ask once:
 

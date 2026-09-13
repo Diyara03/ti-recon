@@ -169,6 +169,14 @@ def normalize_ip(raw: str) -> IntelObject:
 
 def _parse_ip(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
     inner = value[1:-1] if value.startswith("[") and value.endswith("]") else value
+    if "%" in inner:
+        # An RFC 4007 zone identifier names a local interface, not an address:
+        # ``fe80::1%eth0`` and ``fe80::1%eth1`` would become two observables,
+        # two cache keys and an interface name sent to every remote provider.
+        # Refused rather than stripped, because stripping would silently
+        # investigate a different value from the one submitted.
+        msg = "IPv6 zone identifiers are not part of an address; submit the bare address"
+        raise NormalizationError(msg)
     try:
         return ipaddress.ip_address(inner)
     except ValueError:

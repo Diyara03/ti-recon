@@ -47,6 +47,16 @@ And within a continuation:
 | …and the remote allowance is spent | `CURRENT_BUDGET_EXHAUSTED` |
 | new evidence arrived | recompute Tasks 15–18 and re-read the table |
 
+**A no-progress stop is reached only after every eligible source was
+considered.** Task 13 keeps a family whose only answer was `NO_DATA` open while
+a sibling dataset serving the capability is still eligible and unattempted
+(`docs/planning/adaptive-enrichment.md` §3), so "the previous round produced
+nothing new" can end a run only when no configured, eligible, unattempted
+source remains for what readiness asked for. A regression drives the live
+shape — one family's data, a sibling's empty answer, an unconfigured scanner —
+and asserts that at a `NO_PROGRESS` or `CURRENT_BUDGET_EXHAUSTED` stop no
+provider supporting a directive's capability remains eligible and unasked.
+
 **Only Task 18 triggers a continuation.** Not a suspicious verdict, not an
 inconclusive one, not a failed provider, not a missing sandbox. Each is a reason a
 person might feel the investigation is unfinished, and readiness has already
@@ -55,6 +65,28 @@ weighed every one against what the assessment actually rests on.
 `READY_WITH_LIMITATIONS` is terminal **even with optional provider failures on the
 record**. Tidying those up is spending an analyst's budget on the workflow's
 discomfort.
+
+### Stopping when adequate, and an explicit request for corroboration
+
+Two things that must not be conflated (Task 24 Phase 2):
+
+| | Default: `objective=triage` | Explicit: `objective=corroborate` |
+|---|---|---|
+| readiness adequate | **stop** — an eligible extra source is not a reason to spend quota | one bounded extra round: `ADDITIONAL_COVERAGE` on the adverse-search capabilities this depth admits, avoiding the families the verdict already rests on |
+| readiness inadequate | ordinary continuation | ordinary continuation; the corroboration round exists only past adequate readiness |
+| nothing independent *answered* (unconfigured, blocked, errored, or unaffordable) | — | `CORROBORATION_NOT_OBTAINED` issue, verdict and confidence untouched |
+
+`InvestigationObjective` is the structured form of an analyst saying "confirm
+this with another source". It reaches the workflow through the Task 20 request,
+the CLI (`--objective`) and the MCP tool (`objective`); nothing below the
+interface reads prose, and the engine never infers it from a verdict. The round
+reuses the breadth seam readiness already uses for the benign challenge: it adds
+no capability, activates no goal, raises no depth, repeats no call and names no
+provider, and Task 13 still ranks, still refuses an attempted call and still has
+to afford it. Whether the answer really was independent is Task 17's to settle
+from the returned provenance, exactly as for any other round. The report records
+the objective in `request.objective`; `source_checks` says what was actually
+asked.
 
 Termination does not rest on a round count. It comes from finite candidates, a
 cumulative budget and no-progress detection; the round ceiling in the code is a
