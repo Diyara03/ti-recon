@@ -303,6 +303,61 @@ single response.
 * Hosting facts (ASN, country, TLS issuer) are context only. Letting "hosted in
   country X" nudge a verdict is how a country becomes a proxy for guilt.
 
+### Capabilities declared (Task 24, US-02)
+
+The descriptor and the planning profile declare `REPUTATION`, `WEB_BEHAVIOR`,
+`HISTORICAL_INFRASTRUCTURE`, `RELATIONSHIPS` and `WEB_FORENSICS`.
+`CURRENT_INFRASTRUCTURE` was declared and is not any more. A Search API hit is
+a historical scan record: the page's address, network, server and certificate
+are what a browser saw at `task.time`, which at DEEP may be years ago, and
+nothing in the integration establishes that any of it is observable now. That
+is `HISTORICAL_INFRASTRUCTURE` — scan-time hosting and resolution context,
+each record carrying its scan instant — and it stays declared for every
+supported observable type. Declaring the current one let a scan-time snapshot
+outrank and close a goal that a provider observing the present would answer.
+No freshness threshold was added to keep it: a bound on age would still not
+make an archived visit an observation of now. `URLSCAN_UNDECLARED_CAPABILITIES`
+lists the omission so it is visible and tested.
+
+### A search match is not a claim scope (Task 24, US-01, US-03, US-04)
+
+A hit says only that a historical scan matched the query. For an address the
+query is `page.ip:X OR ip:X`, so a hit may be a page hosted on X — or a page
+that loaded a font from X. The same holds for a domain through `page.domain`
+and `domain`. Three things are therefore kept apart, by one rule in
+`identity.py` that both the search selector and the normalizer read:
+
+| Question | Answered by |
+|---|---|
+| why the search matched | never recorded as a fact about the observable |
+| which page the browser landed on | `page.url`, `page.domain`, `page.ip` |
+| what a record is about | its subject and its `MatchScope` |
+
+**Verdicts belong to the page.** Where the scan's page is the observable or
+its neighbourhood (`EXACT_OBSERVABLE`, `SAME_HOST`, `PARENT_DOMAIN`,
+`SAME_IP`), `urlscan_verdict`, the engine aggregate and the community votes
+keep the observable as subject at that scope, exactly as before. Where the
+observable is merely something the page contacted (`CLUSTER`), those records
+— and the page's hosting facts in `urlscan_page_context` — have the scanned
+page as their subject at exact scope, the page object is in the envelope, and
+the observable stays linked to it through the `contacts` relationship the scan
+asserts. A flagged page that loaded a script from an address is intelligence
+about that page; before this change its verdict was emitted with the address
+as subject and the address came out SUSPICIOUS. Task 17 keeps the claim
+visible and never lets a claim about another object vote for the observable.
+
+**Properties follow the stricter rule.** The submitted object receives the
+page's address, network, server and certificate facts only when the page *is*
+the observable: the final page URL, the page's own domain or the page's own
+address equals it. A redirect's final page, a subdomain and a merely contacted
+host all describe someone else's infrastructure.
+
+**Selection prefers the observable's own scans.** The retrieval budget (1, 3
+or 8 scans) is spent on scans whose page is the observable or its
+neighbourhood before scans that merely contacted it, then newest first, then
+the per-domain cap, exactly as before within each class. Incidental scans are
+never dropped by the ordering; they fill the budget behind the primary ones.
+
 ### Match scope
 
 | Submitted | Scan relationship | Scope |
@@ -311,9 +366,9 @@ single response.
 | URL | another URL on the same host | `SAME_HOST` |
 | domain | the page's own domain | `SAME_HOST` |
 | domain | a subdomain of it | `PARENT_DOMAIN` |
-| domain | merely contacted by the page | `CLUSTER` |
+| domain | merely contacted by the page | `CLUSTER` (incidental: records describe the page) |
 | IP | the page's own address | `SAME_IP` |
-| IP | merely contacted | `CLUSTER` |
+| IP | merely contacted | `CLUSTER` (incidental: records describe the page) |
 | file | a body the page served | `SAME_HOST` |
 
 ## 7. Objects and relationships
@@ -321,10 +376,17 @@ single response.
 | Relationship | From | To |
 |---|---|---|
 | `redirects-to` | URL | URL |
-| `contacts` | page URL | domain |
-| `resolves-to` | page URL | IP |
+| `contacts` | page URL | domain (`lists.domains`) |
+| `contacts` | page URL | IP (`lists.ips`) |
 | `belongs-to-asn` | page URL | autonomous system |
 | `downloads` | page URL | file (SHA-256 of a served body) |
+
+`lists.ips` are the addresses the browser's own requests reached, so the
+relationship is *contact*, not resolution: a page does not resolve, and
+writing it as `resolves-to` would put it in the same bucket as passive DNS.
+Every relationship is anchored on the page URL and carries the scan instant as
+its first and last seen. No relationship is anchored on a submitted address or
+domain: an address is linked to a page only as something the page contacted.
 
 Every relationship carries the evidence that explains it. Provider-supplied
 values are validated by the same normalizer that validates analyst input — a
@@ -455,7 +517,8 @@ Status mapping:
 |---|---|---|
 | 401 | `AUTHENTICATION_ERROR` | the only thing that marks a key invalid |
 | 403 | `PERMISSION_ERROR` | also what a scan private to another team returns |
-| 404 / 410 | `NOT_FOUND` → `NO_DATA` | "urlscan has never seen this" is a finding |
+| 404 / 410 on a selected result | `NOT_FOUND` → that scan `URLSCAN_SCAN_UNRETRIEVABLE`, run `PARTIAL` | a scan not finished, withdrawn or deleted; never `NO_DATA` about the observable, never benign, never an auth failure |
+| search matched nothing | — → `NO_DATA` | "urlscan has never seen this" is a finding; the Search API answers 200 with no hits |
 | 400 / 422 / 431 | `INVALID_REQUEST` | |
 | 429, minute/hour window | `RATE_LIMITED` | retryable |
 | 429, day/month window | `QUOTA_EXCEEDED` | not something to wait for |
@@ -539,3 +602,16 @@ visit look like nine observations.
 
 `page.tlsValidFrom` becomes `VALID_FROM`: it describes the certificate, not the
 visit and not the page.
+
+Everything urlscan says about hosting is historical by construction: the
+address, network, server and certificate are facts of one visit at one
+instant, and the coverage they earn is `HISTORICAL_INFRASTRUCTURE`. No record
+is produced that claims the present, and nothing downstream should read a
+scan-time snapshot as current infrastructure.
+
+## Recorded, not done
+
+**US-REPORTING-01.** The urlscan verdict claim carries no `highlights`, so its
+score, categories, brands and the engine counts never reach the analyst
+report. An explainability enhancement of the same shape as the GreyNoise
+highlights, not required for the attribution fixes above.

@@ -343,6 +343,17 @@ empty answer from one family should close a relevant capability while another
 eligible family remains is a planning-policy review for later, not a defect
 fixed here.
 
+### Open policy question: US-POLICY-01
+
+An address's goal templates ask for `NETWORK_OWNERSHIP` at STANDARD and DEEP
+and `CURRENT_INFRASTRUCTURE` at DEEP, and never for
+`HISTORICAL_INFRASTRUCTURE`. A stored-scan archive answers the historical
+question honestly (Task 24, US-02) and, with the current declaration, is no
+longer asked about an address at all unless the address's own reputation is
+in play. Whether addresses should gain a historical-infrastructure goal is a
+goal-design decision with a cost, deliberately not taken in the provider
+honesty branch.
+
 ## 9. Stopping
 
 Every `StopReason` is operational:
