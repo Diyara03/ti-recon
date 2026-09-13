@@ -143,6 +143,7 @@ def requirements_from_goals(
     policy_version: str,
     skipped: Sequence[SkippedCandidate] = (),
     attempted: frozenset[ProviderCapability] = frozenset(),
+    answered: frozenset[ProviderCapability] = frozenset(),
 ) -> tuple[CoverageRequirement, ...]:
     """One requirement per Task 13 goal, in deterministic capability order."""
     found = [
@@ -154,7 +155,9 @@ def requirements_from_goals(
             ),
             capability=goal.capability,
             criticality=goal.relevance,
-            activation=activation_for(goal, skipped=skipped, attempted=attempted),
+            activation=activation_for(
+                goal, skipped=skipped, attempted=attempted, answered=answered
+            ),
             object_type=object_type,
             requested_depth=depth,
             rationale=BASIS_RATIONALE["planner_goal"],
@@ -169,15 +172,29 @@ def activation_for(
     *,
     skipped: Sequence[SkippedCandidate],
     attempted: frozenset[ProviderCapability],
+    answered: frozenset[ProviderCapability] = frozenset(),
 ) -> RequirementActivation:
     """Whether this goal was ever in play, from the planner's own record.
 
-    An attempt settles it: something ran, so the goal was active. Otherwise the
-    recorded skip reason speaks -- and only the reasons that mean "not in play"
-    count. A goal skipped for budget was very much in play and simply did not
-    get its turn.
+    An attempt settles it: something ran, so the goal was active. So does
+    Task 13's own coverage statement: ``answered`` holds every capability
+    whose coverage item reports at least one family answering (``COVERED`` or
+    ``PARTIAL``), and a capability a family answered was in play whatever an
+    earlier round said about it. That matters for a follow-up goal that
+    activates after the baseline and is satisfied the moment it does -- by a
+    whole-document answer credited before it activated, say. Such a goal
+    generates neither a candidate nor a skip once active, so the only skips on
+    record are the early "not yet eligible" ones, and reading those alone
+    reported a covered capability as never applicable (Task 24
+    capability-accounting validation, CS-01). Coverage truth outranks stale activation history.
+
+    Otherwise the recorded skip reason speaks -- and only the reasons that
+    mean "not in play" count. A goal skipped for budget was very much in play
+    and simply did not get its turn. A goal with no attempt, no answered
+    family and an inactive skip stays NOT_APPLICABLE: nothing here activates a
+    conditional goal whose trigger never fired.
     """
-    if goal.capability in attempted:
+    if goal.capability in attempted or goal.capability in answered:
         return RequirementActivation.ACTIVE
     reasons = {item.reason for item in skipped if item.capability is goal.capability}
     if SkipReason.DEPTH_TOO_SHALLOW in reasons:

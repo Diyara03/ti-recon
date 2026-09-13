@@ -37,6 +37,7 @@ from typing import Final
 
 from ti_recon.enums import (
     CoverageRelevance,
+    CoverageStatus,
     IntelObjectType,
     InvestigationDepth,
     ProviderCapability,
@@ -112,6 +113,13 @@ class ReadinessInputMismatch(ValueError):
 #: requirement id behind an unresolved-input gap must not vary by object type.
 _INTEGRITY_OBJECT_TYPE: Final[IntelObjectType] = IntelObjectType.FILE
 
+#: Coverage statuses under which Task 13 states that at least one source family
+#: answered the capability -- with data, with none, or in part. A goal a family
+#: answered was in play, whatever an earlier round's activation skip said.
+_ANSWERED_COVERAGE: Final[frozenset[CoverageStatus]] = frozenset(
+    {CoverageStatus.COVERED, CoverageStatus.PARTIAL}
+)
+
 
 @dataclass
 class AssessmentReadinessEngine:
@@ -147,6 +155,12 @@ class AssessmentReadinessEngine:
         attempted = frozenset(
             carried for attempt in planning.attempts for carried in attempt.capabilities
         )
+        # Task 13's own statement that a family answered the capability. A goal
+        # satisfied the moment it activated leaves no candidate and no skip
+        # behind, so this is the only record that it was ever in play.
+        answered = frozenset(
+            item.capability for item in planning.coverage if item.status in _ANSWERED_COVERAGE
+        )
 
         requirements = requirements_from_goals(
             goals,
@@ -155,6 +169,7 @@ class AssessmentReadinessEngine:
             policy_version=READINESS_POLICY_VERSION,
             skipped=skipped,
             attempted=attempted,
+            answered=answered,
         )
 
         checks_by_capability = capability_checks(

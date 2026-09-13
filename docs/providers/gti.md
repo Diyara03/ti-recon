@@ -125,6 +125,33 @@ issues. Paths are assembled from a fixed set of four collection names plus a
 validated identifier, and anything containing a scheme, a slash, a traversal
 segment or whitespace is refused.
 
+### Capabilities declared (Task 24, CS-02)
+
+The descriptor and the planning profile declare `REPUTATION`,
+`MALWARE_INTELLIGENCE`, `THREAT_ASSOCIATIONS`, `RELATIONSHIPS` and
+`FILE_BEHAVIOR` — and nothing else. `CURRENT_INFRASTRUCTURE`,
+`HISTORICAL_INFRASTRUCTURE` and `NETWORK_OWNERSHIP` were declared and are not
+any more: every relationship this adapter fetches is filed under
+`RELATIONSHIPS`, `MALWARE_INTELLIGENCE` or `THREAT_ASSOCIATIONS` (§10), and an
+address's `asn`, `as_owner`, `network` and `country` are kept as object
+properties rather than emitted as an ownership record. A live DEEP address
+lookup bundled `current_infrastructure` beside `reputation` because the
+capability was declared, fetched nothing for it, and returned a SUCCESS the
+planner credited as infrastructure coverage — which closed the goal before the
+provider that does answer it was asked. A provider may advertise a capability
+only where its adapter answers it with normalized evidence or a
+capability-specific empty answer.
+
+The raw fields are untouched. Recorded as future work, out of scope here:
+
+- a `gti_network_ownership` context record and `belongs-to-asn` relationship
+  from the address attributes, after which `NETWORK_OWNERSHIP` may be declared;
+- `resolutions` filed as `HISTORICAL_INFRASTRUCTURE` evidence, after which that
+  capability may be declared.
+
+`GTI_UNDECLARED_INFRASTRUCTURE_CAPABILITIES` lists the three so the omission is
+visible and tested.
+
 ## 6. Response efficiency
 
 `last_analysis_results` — the per-engine breakdown — is excluded from every

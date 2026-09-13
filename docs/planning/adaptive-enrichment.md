@@ -328,6 +328,21 @@ everything hosted on shared infrastructure — which is now most things.
 
 ---
 
+### Open policy question: CS-POLICY-01
+
+A capability-invariant provider's empty answer is credited for every capability
+it plans, and a family target counts a family once it has answered. So for an
+address a scanner network has never seen, that provider's `NO_DATA` alone
+satisfies the one-family `NETWORK_OWNERSHIP` target, and a materially different
+family that would answer with data — an internet-scanning platform holding the
+ASN, prefix and location — is never asked for it. Observed live (Task 24 Censys
+validation) and deliberately **not** changed: the Phase 2 gap-closure rule
+stops at sibling datasets within one family, and extending it across families
+increases collection breadth and drifts toward asking everything. Whether an
+empty answer from one family should close a relevant capability while another
+eligible family remains is a planning-policy review for later, not a defect
+fixed here.
+
 ## 9. Stopping
 
 Every `StopReason` is operational:

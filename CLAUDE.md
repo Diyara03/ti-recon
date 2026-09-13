@@ -310,6 +310,30 @@ Implemented (Jira Tasks 1-19):
   intentional — records about the check — and its contract description now
   says so. Verdict for the address unchanged: SUSPICIOUS / LOW / READY.
 
+- Task 24 Phase 5 — Censys validation, part 1: readiness accounting and GTI
+  capability honesty. Reconstructed offline from a live DEEP address run in
+  which Censys was configured and never asked: CS-01 (a follow-up goal
+  satisfied the moment it activated — by a capability-invariant provider's
+  empty whole-document answer credited before it was eligible — left only
+  early `goal_not_active` skips on record, so readiness reported a capability
+  Task 13 said was `COVERED` as `not_applicable`; `activation_for` now treats
+  a capability whose Task 13 coverage item has an answered family as active
+  before consulting skip history); CS-02 (GTI declared
+  `CURRENT_INFRASTRUCTURE`, `HISTORICAL_INFRASTRUCTURE` and
+  `NETWORK_OWNERSHIP` but its adapter answers none of them with evidence —
+  every relationship is filed elsewhere and the address attributes are object
+  properties — so a bundled SUCCESS was credited as infrastructure coverage
+  and closed the goal before a provider that answers it was asked; the three
+  are no longer declared, recorded in
+  `GTI_UNDECLARED_INFRASTRUCTURE_CAPABILITIES`, raw fields untouched, the
+  ownership record and `resolutions`-as-historical-infrastructure recorded as
+  future work). Bundled-capability crediting itself is unchanged: the planner
+  asks only what a profile offers and credits what it asked, so the
+  declaration is the honesty boundary and no evidence-based check exists to
+  add. Recorded, not changed: CS-POLICY-01 (one capability-invariant family's
+  `NO_DATA` satisfies a one-family relevant target while a materially
+  different eligible family remains; see `docs/planning/adaptive-enrichment.md`).
+
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Task 13 chooses what
 to ask, Task 14 assembles what came back, Task 15 says what each finding means in
@@ -2324,6 +2348,23 @@ about it.
      the call did not carry. `produced_evidence` counts records, including
      those about the check itself, so `true` beside `no_data` is a source
      recording what it did not find and never a finding about the observable.
+
+194. **A provider advertises only what its adapter answers, and coverage
+     truth outranks activation history.** The planner asks a provider only
+     for capabilities its planning profile offers and credits exactly what
+     it asked (everything it plans, for a capability-invariant provider), so
+     a SUCCESS answering some other question covers a bundled capability
+     the moment the provider *declared* it — no evidence record names a
+     capability, and there is no generic check to add. The declaration is
+     therefore a promise: a capability is declared only where the adapter
+     emits normalized evidence for it or a capability-specific empty answer.
+     GTI's three infrastructure capabilities failed that promise and are
+     undeclared until the evidence exists. And a goal Task 13 says a family
+     answered was in play: readiness reads `COVERED`/`PARTIAL` coverage as
+     activation before it reads early `goal_not_active` skips, because a goal
+     satisfied the moment it activated leaves no other trace. A goal with no
+     attempt, no answered family and only inactive skips stays
+     `NOT_APPLICABLE`.
 
 ## Security rules
 

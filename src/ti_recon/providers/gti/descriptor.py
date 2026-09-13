@@ -40,6 +40,7 @@ __all__ = [
     "GTI_PROVIDER_ID",
     "GTI_SOURCE_FAMILY",
     "GTI_SUPPORTED_OBJECT_TYPES",
+    "GTI_UNDECLARED_INFRASTRUCTURE_CAPABILITIES",
     "build_gti_descriptor",
     "build_gti_planning_profile",
 ]
@@ -82,16 +83,38 @@ GTI_SUPPORTED_OBJECT_TYPES: Final[frozenset[IntelObjectType]] = frozenset(
 #: account: whether a given key is entitled to a given relationship is only
 #: knowable at request time, and is reported per operation rather than guessed
 #: at up front.
+#:
+#: A capability is declared only where the adapter answers it with normalized
+#: evidence, or with a capability-specific empty answer. Every relationship
+#: this adapter fetches is filed under ``RELATIONSHIPS``, ``MALWARE_INTELLIGENCE``
+#: or ``THREAT_ASSOCIATIONS``, and an address's ``asn``, ``as_owner``,
+#: ``network`` and ``country`` are kept as object properties rather than as an
+#: ownership record. So ``CURRENT_INFRASTRUCTURE``, ``HISTORICAL_INFRASTRUCTURE``
+#: and ``NETWORK_OWNERSHIP`` are **not** declared: they were, and a bundled
+#: address lookup naming one of them returned a SUCCESS that carried nothing
+#: for it, which the planner credited as coverage and which closed the goal
+#: before a provider that does answer it was asked (Task 24 Censys
+#: validation, CS-02). Declaring them again needs the evidence first --
+#: ``resolutions`` as historical infrastructure, an ownership record from the
+#: address attributes -- and that is recorded as future work, not done here.
 GTI_CAPABILITIES: Final[frozenset[ProviderCapability]] = frozenset(
     {
         ProviderCapability.REPUTATION,
         ProviderCapability.MALWARE_INTELLIGENCE,
         ProviderCapability.THREAT_ASSOCIATIONS,
         ProviderCapability.RELATIONSHIPS,
+        ProviderCapability.FILE_BEHAVIOR,
+    }
+)
+
+#: Capabilities GTI's data could serve once the adapter emits evidence for
+#: them. Listed so the omission above is visibly deliberate and testable, and
+#: so nobody re-adds one to the declaration without also adding the record.
+GTI_UNDECLARED_INFRASTRUCTURE_CAPABILITIES: Final[frozenset[ProviderCapability]] = frozenset(
+    {
         ProviderCapability.CURRENT_INFRASTRUCTURE,
         ProviderCapability.HISTORICAL_INFRASTRUCTURE,
         ProviderCapability.NETWORK_OWNERSHIP,
-        ProviderCapability.FILE_BEHAVIOR,
     }
 )
 

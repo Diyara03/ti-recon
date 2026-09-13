@@ -104,6 +104,16 @@ Deliberately absent, with no code path — not even an unused one:
 Tests also parse the client module and assert that no `post` call and no
 `search`/`rescan` literal appears in it.
 
+### The Platform v3 envelope
+
+A Platform asset answer is `{"result": {"resource": {…}, "extensions": {…}}}`.
+The normalizer's `CensysDocument` reads the asset from `result.resource` first,
+then `result`, then a top-level `resource`, and finally a flat object only if
+it carries `ip` or `hostname`; `extensions` is never read. The fixtures use the
+`result.resource` shape, and the live Content-Type
+`application/vnd.censys.api.v3.host.v1+json` is the schema the `Accept` header
+below asks for.
+
 ### Schema-versioned Accept headers
 
 Each asset endpoint asks for the **exact response schema this adapter was written
