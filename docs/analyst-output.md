@@ -22,12 +22,13 @@ debugging a disagreement between layers.
 
 ## Versioning
 
-`ANALYST_REPORT_SCHEMA_VERSION` is `1.1.0`, and is deliberately separate from
+`ANALYST_REPORT_SCHEMA_VERSION` is `1.2.0`, and is deliberately separate from
 the workflow and policy versions the report carries. `1.1.0` (Task 24) is
 additive: `highlights`, `qualification` and `qualification_reasons` on basis
 items, `request.objective`, `provider_id` on issues, and the `context`
-section; every field has a default, so a `1.0.0` consumer reads a `1.1.0`
-report unchanged.
+section; `1.2.0` (Task 24, GreyNoise validation) adds
+`source_checks[].capabilities`, the whole bundle one call carried. Every
+field has a default, so a `1.0.0` consumer reads a `1.2.0` report unchanged.
 
 They change for different reasons. A fusion policy bump means the engine would
 decide something differently; a schema bump means an application has to
@@ -82,6 +83,8 @@ their vocabulary inline, in the schema:
 | `coverage[].information_yield` | `no_data` / `none` / `unattributed` kept apart |
 | `source_checks[].status` | `not_configured` as *not checked*, distinct from a source that answered and held nothing |
 | `source_checks[].cache_hit` | a real check that made no new request |
+| `source_checks[].capabilities` | every capability the one call asked for — one physical request, one check, however many questions it carried; `capability` is the primary and a member of it |
+| `source_checks[].produced_evidence` | whether the check contributed any evidence *records*, including context records about the check itself (which access path answered, that the source holds nothing) — so `true` beside `no_data` is the source recording what it did not find, never directional evidence |
 | `request.objective` | what the caller asked the collection to stop on; never whether corroboration was obtained |
 | `context[].signal_type`, `dataset_name`, `matched_entry` | which dataset listed the object and as what — "Matched misp list: Reserved IPv4 (rfc5735); matched 192.0.2.0/24" — context only, never a verdict; a `same_host` item with `host_component_only` describes the host, not the URL |
 | `related_observables[].assessed` | `false` means a relationship, not an indicator |
@@ -143,7 +146,20 @@ check. That is also true of every threat nobody has caught yet.
 
 **`UNATTRIBUTED` is not `NO_DATA`.** One call answered two capabilities and the
 record cannot say which returned what. Rendering it as `NO_DATA` would assert the
-source held nothing.
+source held nothing. Where a claim's own semantic names the capability — a
+scanner classification answering `scanner_context` — readiness reports
+`directional` instead, and the report copies that.
+
+**`produced_evidence` counts records, not findings.** A `no_data` check with
+`produced_evidence: true` wrote down which access path answered and that the
+source holds no record of the observable. Those records are context about the
+check; they reach no claim, no basis and no verdict, and they are not evidence
+of safety.
+
+**A source check is one call.** `capabilities` lists every question that one
+request carried — `reputation` and `scanner_context` from one GreyNoise read —
+and the text renderer prints `provider / primary (+the rest)`. One entry is
+never one check per capability, and it is never a count of anything.
 
 **`NOT_CONFIGURED` is not a provider failure, and not a check.** It says the
 source was *not consulted*, because no usable credential was available for that

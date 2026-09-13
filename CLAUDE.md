@@ -285,6 +285,31 @@ Implemented (Jira Tasks 1-19):
   allowance, so `corroborate` obtains nothing for such a hash with the current
   catalogue and says so.
 
+- Task 24 Phase 4 — GreyNoise live validation and semantic fidelity, through
+  the installed plugin with a Business-Free GreyNoise key beside GTI, abuse.ch
+  and MISP. Live: the full context endpoint answered `200` at STANDARD and
+  QUICK, so the access level was `full`, the ASN relationship came from that
+  document's `metadata.asn`, and the Community fallback was exercised only
+  deterministically; the `401` rule is unchanged. Fixed at the earliest
+  boundary each: GN-FINDING-01 (the Community `name` is the scanner actor
+  and was read as a business-service name; the RIOT state was absent from
+  the classification record; the classification claim carried no highlights,
+  so `raw_classification`, `observed_scanning`, `known_business_service`,
+  `actor`, `last_seen` and the `access_path` that answered never reached
+  the report — they are now quoted, bounded, from the record and the same
+  envelope's coverage record); GN-FINDING-02 (a bundled call keyed on
+  `reputation` showed only that capability in `source_checks`;
+  `SourceCheckItem.capabilities` now carries the bundle and the text prints
+  `reputation (+scanner_context)`; `ANALYST_REPORT_SCHEMA_VERSION` 1.2.0);
+  GN-FINDING-03 (a bundled secondary's yield is `DIRECTIONAL` where a
+  claim's semantic names exactly that capability —
+  `CAPABILITY_ANSWERED_BY_SEMANTIC` — and stays `UNATTRIBUTED` otherwise);
+  GN-FINDING-04 (disposition: the direction already came from
+  `classification` alone; made explicit in the semantic's vocabulary, the
+  highlights and the docs). `produced_evidence` beside `no_data` is
+  intentional — records about the check — and its contract description now
+  says so. Verdict for the address unchanged: SUSPICIOUS / LOW / READY.
+
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Task 13 chooses what
 to ask, Task 14 assembles what came back, Task 15 says what each finding means in
@@ -2265,6 +2290,40 @@ about it.
      internal. And a warninglist match names its list and its entry in the
      report's `context` section, one line per dataset match, always followed
      by "context only, explains nothing by itself".
+
+191. **Observed scanning is not the direction, and a RIOT miss is not
+     evidence.** A sensor network saying an address scans (`noise`,
+     `found`) is a fact about observation and points nowhere; only the
+     provider's own `classification` of that scanning sets the effect, so
+     `noise: true` with `unknown` is context and no claim. `riot: false` is
+     the absence of business-service context and never malicious evidence;
+     `riot: true` is context and never proof of benignness. The classification
+     record carries `observed_scanning` and `known_business_service` beside
+     `raw_classification`, and the claim quotes all three, so nothing
+     downstream has to read one from another. A flat document's one `name`
+     field is the actor only where the address is scanning, and the
+     business-service name only where a RIOT entry alone matched.
+
+192. **What a claim quotes is where the report reads a provider from.** Only
+     a claim's `highlights` reach the analyst; an attribute left on the
+     evidence record, however faithfully normalized, is invisible by the time
+     a verdict is rendered. A translator therefore quotes the bounded facts
+     its own claim rests on, and may quote provenance from the same envelope
+     — the access path that answered — without inferring anything: absent
+     record, absent line. Never a permalink, never a weight, never raw JSON.
+
+193. **A source check is one call, and yield may be attributed only by a
+     claim's own proposition.** `source_checks[].capabilities` names every
+     question one request carried, because the primary alone read as the only
+     thing asked. A bundled secondary's yield is `UNATTRIBUTED` unless a
+     completed, evidence-producing call's transport produced a claim whose
+     semantic names exactly that capability (`CAPABILITY_ANSWERED_BY_SEMANTIC`,
+     provider-neutral, one capability per listed semantic); an ambiguous or
+     unclassified semantic, a claim naming the primary, and a bundled
+     `NO_DATA` stay unattributed, and attribution never reaches a capability
+     the call did not carry. `produced_evidence` counts records, including
+     those about the check itself, so `true` beside `no_data` is a source
+     recording what it did not find and never a finding about the observable.
 
 ## Security rules
 
