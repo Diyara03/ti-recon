@@ -41,6 +41,7 @@ __all__ = [
     "ANALYST_REPORT_SCHEMA_VERSION",
     "MAX_BASIS_ITEMS",
     "MAX_CONFLICTS",
+    "MAX_CONTEXT_ITEMS",
     "MAX_COVERAGE_CHECKS",
     "MAX_EXPLANATIONS",
     "MAX_GAPS",
@@ -55,6 +56,7 @@ __all__ = [
     "AssessmentSummary",
     "BasisItem",
     "ConflictItem",
+    "ContextItem",
     "CoverageCheckItem",
     "ExplanationItem",
     "GapItem",
@@ -84,7 +86,7 @@ __all__ = [
 #: Within 1.x, optional fields may be added. Removing or renaming a field,
 #: changing what an existing field means, or changing the meaning of a value
 #: requires a deliberate version review — consumers key on this string.
-ANALYST_REPORT_SCHEMA_VERSION: Final[str] = "1.0.0"
+ANALYST_REPORT_SCHEMA_VERSION: Final[str] = "1.1.0"
 
 # --------------------------------------------------------------------------- #
 # Bounds
@@ -107,6 +109,7 @@ MAX_LIMITATIONS: Final[int] = 15
 MAX_RELATED_OBSERVABLES: Final[int] = 25
 MAX_SOURCE_CHECKS: Final[int] = 30
 MAX_ISSUES: Final[int] = 15
+MAX_CONTEXT_ITEMS: Final[int] = 25
 
 
 class ReportSection[Item](FrozenTiReconModel):
@@ -435,6 +438,44 @@ class QualificationItem(FrozenTiReconModel):
     lifecycle_state: str = Field(default="", max_length=40)
 
 
+class ContextItem(FrozenTiReconModel):
+    """One piece of context a source supplied about an object -- never a verdict.
+
+    Copied from the qualification layer's context signals: TI Recon's own versioned category,
+    the scope it applies at, and the dataset that supplied it, in the dataset's
+    own terms (a warninglist's name and the entry that matched). Context
+    explains or qualifies evidence; it is never evidence of safety, and a
+    host-scope match says nothing about the exact URL.
+    """
+
+    signal_type: str = Field(
+        min_length=1,
+        max_length=64,
+        description=(
+            "TI Recon's own category for the context (private_or_special_use, "
+            "shared_cloud_or_cdn, popular_or_common_service, public_resolver, "
+            "known_scanner, test_artifact, ...). Context only: never a verdict, "
+            "never evidence that the object is safe, and never a reason to "
+            "discount evidence by itself -- whether it explains a detection is "
+            "the false-positive reasoning layer's decision, shown under "
+            "alternative_explanations."
+        ),
+    )
+    scope: str = Field(min_length=1, max_length=40)
+    #: ``True`` when the match was on a URL's host and not the URL itself.
+    host_component_only: bool = False
+    subject_key: str = Field(default="", max_length=700)
+    source_family: str = Field(default="", max_length=64)
+    origin_provider: str = Field(default="", max_length=64)
+    #: The dataset that supplied it -- a warninglist's slug -- and its name.
+    dataset_key: str = Field(default="", max_length=200)
+    dataset_name: str = Field(default="", max_length=200)
+    #: The dataset entry that matched, so the finding is checkable.
+    matched_entry: str = Field(default="", max_length=200)
+    matcher: str = Field(default="", max_length=32)
+    evidence_id: str = Field(default="", max_length=200)
+
+
 class CoverageCheckItem(FrozenTiReconModel):
     """One capability requirement and what the collection did about it.
 
@@ -737,6 +778,10 @@ class AnalystInvestigationReport(FrozenTiReconModel):
         UnexplainedEvidenceItem
     ]()
     conflicts: ReportSection[ConflictItem] = ReportSection[ConflictItem]()
+    #: Context a source supplied about the target or something it touched --
+    #: warninglist matches above all. Shown so an analyst can see *which*
+    #: list matched and what entry; never a verdict and never safety.
+    context: ReportSection[ContextItem] = ReportSection[ContextItem]()
     qualifications: ReportSection[QualificationItem] = ReportSection[QualificationItem]()
     coverage: ReportSection[CoverageCheckItem] = ReportSection[CoverageCheckItem]()
     gaps: ReportSection[GapItem] = ReportSection[GapItem]()

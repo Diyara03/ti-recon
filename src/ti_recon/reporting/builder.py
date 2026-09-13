@@ -20,7 +20,7 @@ key, and reports how many items the investigation actually held.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 from ti_recon.correlation.models import CorrelationIssueType, GraphEdge, GraphNode, RelationBasis
 from ti_recon.investigation.results import InvestigationResult
@@ -32,10 +32,12 @@ from ti_recon.reasoning.fusion.models import (
     ClaimDisposition,
     ContributionRole,
 )
+from ti_recon.reasoning.models import ContextSignal
 from ti_recon.reporting.models import (
     ANALYST_REPORT_SCHEMA_VERSION,
     MAX_BASIS_ITEMS,
     MAX_CONFLICTS,
+    MAX_CONTEXT_ITEMS,
     MAX_COVERAGE_CHECKS,
     MAX_EXPLANATIONS,
     MAX_GAPS,
@@ -50,6 +52,7 @@ from ti_recon.reporting.models import (
     AssessmentSummary,
     BasisItem,
     ConflictItem,
+    ContextItem,
     CoverageCheckItem,
     ExplanationItem,
     GapItem,
@@ -164,6 +167,7 @@ def build_analyst_report(result: InvestigationResult) -> AnalystInvestigationRep
             _unexplained(fusion.contributions, claims), MAX_UNEXPLAINED_EVIDENCE
         ),
         conflicts=_section(_conflicts(result), MAX_CONFLICTS),
+        context=_section(_context(result), MAX_CONTEXT_ITEMS),
         qualifications=_section(_qualifications(result), MAX_QUALIFICATIONS),
         coverage=_section(_coverage(result), MAX_COVERAGE_CHECKS),
         gaps=_section(_gaps(result), MAX_GAPS),
@@ -319,6 +323,56 @@ def _explanations(result: InvestigationResult) -> list[ExplanationItem]:
 # --------------------------------------------------------------------------- #
 # Task 15
 # --------------------------------------------------------------------------- #
+
+
+def _context(result: InvestigationResult) -> list[ContextItem]:
+    """Task 15's context signals, in the dataset's own terms.
+
+    Copied, never weighed: which list matched, what entry, at what scope. The
+    values come from the signal's structured detail, which the provider's own
+    qualification bounded; nothing here reads a warninglist file.
+    """
+    # One line per dataset match. The qualifier emits several signals for one
+    # match -- the generic warninglist_match, the host-component marker, and
+    # the specific category -- and the specific one is the line an analyst
+    # reads; the others are folded into it (the host marker as a flag). This
+    # is selection of a representative, never weighing: every signal is still
+    # in the internal result.
+    generic = {"warninglist_match", "host_component_context"}
+    grouped: dict[tuple[str, str, str, str], list[ContextSignal]] = {}
+    for signal in result.qualification.context_signals:
+        evidence_id = "" if signal.evidence is None else signal.evidence.evidence_id
+        key = (signal.subject.key, signal.source_key or "", signal.match_scope.value, evidence_id)
+        grouped.setdefault(key, []).append(signal)
+    found = []
+    for (subject_key, dataset_key, scope, evidence_id), signals in grouped.items():
+        specific = [item for item in signals if item.signal_type.value not in generic]
+        chosen = min(specific or signals, key=lambda item: item.signal_type.value)
+        detail = chosen.detail
+        found.append(
+            ContextItem(
+                signal_type=chosen.signal_type.value,
+                scope=scope,
+                host_component_only=any(item.host_component_only for item in signals),
+                subject_key=subject_key,
+                source_family=chosen.source_family or "",
+                origin_provider=chosen.origin_provider or "",
+                dataset_key=dataset_key,
+                dataset_name=_text_detail(detail, "list_name"),
+                matched_entry=_text_detail(detail, "matched_entry"),
+                matcher=_text_detail(detail, "matcher")[:32],
+                evidence_id=evidence_id,
+            )
+        )
+    return sorted(
+        found,
+        key=lambda item: (item.subject_key, item.signal_type, item.dataset_key, item.evidence_id),
+    )
+
+
+def _text_detail(detail: Mapping[str, object], name: str) -> str:
+    value = detail.get(name)
+    return value if isinstance(value, str) else ""
 
 
 def _qualifications(result: InvestigationResult) -> list[QualificationItem]:

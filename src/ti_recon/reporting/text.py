@@ -143,6 +143,7 @@ def render_text(report: AnalystInvestigationReport) -> str:
     lines += _basis(report)
     lines += _opposition(report)
     lines += _explanations(report)
+    lines += _context(report)
     lines += _conflicts(report)
     lines += _coverage(report)
     lines += _related(report)
@@ -319,6 +320,55 @@ def _explanations(report: AnalystInvestigationReport) -> list[str]:
             f"{'' if unexplained.total == 1 else 's'} not accounted for by any explanation."
         )
     return lines
+
+
+#: One fixed sentence per context category, keyed on the value so a category
+#: without one is impossible to render silently. Restatement of what Task 15's
+#: vocabulary already means -- never a judgement about this object.
+CONTEXT_MEANING: dict[str, str] = {
+    "warninglist_match": "listed in a community warninglist",
+    "known_scanner": "known internet-scanning infrastructure",
+    "public_resolver": "a public DNS resolver",
+    "private_or_special_use": "reserved or special-use address space",
+    "shared_cloud_or_cdn": "shared cloud, hosting or CDN infrastructure",
+    "popular_or_common_service": "a popular or commonly used service",
+    "business_service": "common business-service infrastructure",
+    "test_artifact": "a deliberate test artifact",
+    "empty_artifact": "an empty artifact",
+    "compromised_infrastructure": "infrastructure the source reports as compromised",
+    "host_component_context": "context about the host component only",
+    "sandbox_low_execution": "a sandbox run that observed little execution",
+    "sandbox_meaningful_execution": "a sandbox run that observed meaningful execution",
+}
+
+
+def _context(report: AnalystInvestigationReport) -> list[str]:
+    """Which dataset supplied context, and what matched -- context only.
+
+    Printed as the source's own list name and entry, with TI Recon's category
+    glossed in a fixed sentence, and always followed by the reminder that
+    context explains nothing by itself. A host-scope match says so.
+    """
+    section = report.context
+    if not section.items:
+        return []
+    lines = _heading("Context (what a source lists this object as; never a verdict)")
+    for item in section.items:
+        meaning = CONTEXT_MEANING.get(item.signal_type, item.signal_type)
+        dataset = safe_text(item.dataset_name or item.dataset_key, limit=200)
+        key = f" ({safe_text(item.dataset_key, limit=200)})" if item.dataset_name else ""
+        family = safe_text(item.source_family, limit=64)
+        line = f"  - Matched {family} list: {dataset}{key} — {meaning}"
+        if item.matched_entry:
+            line += f"; matched {safe_text(item.matched_entry, limit=200)}"
+            if item.matcher:
+                line += f" via {safe_text(item.matcher, limit=32)}"
+        lines.append(line)
+        scope = f"      scope: {item.scope}; context only, explains nothing by itself"
+        if item.host_component_only:
+            scope += "; host component only, does not describe the exact URL"
+        lines.append(scope)
+    return lines + _omitted(section)
 
 
 def _conflicts(report: AnalystInvestigationReport) -> list[str]:

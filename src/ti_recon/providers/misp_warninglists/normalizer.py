@@ -142,6 +142,8 @@ def _match_record(match: ListMatch, index: WarningListIndex) -> dict[str, Any]:
     if match.candidate.algorithm is not None:
         record["matched_by_hash"] = match.candidate.algorithm
     if compiled is not None:
+        if compiled.name:
+            record["list_name"] = compiled.name
         record["list_entry_count"] = compiled.entry_count
         record["matching_attributes"] = (
             "*" if compiled.attribute_types is None else sorted(compiled.attribute_types)
