@@ -254,17 +254,41 @@ def test_the_live_address_run_no_longer_closes_infrastructure_on_a_reputation_an
     assert calls[-1].value == "goals_satisfied"
 
 
-def test_an_unconfigured_first_choice_does_not_close_the_goal() -> None:
-    """The workstation had no urlscan key: NOT_CONFIGURED blocks that provider and
-    the next declared provider is asked, so the goal is answered rather than
-    reported unattempted."""
+def test_only_a_provider_that_declares_the_capability_is_asked_for_it() -> None:
+    """Every call carrying the infrastructure question goes to a provider whose
+    descriptor declares it, the last one answered, and a provider that stopped
+    declaring it (a stored-scan archive: Task 24, US-02) carries it nowhere."""
+    adapters = build_default_adapters()
+    declares = {
+        adapter.descriptor.provider_id
+        for adapter in adapters
+        if INFRASTRUCTURE in adapter.descriptor.capabilities
+    }
     calls, state = _replay(LIVE_STATUSES)
     infrastructure_calls = [
         call for call in calls if not isinstance(call, str) and INFRASTRUCTURE in call.capabilities
     ]
-    statuses = [LIVE_STATUSES[call.provider_id] for call in infrastructure_calls]
-    assert ProviderRunStatus.NOT_CONFIGURED in statuses
-    assert statuses[-1] is ProviderRunStatus.SUCCESS
+    assert infrastructure_calls
+    assert {call.provider_id for call in infrastructure_calls} <= declares
+    assert "urlscan" not in {call.provider_id for call in infrastructure_calls}
+    assert LIVE_STATUSES[infrastructure_calls[-1].provider_id] is ProviderRunStatus.SUCCESS
+    assert state.answered_families(INFRASTRUCTURE)
+
+
+def test_a_configured_scan_archive_never_suppresses_a_present_observer() -> None:
+    """The Censys case with urlscan configured too: the archive of historical
+    scans is not a candidate for current infrastructure, so it cannot win the
+    ranking and close the goal ahead of the provider that observes the present.
+    Nothing here prefers a provider by name; the declaration decides."""
+    everything_configured = {**LIVE_STATUSES, "urlscan": ProviderRunStatus.SUCCESS}
+    calls, state = _replay(everything_configured)
+    asked = [
+        call.provider_id
+        for call in calls
+        if not isinstance(call, str) and INFRASTRUCTURE in call.capabilities
+    ]
+    assert "urlscan" not in asked
+    assert len(asked) == 1
     assert state.answered_families(INFRASTRUCTURE)
 
 
