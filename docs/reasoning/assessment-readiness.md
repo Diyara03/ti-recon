@@ -133,6 +133,19 @@ That gives three ways to be out of play, none of them a gap:
   planner's own recorded `SkipReason` rather than re-derived;
 - **not applicable** — wrong observable type.
 
+**Coverage truth outranks activation history (Task 24, CS-01).** A goal that
+activates after the baseline and is satisfied the moment it does — by a
+whole-document answer a capability-invariant provider was credited with before
+the goal was eligible — generates neither a candidate nor a skip once active.
+The only skips on record are the early `goal_not_active` ones, and reading
+those alone reported a capability Task 13 said was `COVERED` as never
+applicable. So `activation_for` treats a capability whose Task 13 coverage item
+reports an answered family (`COVERED` or `PARTIAL`) as `ACTIVE` before it
+consults skip reasons, exactly as an attempt keyed to it does. A goal with no
+attempt, no answered family and only inactive skips stays `NOT_APPLICABLE`; a
+depth-excluded goal stays out of depth. Nothing here activates a conditional
+goal whose trigger never fired.
+
 Criticality reuses Task 3's `CoverageRelevance` (`REQUIRED` / `RELEVANT` /
 `OPTIONAL`) rather than inventing a parallel scale, and it is never a number.
 
