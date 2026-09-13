@@ -270,3 +270,37 @@ async def test_the_report_records_the_objective_that_was_asked_for() -> None:
     report = build_analyst_report(result)
     assert report.request.objective == "corroborate"
     assert report.request.depth is InvestigationDepth.STANDARD
+
+
+@pytest.mark.asyncio
+async def test_a_corroboration_round_that_reaches_only_an_unconfigured_source_is_not_obtained() -> (
+    None
+):
+    """An attempt that could not be made is not a second source (Task 24 Phase 3).
+
+    Live, the corroboration round reached one unconfigured provider, the attempt
+    count moved, and the report showed two rounds and no issue -- as if a
+    second opinion had been sought and found. Obtained means answered.
+    """
+    stack, _ = _stack(with_extra=True)
+    # Credentials for everything except the only independent family.
+    for provider in stack.providers:
+        descriptor = provider.descriptor
+        if descriptor.requires_credentials and descriptor.provider_id != "extra":
+            await stack.manager.create_connection(
+                user_id=USER,
+                provider_id=descriptor.provider_id,
+                secret=f"{descriptor.provider_id}-key",
+                auth_type=AuthType.API_KEY,
+                status=CredentialStatus.ACTIVE,
+                credential_group=descriptor.provider_id,
+            )
+
+    result = await stack.investigate(_request(InvestigationObjective.CORROBORATE), user_id=USER)
+
+    assert RoundTrigger.CORROBORATION in _triggers(result)
+    assert any(
+        issue.issue_type is WorkflowIssueType.CORROBORATION_NOT_OBTAINED for issue in result.issues
+    )
+    extra = [item for item in result.enrichment.attempts if item.provider_id == "extra"]
+    assert extra and not any(item.coverage_gained for item in extra)

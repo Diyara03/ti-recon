@@ -332,7 +332,6 @@ class InvestigationOrchestrator:
                 )
             )
             return analysis, stop_reason
-        before = state.progress_key()
         analysis = await self._collect_and_analyse(
             request,
             context,
@@ -341,13 +340,18 @@ class InvestigationOrchestrator:
             trigger=RoundTrigger.CORROBORATION,
             directives=directives,
         )
-        if state.progress_key() == before:
+        # Obtained means a source *answered* -- with data or with none -- not
+        # that the planner recorded an attempt. An unconfigured, blocked or
+        # errored candidate moves the attempt count and corroborates nothing,
+        # and a round that reached only such candidates must say so.
+        answered = any(item.coverage_gained for item in state.enrichments[-1].attempts)
+        if not answered:
             state.issues.append(
                 WorkflowIssue(
                     issue_type=WorkflowIssueType.CORROBORATION_NOT_OBTAINED,
                     detail=(
                         "no eligible source independent of the assessment's basis "
-                        "could be asked within the remaining allowance"
+                        "answered within the remaining allowance"
                     ),
                     round_index=len(state.rounds) - 1,
                 )
