@@ -202,6 +202,15 @@ class StopReason(StrEnum):
     REMOTE_LOOKUPS_DISABLED = "remote_lookups_disabled"
 
 
+#: Depth ordering for the per-capability floor; mirrors ``goals.DEPTH_ORDER``
+#: without importing it, because ``goals`` imports this module.
+_DEPTH_RANK: dict[InvestigationDepth, int] = {
+    InvestigationDepth.QUICK: 0,
+    InvestigationDepth.STANDARD: 1,
+    InvestigationDepth.DEEP: 2,
+}
+
+
 class ProviderPlanningProfile(FrozenTiReconModel):
     """What the planner needs to know about a provider, beyond its descriptor.
 
@@ -235,6 +244,26 @@ class ProviderPlanningProfile(FrozenTiReconModel):
     #: budget without a decision — and, for retrieved page content, a way around
     #: the rule that forensics needs an explicit request.
     elevated_cost_capabilities: frozenset[ProviderCapability] = frozenset()
+
+    #: Capabilities this provider serves only from a deeper investigation than
+    #: :attr:`minimum_depth`, declared per capability (Task 24 Phase 3).
+    #:
+    #: A provider can answer reputation at QUICK and detonation data only at
+    #: DEEP. Without this the planner selected the shallow-depth call, the
+    #: adapter refused it as ``NOT_SUPPORTED``, and the refusal was charged as
+    #: a remote run -- a budget unit and a decision spent on an answer the
+    #: catalogue could have declined for free. Declared by the provider, like
+    #: every other planning fact, and enforced before cost and budget.
+    capability_minimum_depth: dict[ProviderCapability, InvestigationDepth] = Field(
+        default_factory=dict
+    )
+
+    def minimum_depth_for(self, capability: ProviderCapability) -> InvestigationDepth:
+        """The shallowest depth at which this provider serves ``capability``."""
+        declared = self.capability_minimum_depth.get(capability)
+        if declared is None:
+            return self.minimum_depth
+        return max(declared, self.minimum_depth, key=lambda item: _DEPTH_RANK[item])
 
     #: ``True`` when one read returns everything this provider knows about an
     #: observable, whatever capabilities the request named.

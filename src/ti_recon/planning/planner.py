@@ -506,8 +506,12 @@ class AdaptiveEnrichmentPlanner:
             # type — an IPv6 address against an IPv4-only provider, say. No
             # provider-specific condition is needed anywhere in the planner.
             return skip(SkipReason.UNSUPPORTED_OBSERVABLE, object_type.value)
-        if not depth_at_least(request.depth, profile.minimum_depth):
-            return skip(SkipReason.DEPTH_TOO_SHALLOW, f"needs {profile.minimum_depth.value}")
+        floor = profile.minimum_depth_for(capability)
+        if not depth_at_least(request.depth, floor):
+            # The provider's own declaration, per capability where it says so:
+            # a call the adapter would refuse at this depth is not selected,
+            # not charged and not recorded as an attempt.
+            return skip(SkipReason.DEPTH_TOO_SHALLOW, f"needs {floor.value}")
         if state.family_excluded(capability, profile.source_family):
             # Checked before cost and budget, because the point is that this
             # source cannot answer *this* question at all: letting it win the
