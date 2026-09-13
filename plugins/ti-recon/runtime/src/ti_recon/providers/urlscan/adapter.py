@@ -458,7 +458,9 @@ class UrlscanAdapter(ProviderAdapter):
             search = await client.search(
                 query=plan.query, size=plan.page_size, credential=credential
             )
-            candidates = select_candidates(parse_hits(search.payload), limits)
+            candidates = select_candidates(
+                parse_hits(search.payload), limits, subject=request.intel_object
+            )
             rate_limit = parse_rate_limit_headers(
                 search.rate_limit_headers, operation="urlscan.search", now=self._clock.now()
             )

@@ -31,10 +31,11 @@ from typing import Any, Final
 
 from pydantic import Field, field_validator
 
-from ti_recon.enums import IntelObjectType, InvestigationDepth
+from ti_recon.enums import IntelObjectType, InvestigationDepth, MatchScope
 from ti_recon.models.base import FrozenTiReconModel
 from ti_recon.models.intel_object import IntelObject
 from ti_recon.providers.urlscan.errors import parse_utc_timestamp
+from ti_recon.providers.urlscan.identity import is_incidental, page_match_scope
 
 __all__ = [
     "DEEP_FALLBACK_LOOKBACK_DAYS",
@@ -257,6 +258,22 @@ class ScanCandidate(FrozenTiReconModel):
         """What counts as "the same infrastructure" when spending the budget."""
         return self.page_domain or self.page_ip or self.scan_id
 
+    def match_scope_for(self, subject: IntelObject) -> MatchScope:
+        """How precisely this scan applies to ``subject``, from the hit alone.
+
+        The same rule the normalizer applies to the retrieved document, read
+        here from the fields a search hit already carries -- so selection can
+        tell a page hosted on the observable from a page that merely contacted
+        it before a single result is fetched.
+        """
+        return page_match_scope(
+            subject,
+            page_url=self.final_url,
+            submitted_url=self.submitted_url,
+            page_domain=self.page_domain,
+            page_ip=self.page_ip,
+        )
+
 
 def _escape(value: str) -> str:
     """Escape what the query language would otherwise read as syntax."""
@@ -462,18 +479,30 @@ def cursor_for_hit(hit: Mapping[str, Any]) -> str | None:
 
 
 def select_candidates(
-    candidates: Iterable[ScanCandidate], limits: SearchLimits
+    candidates: Iterable[ScanCandidate],
+    limits: SearchLimits,
+    *,
+    subject: IntelObject | None = None,
 ) -> tuple[ScanCandidate, ...]:
-    """Spend the retrieval budget on distinct infrastructure, newest first.
+    """Spend the retrieval budget on distinct infrastructure, the observable first.
 
-    Two rules, in order. Recency first, because a page's current behaviour
-    matters more than what it did last year. Then a per-domain cap, because
-    fifty scans of one popular site would otherwise crowd out the one scan that
-    shows the observable somewhere else — which is exactly the pivot an analyst
-    is looking for. If the cap leaves budget unspent, it is filled from the
-    remaining hits rather than wasted.
+    Three rules, in order. Scans whose page *is* the observable, or its
+    neighbourhood, before scans that merely contacted it: a search for an
+    address matches every page that loaded a resource from it, and a budget of
+    one used to go to whichever of those was newest while the one scan hosted
+    on the address waited (Task 24, US-04). Then recency, because a page's
+    recent behaviour matters more than what it did last year. Then a per-domain
+    cap, because fifty scans of one popular site would otherwise crowd out the
+    one scan that shows the observable somewhere else -- which is exactly the
+    pivot an analyst is looking for. If the cap leaves budget unspent, it is
+    filled from the remaining hits rather than wasted.
+
+    Without a ``subject`` nothing is known about scope and the order is
+    recency alone, exactly as before. Incidental scans are never dropped by
+    this ordering: they still fill the budget behind the primary ones, and
+    what they contribute is bounded by scope downstream.
     """
-    ordered = sorted(candidates, key=_recency_key)
+    ordered = sorted(candidates, key=lambda item: _selection_key(item, subject))
     selected: list[ScanCandidate] = []
     deferred: list[ScanCandidate] = []
     per_group: dict[str, int] = {}
@@ -493,6 +522,16 @@ def select_candidates(
             break
         selected.append(candidate)
     return tuple(selected)
+
+
+def _selection_key(
+    candidate: ScanCandidate, subject: IntelObject | None
+) -> tuple[int, int, float, str]:
+    """Primary scope first, then newest first; undated scans last, deterministically."""
+    incidental = 0
+    if subject is not None and is_incidental(candidate.match_scope_for(subject)):
+        incidental = 1
+    return (incidental, *_recency_key(candidate))
 
 
 def _recency_key(candidate: ScanCandidate) -> tuple[int, float, str]:
