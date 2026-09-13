@@ -57,10 +57,40 @@ def translate(
         ("TransientError", ProviderErrorCategory.TRANSIENT_ERROR),
         ("DeadlineExceededError", ProviderErrorCategory.TRANSIENT_ERROR),
         ("FailedDependencyError", ProviderErrorCategory.TRANSIENT_ERROR),
+        # vt-py's own shaping of responses it could not read (Task 24 Phase 3):
+        # every 5xx, and a 4xx whose body is not JSON.
+        ("ServerError", ProviderErrorCategory.TRANSIENT_ERROR),
+        ("ClientError", ProviderErrorCategory.PROVIDER_UNAVAILABLE),
     ],
 )
 def test_documented_codes_map_as_specified(code: str, expected: ProviderErrorCategory) -> None:
     assert category_for_gti_code(code) is expected
+
+
+@pytest.mark.parametrize("code", ["ServerError", "ClientError"])
+def test_a_raw_response_body_never_becomes_the_error_message(code: str) -> None:
+    """vt-py puts the whole body -- an HTML error page at best -- in the message."""
+    error = translate(APIError(code, "<html><body>502 Bad Gateway sk-live-abcdef</body></html>"))
+    assert "html" not in str(error).lower()
+    assert "sk-live" not in str(error)
+    assert error.category in {
+        ProviderErrorCategory.TRANSIENT_ERROR,
+        ProviderErrorCategory.PROVIDER_UNAVAILABLE,
+    }
+
+
+def test_an_unreadable_200_body_is_a_schema_error_not_an_outage() -> None:
+    """Non-JSON with a 200, or JSON that does not parse, is a shape change:
+    not retried as unreachable, not left unknown."""
+    import json
+
+    from aiohttp import ContentTypeError, RequestInfo
+
+    info = RequestInfo(url=None, method="GET", headers={}, real_url=None)  # type: ignore[arg-type]
+    content = translate(ContentTypeError(info, (), status=200, message="unexpected mimetype"))
+    assert content.category is ProviderErrorCategory.SCHEMA_ERROR
+    decode = translate(json.JSONDecodeError("Expecting value", "<html>", 0))
+    assert decode.category is ProviderErrorCategory.SCHEMA_ERROR
 
 
 def test_an_unknown_code_is_unknown_not_guessed() -> None:

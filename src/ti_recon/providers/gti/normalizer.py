@@ -1378,10 +1378,19 @@ def _related_object(
             return None
 
 
+#: The longest related value this normalizer will turn into an object -- the
+#: Task 3 model's own bound. A provider can return a contacted URL of any
+#: length, and one beyond the model refused at construction ended the whole
+#: lookup as a schema error, losing the reputation and sandbox evidence beside
+#: it (Task 24 Phase 3). Such a value is counted unresolved instead, and the
+#: graph's tighter node-key bound applies after that.
+_MAX_RELATED_VALUE_LENGTH: Final[int] = 4096
+
+
 def _identity_object(item: RelatedItem) -> IntelObject | None:
     """An object whose descriptor id is its value."""
     value = item.object_id.strip()
-    if not value:
+    if not value or len(value) > _MAX_RELATED_VALUE_LENGTH:
         return None
     if item.object_type == "ip_address":
         return _ip_object(value)
@@ -1442,6 +1451,8 @@ def _url_object(item: RelatedItem) -> IntelObject | None:
         value = source.get("url")
         if isinstance(value, str) and value.strip():
             url = value.strip()
+            if len(url) > _MAX_RELATED_VALUE_LENGTH:
+                return None
             return IntelObject(
                 object_class=ObjectClass.OBSERVABLE,
                 object_type=IntelObjectType.URL,
