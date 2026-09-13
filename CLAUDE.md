@@ -256,6 +256,35 @@ Implemented (Jira Tasks 1-19):
   capability leaves its other capabilities' gaps typed `NOT_ATTEMPTED` even
   when the provider answered `NOT_CONFIGURED`).
 
+- Task 24 Phase 3 — system-wide validation, adversarial testing and bug hunt,
+  through the installed plugin with GTI, abuse.ch and MISP configured.
+  Fixed, each at its earliest boundary with a regression: GTI's vt-py
+  `ServerError`/`ClientError` codes were unmapped, so an outage was never
+  retried and the raw body reached the error message; a GTI related value
+  beyond the model bound ended the whole lookup as a schema error; abuse.ch's
+  HTTP 404 and a present-but-unreadable `query_status` both read as
+  checked-with-no-data and were counted as coverage (and negatively cached);
+  urlscan swallowed every error category on per-scan retrieval; Hybrid
+  Analysis ignored `Retry-After`; an IPv6 zone identifier became part of an
+  observable; a provider-returned related value that TI Recon's own normalizer
+  would change or refuse could be disclosed as a pivot; GTI's DEEP-only
+  behaviour capability was selected at STANDARD, refused in the adapter and
+  charged as a remote run (`capability_minimum_depth`); a corroboration
+  round that reached only an unconfigured source was reported as obtained;
+  T24-FINDING-09 (a bundled attempt now carries its bundle and readiness
+  buckets it under every carried capability); T24-FINDING-04 (material
+  correlation issues reach the report and its text); T24-FINDING-01 (the
+  report's `context` section names the warninglist and the matched entry;
+  `ANALYST_REPORT_SCHEMA_VERSION` 1.1.0). Reviewed and kept as policy:
+  T24-FINDING-05 (`campaigns` past the DEEP file relationship cap) and
+  T24-FINDING-08 (mixed GTI counts stay one weak claim), with a calibration
+  plan for T24-CALIBRATION-01 in `docs/providers/gti.md`. Recorded, not
+  fixed: T24-FINDING-10 (a URL whose host is an IP literal derives no
+  warninglist host candidate). Live: the abuse.ch dataset sweep for a hash
+  whose first dataset is empty is by design and consumes the STANDARD
+  allowance, so `corroborate` obtains nothing for such a hash with the current
+  catalogue and says so.
+
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Task 13 chooses what
 to ask, Task 14 assembles what came back, Task 15 says what each finding means in
@@ -2176,6 +2205,66 @@ about it.
      inferred from a verdict, and when nothing independent is eligible or
      affordable it records `CORROBORATION_NOT_OBTAINED` and changes nothing.
      Whether the answer was independent is settled by Task 17 from provenance.
+
+184. **A response a client library could not read is an outage or a shape
+     change, never an unknown, and its body is never kept.** vt-py's
+     `ServerError` (5xx) is transient and retried with a cooldown;
+     `ClientError` (non-JSON 4xx) is unavailable; an unreadable 200 is a schema
+     error. The message is fixed text: an edge proxy's HTML page is not
+     something the redactor can vouch for. abuse.ch reports absence only in
+     the body, so an HTTP 404 is a schema error and a `query_status` that is
+     present but not an enum-shaped token is `UNREADABLE_QUERY_STATUS` →
+     schema error; only an *absent* field means success. A refusal must never
+     become checked-with-no-data, because the planner counts that as an
+     answered family and the cache keeps it.
+
+185. **A per-document failure degrades; a per-provider failure is raised.**
+     urlscan degrades a lookup to `PARTIAL` only for a scan or artifact that is
+     missing, refused or plan-limited. A throttle, a spent quota, a rejected
+     credential or a transport failure is about the provider and reaches
+     Task 6, which owns retry, cooldown and stopping; swallowing it spent the
+     remaining candidates' requests and reported an authentication failure as
+     partial coverage.
+
+186. **A provider-returned value is not an observable until TI Recon's own
+     normalizer says so.** A related value beyond the model's bound is counted
+     unresolved by the provider normalizer rather than allowed to end the
+     lookup; a pivot target must normalize, through the analyst-facing
+     normalizer, to the same type and canonical value before it may be
+     disclosed (`UNNORMALIZABLE_TARGET`); and an IPv6 zone identifier is
+     refused as part of an address, because an interface name is not identity
+     and must not be sent anywhere.
+
+187. **A capability a provider serves only from a deeper investigation is
+     never bought below it.** `ProviderPlanningProfile.capability_minimum_depth`
+     is the provider's own declaration, checked before cost and budget, so the
+     planner skips the call with `DEPTH_TOO_SHALLOW` instead of selecting it,
+     having the adapter refuse it, and charging the refusal as a remote run.
+     The adapter's refusal stays as defence in depth.
+
+188. **Corroboration is obtained only when an independent source answered.**
+     A corroboration round that reached only an unconfigured, blocked or
+     errored candidate moved the attempt count and corroborated nothing; it
+     records `CORROBORATION_NOT_OBTAINED`. Obtained means a new attempt gained
+     coverage — with data or with none.
+
+189. **A bundled attempt carries its bundle, and readiness reads all of it.**
+     `ProviderAttempt.capabilities` is every capability the one call requested;
+     the ledger buckets the attempt under each, with the call's completion and,
+     for a secondary, a yield of `UNATTRIBUTED` when it completed and `NONE`
+     when it did not — never `DIRECTIONAL`, `CONTEXT_ONLY` or `NO_DATA`. A
+     refusal refused every question the call carried, so no secondary reads
+     `not_attempted` and no continuation is asked for a path the same call
+     already showed blocked. One attempt, one budget unit, one trace row.
+
+190. **What was deliberately not shown is shown.** Material correlation issues
+     — a related object refused for a bound, two samples kept apart, a ceiling
+     reached — reach the report under `layer="correlation"`, deduplicated and
+     capped, and the text renderer prints them under a gloss that says they are
+     about the run and never about the observable; payload diagnostics stay
+     internal. And a warninglist match names its list and its entry in the
+     report's `context` section, one line per dataset match, always followed
+     by "context only, explains nothing by itself".
 
 ## Security rules
 

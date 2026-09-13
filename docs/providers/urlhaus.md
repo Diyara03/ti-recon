@@ -245,6 +245,16 @@ An IPv6 address, or a file identified only by SHA-1, is
 
 ## 11. Errors, caching and isolation
 
+Two shape distinctions hold across the three abuse.ch platforms (Task 24
+Phase 3). An HTTP 404 is a retired path or a misrouted host — these APIs report
+an absent record only in the body — so it is `SCHEMA_ERROR`, never `NO_DATA`.
+And a `query_status` that is present but not an enum-shaped token
+(`"Unknown Auth-Key"`, a number, an empty string) is
+`UNREADABLE_QUERY_STATUS` → `SCHEMA_ERROR`; only an *absent* field means
+success. Before this, both read as checked-with-no-data, and the planner
+counted the family as answered.
+
+
 Outcomes arrive in the body: `no_results`, `invalid_url`, `no_api_key` and
 `user_blacklisted` all come back as HTTP 200, so the adapter checks
 `query_status` before reading the payload.

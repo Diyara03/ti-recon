@@ -117,6 +117,16 @@ A URL is never disclosed automatically when it carries userinfo, or a query
 parameter whose *name* looks like a credential. Only the name is inspected; the
 value is never read, logged or stored. Reason code `SENSITIVE_URL`.
 
+### Targets that do not normalize to themselves
+
+A related object is built by a provider normalizer from provider text, and
+several do less than the analyst-facing normalizer: an upper-case domain, a
+host carrying a space or a port, a URL with an unsupported scheme. Before it
+can be disclosed, a target must normalize — through TI Recon's own normalizer —
+to the same type and the same canonical value. One that does not is skipped,
+fail-closed, with `UNNORMALIZABLE_TARGET`, before any privacy rule is
+consulted (Task 24 Phase 3).
+
 Stripping the query and looking up "the same URL" is refused outright: that would
 be asking about a **different observable** and reporting the answer as though it
 were about this one. The URL's host is a separate node and is considered on its
@@ -240,6 +250,7 @@ Skips:
 ```
 MODE_DISABLED        RECOMMEND_ONLY         RELATION_NOT_ELIGIBLE
 ALREADY_ENRICHED     NON_GLOBAL_IP          SENSITIVE_URL
+UNNORMALIZABLE_TARGET
 UNLINKED_OBJECT      UNSUPPORTED_TARGET     HOP_LIMIT
 TARGET_BUDGET        REMOTE_BUDGET          REMOTE_PIVOTS_DISABLED
 GRAPH_LIMIT

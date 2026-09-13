@@ -22,8 +22,12 @@ debugging a disagreement between layers.
 
 ## Versioning
 
-`ANALYST_REPORT_SCHEMA_VERSION` is `1.0.0`, and is deliberately separate from
-the workflow and policy versions the report carries.
+`ANALYST_REPORT_SCHEMA_VERSION` is `1.1.0`, and is deliberately separate from
+the workflow and policy versions the report carries. `1.1.0` (Task 24) is
+additive: `highlights`, `qualification` and `qualification_reasons` on basis
+items, `request.objective`, `provider_id` on issues, and the `context`
+section; every field has a default, so a `1.0.0` consumer reads a `1.1.0`
+report unchanged.
 
 They change for different reasons. A fusion policy bump means the engine would
 decide something differently; a schema bump means an application has to
@@ -55,10 +59,12 @@ second opinion formed here would eventually disagree with the first.
 | `alternative_explanations` | Task 16 `ALTERNATIVE_EXPLANATION` findings with an `EXPLAINS` link | any other finding role |
 | `unexplained_evidence` | Task 17 dispositions | re-derived by inspecting findings |
 | `conflicts` | Task 17 conflicts | resolved, balanced, or given a winner |
+| `context` | Task 15 context signals, one line per dataset match | read as a verdict, as safety, or as a reason to discount evidence — whether context explains a detection is Task 16's and appears under `alternative_explanations` |
 | `qualifications` | Task 15 temporal facts | given a freshness label or a decay |
 | `coverage` / `gaps` | Task 18 evaluations | re-judged for adequacy |
 | `related_observables` | Task 14 graph edges | called indicators |
 | `source_checks` | Task 13 attempts | counted as votes |
+| `issues` | workflow, fusion and *material* correlation issues (a related object refused for a bound, two samples kept apart, a ceiling reached) | presented as findings about the observable; payload diagnostics stay internal |
 
 ## The schema is where the meaning lives
 
@@ -77,6 +83,7 @@ their vocabulary inline, in the schema:
 | `source_checks[].status` | `not_configured` as *not checked*, distinct from a source that answered and held nothing |
 | `source_checks[].cache_hit` | a real check that made no new request |
 | `request.objective` | what the caller asked the collection to stop on; never whether corroboration was obtained |
+| `context[].signal_type`, `dataset_name`, `matched_entry` | which dataset listed the object and as what — "Matched misp list: Reserved IPv4 (rfc5735); matched 192.0.2.0/24" — context only, never a verdict; a `same_host` item with `host_component_only` describes the host, not the URL |
 | `related_observables[].assessed` | `false` means a relationship, not an indicator |
 | `assessment_basis[].highlights`, `unexplained_evidence[].highlights` | what the source said about its own claim, bounded; quoted by the text renderer as `said:` lines, never weighed |
 | `assessment_basis[].qualification`, `qualification_reasons` | what the provider's own versioned test said about the basis behind the claim (`strong_direct` / `not_strong` / `unqualified`); evidence strength from one origin, never independence and never a probability |

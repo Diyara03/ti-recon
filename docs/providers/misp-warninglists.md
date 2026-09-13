@@ -453,11 +453,19 @@ They become a single `misp_warninglist_matches` record with bounded per-list
 detail — one Evidence per list would let a single curated dataset outvote
 genuinely independent intelligence purely by being thorough.
 
-Each match record carries: `list`, `matcher`, `matched_entry`,
+Each match record carries: `list`, `list_name`, `matcher`, `matched_entry`,
 `candidate_attribute_type`, `candidate_component`, `match_scope`,
 `list_entry_count`, `matching_attributes`, and `matched_by_hash` for a file. The
 matched entry is kept because it makes the finding checkable; **one** entry,
-never the list.
+never the list. `list_name` is the upstream list's own name, bounded, so the
+analyst report can say "Matched misp list: Reserved IPv4 (rfc5735)" rather than
+a slug alone (Task 24 Phase 3); the upstream *description* is prose and is
+deliberately not carried. Both the name and the matched entry travel on the
+Task 15 context signal and reach the report's `context` section.
+
+A URL whose host is an IP literal currently derives no host-component
+candidate, so a warninglist match on that address is not found through the
+URL. Recorded as T24-FINDING-10; a hostname host is derived as documented in §6.
 
 There is **no `category` field**. MISP's runtime database and Feedback expose
 `false_positive` and `known`, but the raw upstream schema does not — so putting

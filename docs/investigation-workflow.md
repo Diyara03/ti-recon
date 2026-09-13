@@ -74,7 +74,7 @@ Two things that must not be conflated (Task 24 Phase 2):
 |---|---|---|
 | readiness adequate | **stop** — an eligible extra source is not a reason to spend quota | one bounded extra round: `ADDITIONAL_COVERAGE` on the adverse-search capabilities this depth admits, avoiding the families the verdict already rests on |
 | readiness inadequate | ordinary continuation | ordinary continuation; the corroboration round exists only past adequate readiness |
-| nothing independent eligible or affordable | — | `CORROBORATION_NOT_OBTAINED` issue, verdict and confidence untouched |
+| nothing independent *answered* (unconfigured, blocked, errored, or unaffordable) | — | `CORROBORATION_NOT_OBTAINED` issue, verdict and confidence untouched |
 
 `InvestigationObjective` is the structured form of an analyst saying "confirm
 this with another source". It reaches the workflow through the Task 20 request,

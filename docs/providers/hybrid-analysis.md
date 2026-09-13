@@ -261,6 +261,11 @@ specific threat, zero processes and zero network activity never become
 
 ## 9. Status, quota and errors
 
+A `Retry-After` on a 429 is read as a numeric offset and handed to Task 6, so
+the wait is the one the provider asked for rather than the unknown-delay
+default (Task 24 Phase 3).
+
+
 | Status | When |
 |---|---|
 | `SUCCESS` | reports exist and were read as planned |

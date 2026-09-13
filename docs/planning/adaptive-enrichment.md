@@ -293,6 +293,14 @@ judgement the rule exists to make for them — but never lowers a provider's
 `minimum_depth`, because depth is the caller's own statement about how much work
 this investigation warrants.
 
+A provider may also declare a floor **per capability**
+(`ProviderPlanningProfile.capability_minimum_depth`, Task 24 Phase 3): GTI
+answers reputation at QUICK and detonation data only at DEEP. The planner
+skips such a capability below its floor with `DEPTH_TOO_SHALLOW` before cost
+and budget are consulted, so a call the adapter would refuse is never
+selected, never charged and never recorded as an attempt. The adapter's own
+refusal stays as defence in depth.
+
 ---
 
 ## 8. What counts as an answer
