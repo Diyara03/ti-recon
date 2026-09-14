@@ -71,8 +71,9 @@ def test_capabilities_are_enrichment_shaped() -> None:
             ProviderCapability.REPUTATION,
             ProviderCapability.WEB_BEHAVIOR,
             ProviderCapability.HISTORICAL_INFRASTRUCTURE,
-            ProviderCapability.CURRENT_INFRASTRUCTURE,
             ProviderCapability.RELATIONSHIPS,
             ProviderCapability.WEB_FORENSICS,
         }
     )
+    # A stored scan is a historical record; nothing in it is observable now.
+    assert ProviderCapability.CURRENT_INFRASTRUCTURE not in descriptor.capabilities

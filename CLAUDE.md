@@ -334,6 +334,47 @@ Implemented (Jira Tasks 1-19):
   `NO_DATA` satisfies a one-family relevant target while a materially
   different eligible family remains; see `docs/planning/adaptive-enrichment.md`).
 
+- Task 24 Phase 6 — urlscan capability honesty and observable scoping.
+  Reproduced offline over the shipped fixture: US-01 (for an address the
+  search is `page.ip:X OR ip:X`, so a hit may be a page that merely loaded a
+  resource from X; every verdict record from such a scan was emitted with
+  the address as subject at `cluster` scope, fusion read it as corroborative
+  support, and an address a flagged page merely contacted came out
+  SUSPICIOUS — verdicts and hosting facts from an incidental scan now have
+  the scanned page as subject at exact scope, the page is in the envelope,
+  the `contacts` link to the observable stays, and the address is
+  INCONCLUSIVE); US-04 (selection ranked by recency alone, so the retrieval
+  budget could go to incidental contacts before the scan hosted on the
+  observable; primary-scope scans now rank first, then recency, cap and
+  tie-break as before); US-03 (`enrich_primary_object` copied the page's
+  address, network, server and certificate onto the observable regardless of
+  scope; it now copies only when the page *is* the observable); US-02
+  (`CURRENT_INFRASTRUCTURE` was declared for a historical scan archive with
+  no freshness invariant and outranked the provider that observes the
+  present; undeclared, `HISTORICAL_INFRASTRUCTURE` kept, listed in
+  `URLSCAN_UNDECLARED_CAPABILITIES`); US-05 (doc drift on the IP relationship
+  and the result-404 meaning). One identity rule in
+  `providers/urlscan/identity.py` serves the selector and the normalizer.
+  Recorded, not changed: US-POLICY-01 (addresses have no
+  historical-infrastructure goal) and US-REPORTING-01 (urlscan verdict
+  highlights). Live through the installed plugin (`example.com`, STANDARD):
+  every urlscan invariant held, and the honest declaration exposed US-06 —
+  with no shipped provider serving `CURRENT_INFRASTRUCTURE` for a domain,
+  the planner dropped the template goal *and every record of it*, readiness
+  rebuilt the requirement from the template and typed the absence
+  `not_attempted` with more data available, and the workflow ended
+  `no_actionable_continuation`. Fixed where the fact is known: the planner
+  keeps such a goal as unservable and emits a `NOT_COVERED` coverage item
+  with nobody considered (`CAPABILITY_UNAVAILABLE_REASON`), readiness reads
+  that structure as `capability_unavailable` with no remaining path
+  (`CoverageItem.catalogue_unavailable`), the workflow's admissible envelope
+  excludes it, and the run ends `readiness_exhausted`. Unavailable is kept
+  apart from not-configured (a compatible provider exists and lacks a
+  credential), not-attempted (a compatible provider exists and was not
+  called), blocked (budget, quota, cooldown), no-data (a source answered and
+  held nothing) and out-of-depth or never-activated (the depth rule or the
+  activation rule speaks first). urlscan semantics are unchanged.
+
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Task 13 chooses what
 to ask, Task 14 assembles what came back, Task 15 says what each finding means in
@@ -711,9 +752,16 @@ about it.
     unconfigured or denied changes who answers it and never whether the goal
     exists. `catalog.py` is the only module under `planning/` that may name a
     provider, and a test reads the AST of every other one to prove it. A goal no
-    registered provider can serve for this observable is dropped rather than
-    carried, because a permanently unsatisfiable goal reports a catalogue blind
-    spot as a provider failure.
+    registered provider can serve for this observable is never *planned* —
+    a permanently unsatisfiable goal would report a catalogue blind spot as a
+    provider failure — but it is never forgotten either: it is kept as an
+    unservable goal and reported as a `NOT_COVERED` coverage item with an
+    empty `providers_considered`, the one structural statement a later layer
+    can read as "the catalogue has no path" rather than "nobody was asked"
+    (Task 24, US-06). Servability is descriptor compatibility for the
+    observable type alone — capability *and* type, never capability name —
+    so a provider that serves the capability only at a deeper investigation
+    still makes the goal servable and the depth rule records its own skip.
 
 40. **Coverage is counted per source family, and satisfaction is not knowledge.**
     Three abuse.ch platforms answering is one family; one provider's twenty
@@ -2365,6 +2413,22 @@ about it.
      satisfied the moment it activated leaves no other trace. A goal with no
      attempt, no answered family and only inactive skips stays
      `NOT_APPLICABLE`.
+
+195. **A search match is not a claim scope, and contacted is not accused.** A
+     stored-scan hit says only that the scan matched the query; which page
+     the browser landed on is a separate fact, and what each record is about
+     is a third. A verdict describes the page the browser judged: where the
+     observable is merely something that page contacted, the verdict's
+     subject is the page, at exact scope for the page, with the observable
+     linked to it through the contact relationship the scan asserts — never
+     the observable at a loose scope, which fusion would read as support.
+     The observable inherits a page's hosting facts as properties only when
+     the page *is* the observable. Retrieval spends its budget on the
+     observable's own scans before incidental ones. And an archive of
+     historical visits declares `HISTORICAL_INFRASTRUCTURE`, never
+     `CURRENT_INFRASTRUCTURE`: a scan-time snapshot with no freshness
+     invariant is not an observation of now, and no age threshold turns it
+     into one.
 
 ## Security rules
 

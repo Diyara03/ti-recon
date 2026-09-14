@@ -97,6 +97,7 @@ from ti_recon.planning.ranking import (
 )
 from ti_recon.planning.state import (
     BLOCKING_ERROR_CATEGORIES,
+    CAPABILITY_UNAVAILABLE_REASON,
     COVERING_STATUSES,
     PARTIAL_STATUSES,
     PlanningState,
@@ -104,6 +105,7 @@ from ti_recon.planning.state import (
 
 __all__ = [
     "BLOCKING_ERROR_CATEGORIES",
+    "CAPABILITY_UNAVAILABLE_REASON",
     "COST_ORDER",
     "COVERING_STATUSES",
     "DEFAULT_BUDGETS",

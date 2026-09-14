@@ -43,6 +43,7 @@ __all__ = [
     "URLSCAN_PROVIDER_ID",
     "URLSCAN_SOURCE_FAMILY",
     "URLSCAN_SUPPORTED_OBJECT_TYPES",
+    "URLSCAN_UNDECLARED_CAPABILITIES",
     "build_urlscan_descriptor",
     "build_urlscan_planning_profile",
 ]
@@ -80,15 +81,28 @@ URLSCAN_SUPPORTED_OBJECT_TYPES: Final[frozenset[IntelObjectType]] = frozenset(
 #: depth, because retrieving stored page artifacts is far more expensive than
 #: reading a scan summary. Declaring it here says "this provider can serve that
 #: request", not "this provider does that on every lookup".
+#:
+#: ``CURRENT_INFRASTRUCTURE`` is deliberately absent. A search hit is a
+#: historical scan record: the page's address, network, server and
+#: certificate are what a browser saw at ``task.time``, which at DEEP may be
+#: years ago, and nothing in the integration establishes that any of it is
+#: observable now. That is ``HISTORICAL_INFRASTRUCTURE``, declared below.
+#: Declaring the current one let a scan-time snapshot close a goal that a
+#: provider observing the present would otherwise answer (Task 24, US-02).
 URLSCAN_CAPABILITIES: Final[frozenset[ProviderCapability]] = frozenset(
     {
         ProviderCapability.REPUTATION,
         ProviderCapability.WEB_BEHAVIOR,
         ProviderCapability.HISTORICAL_INFRASTRUCTURE,
-        ProviderCapability.CURRENT_INFRASTRUCTURE,
         ProviderCapability.RELATIONSHIPS,
         ProviderCapability.WEB_FORENSICS,
     }
+)
+
+#: Capabilities urlscan's data looks like it could serve and deliberately does
+#: not declare, so the omission is visible and tested rather than accidental.
+URLSCAN_UNDECLARED_CAPABILITIES: Final[frozenset[ProviderCapability]] = frozenset(
+    {ProviderCapability.CURRENT_INFRASTRUCTURE}
 )
 
 

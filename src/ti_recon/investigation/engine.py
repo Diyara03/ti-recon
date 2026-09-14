@@ -409,8 +409,15 @@ class InvestigationOrchestrator:
             # Frozen once, from the round that ran under the caller's request
             # alone. Recomputing it later would let each round's own directives
             # widen the envelope they are supposed to be bounded by.
+            #
+            # A capability Task 13 recorded as a catalogue blind spot is admitted
+            # by the depth but askable of nobody: a directive naming it would
+            # plan nothing, and a breadth directive would spend a round finding
+            # that out. Readiness already reports it as having no remaining path.
             state.admissible = frozenset(
-                item.capability for item in correlated.root_enrichment.coverage
+                item.capability
+                for item in correlated.root_enrichment.coverage
+                if not item.catalogue_unavailable
             )
         before_envelopes = len(state.envelopes)
         state.envelopes = list(state.session.envelopes())

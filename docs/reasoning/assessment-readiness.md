@@ -169,12 +169,25 @@ run" is not a gap.
 
 ### Capability availability is a catalogue fact
 
-`CAPABILITY_UNAVAILABLE` is inferred from an uncovered `CoverageItem` whose
-`providers_considered` is empty. That is safe because Task 13 builds that list by
-walking the registry and asking each descriptor whether it supports the
-capability for this object type — "candidacy, not success or configuration" —
-before budget, credentials, activation, depth or ranking touch anything. So an
-empty set is a statement about the catalogue, not about this particular run.
+`CAPABILITY_UNAVAILABLE` is read from an uncovered `CoverageItem` whose
+`providers_considered` is empty — `CoverageItem.catalogue_unavailable`, a
+structural test that never reads the reason text. That is safe because Task 13
+builds that list by walking the registry and asking each descriptor whether it
+supports the capability for this object type — "candidacy, not success or
+configuration" — before budget, credentials, activation, depth or ranking touch
+anything. So an empty set is a statement about the catalogue, not about this
+particular run. Readiness walks no catalogue of its own: the planner is the only
+layer that knows who exists, and since Task 24 (US-06) it records a template
+goal nobody can serve as exactly this item instead of dropping it — which had
+left readiness, rebuilding the requirement from the template, to read the absence
+of any record as `NOT_ATTEMPTED` with a path remaining.
+
+The neighbouring states are never collapsed into it: a compatible provider that
+lacks a credential is `NOT_CONFIGURED` (blocked, a credential can be supplied);
+one that was not called is `NOT_ATTEMPTED` (continuable); one stopped by
+allowance, quota or cooldown is `BUDGET_LIMITED`, `QUOTA_EXCEEDED` or
+`TEMPORARILY_UNAVAILABLE`; one that answered nothing completed its check; and a
+goal the depth or activation rule kept out of play is not applicable at all.
 
 Where the two kinds of fact disagree, **execution history outranks catalogue
 inference**: a recorded budget skip is direct evidence that a candidate existed,

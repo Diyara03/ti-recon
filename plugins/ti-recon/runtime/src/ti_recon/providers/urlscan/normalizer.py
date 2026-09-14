@@ -26,26 +26,32 @@ mistake it for independent corroboration of urlscan's own view.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Final
 
 from ti_recon.enums import (
     EvidenceClass,
     EvidenceEffect,
-    IntelObjectType,
     MatchScope,
 )
 from ti_recon.models.base import FrozenTiReconModel
 from ti_recon.models.evidence import Evidence
 from ti_recon.models.intel_object import IntelObject
 from ti_recon.models.relationship import Relationship
+from ti_recon.normalization.errors import NormalizationError
+from ti_recon.normalization.observables import normalize_url
 from ti_recon.providers.urlscan.descriptor import (
     URLSCAN_ORIGIN_PROVIDER,
     URLSCAN_PROVIDER_ID,
     URLSCAN_SOURCE_FAMILY,
 )
 from ti_recon.providers.urlscan.errors import parse_utc_timestamp
+from ti_recon.providers.urlscan.identity import (
+    is_incidental,
+    page_is_observable,
+    page_match_scope,
+)
 
 __all__ = [
     "ENGINE_AGGREGATE_FAMILY",
@@ -68,6 +74,8 @@ __all__ = [
     "normalize_page_context",
     "normalize_scan_observation",
     "normalize_verdicts",
+    "page_object_for",
+    "page_subject",
 ]
 
 #: urlscan-specific facts live under one key rather than being spread across
@@ -256,30 +264,58 @@ class ScanDocument:
 def match_scope_for_scan(subject: IntelObject, document: ScanDocument) -> MatchScope:
     """How precisely one scan applies to the observable that was submitted.
 
-    This is the difference between "urlscan saw *this URL* serving a phishing
-    kit" and "urlscan saw *something on this IP* serving one". Both are
-    evidence; only the first is about the observable itself.
+    The rule itself lives in :mod:`ti_recon.providers.urlscan.identity`, where
+    the search selector reads the same judgement from a search hit before any
+    result is retrieved. Two readers, one rule.
     """
-    value = subject.canonical_value
-    match subject.object_type:
-        case IntelObjectType.URL:
-            if document.page_url == value or document.submitted_url == value:
-                return MatchScope.EXACT_OBSERVABLE
-            return MatchScope.SAME_HOST
-        case IntelObjectType.DOMAIN_NAME:
-            if document.page_domain == value:
-                return MatchScope.SAME_HOST
-            if document.page_domain and document.page_domain.endswith(f".{value}"):
-                return MatchScope.PARENT_DOMAIN
-            # The domain was contacted by the page rather than being the page.
-            return MatchScope.CLUSTER
-        case IntelObjectType.IPV4_ADDR | IntelObjectType.IPV6_ADDR:
-            return MatchScope.SAME_IP if document.page_ip == value else MatchScope.CLUSTER
-        case IntelObjectType.FILE:
-            # The observable is a response body the page served, not the page.
-            return MatchScope.SAME_HOST
-        case _:
-            return MatchScope.UNKNOWN
+    return page_match_scope(
+        subject,
+        page_url=document.page_url,
+        submitted_url=document.submitted_url,
+        page_domain=document.page_domain,
+        page_ip=document.page_ip,
+    )
+
+
+def page_object_for(document: ScanDocument) -> IntelObject | None:
+    """The page the browser ended on, as an object records can be *about*."""
+    url = document.page_url
+    if not url:
+        return None
+    try:
+        return normalize_url(url)
+    except NormalizationError:
+        return None
+
+
+def page_subject(
+    context: NormalizationContext, document: ScanDocument
+) -> tuple[NormalizationContext, IntelObject | None]:
+    """The context a record about *the page* is built under.
+
+    Where the scan is about the observable, or its neighbourhood, the record
+    keeps the observable as its subject and the scan's scope. Where the
+    observable is merely something the page contacted (an incidental scope),
+    the page is what the record describes: the returned context names the
+    page object as the subject at exact scope, and the object is returned so
+    the caller can put it in the envelope. A verdict about a page that loaded
+    a font from an address is not a verdict about the address (US-01), and a
+    page's hosting facts are not the address's (US-03).
+
+    If the page URL cannot be normalized, the caller gets the original
+    context back and the record stays scoped as before: a record the graph
+    cannot anchor is still worth keeping, at the scope that says how loosely
+    it applies.
+    """
+    if not is_incidental(context.match_scope):
+        return context, None
+    page = page_object_for(document)
+    if page is None:
+        return context, None
+    return (
+        replace(context, subject_object_id=page.id, match_scope=MatchScope.EXACT_OBSERVABLE),
+        page,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -301,15 +337,21 @@ def normalize_verdicts(
     if not verdicts:
         return UrlscanNormalization()
 
+    # A verdict is about the page the browser judged. Where the observable is
+    # merely something that page contacted, the verdict's subject is the page
+    # (Task 24, US-01): it stays visible as intelligence about a related
+    # object, and Task 17 never lets a claim about another object vote for
+    # the observable.
+    about, page = page_subject(context, document)
     results = [
-        _urlscan_verdict_evidence(context, document),
-        _engine_aggregate_evidence(context, document),
-        _community_evidence(context, document),
+        _urlscan_verdict_evidence(about, document),
+        _engine_aggregate_evidence(about, document),
+        _community_evidence(about, document),
     ]
     evidence = tuple(item for item in results if item is not None)
     if not evidence:
         return UrlscanNormalization(warnings=(URLSCAN_VERDICTS_UNREADABLE,), degraded=True)
-    return UrlscanNormalization(evidence=evidence)
+    return UrlscanNormalization(evidence=evidence, objects=() if page is None else (page,))
 
 
 def _urlscan_verdict_evidence(
@@ -506,6 +548,11 @@ def normalize_page_context(
     if not page:
         return UrlscanNormalization()
 
+    # Hosting facts describe the page's host. Where the observable is only
+    # something the page contacted, they are attached to the page, not to the
+    # observable (Task 24, US-03 at the evidence layer).
+    about, page_object = page_subject(context, document)
+
     attributes: dict[str, Any] = {}
     for name in ("asn", "asnname", "country", "city", "server", "tlsIssuer"):
         value = text(page.get(name), _MAX_LABEL)
@@ -523,14 +570,16 @@ def normalize_page_context(
         return UrlscanNormalization()
 
     evidence = build_evidence(
-        context,
+        about,
         evidence_class=EvidenceClass.CONTEXT,
         claim_type="urlscan_page_context",
         effect=EvidenceEffect.CONTEXT_ONLY,
         attributes=attributes,
         observed_at=document.scanned_at,
     )
-    return UrlscanNormalization(evidence=(evidence,))
+    return UrlscanNormalization(
+        evidence=(evidence,), objects=() if page_object is None else (page_object,)
+    )
 
 
 def enrich_primary_object(submitted: IntelObject, document: ScanDocument) -> IntelObject:
@@ -540,9 +589,25 @@ def enrich_primary_object(submitted: IntelObject, document: ScanDocument) -> Int
     that address, what the server called itself. Judgements stay in evidence,
     where they have a provenance and a moment of observation that a property
     cannot carry.
+
+    And only when the page *is* the observable (:func:`page_is_observable`).
+    A scan that matched because the page contacted the observable, landed on a
+    different URL after a redirect, or served a subdomain describes another
+    host's address, network, server and certificate; copying those onto the
+    submitted object gave an address that a phishing page merely loaded a font
+    from that page's ASN as its own (Task 24, US-03). The relationships the
+    scan asserts are untouched by this refusal.
     """
-    metadata: dict[str, Any] = {}
     page = document.block("page")
+    if not page_is_observable(
+        submitted,
+        page_url=document.page_url,
+        page_domain=document.page_domain,
+        page_ip=document.page_ip,
+    ):
+        return submitted
+
+    metadata: dict[str, Any] = {}
     for name in PAGE_METADATA_FIELDS:
         value = scalar(page.get(name))
         if value is not None:

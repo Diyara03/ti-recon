@@ -104,23 +104,27 @@ class AdaptiveEnrichmentPlanner:
     ) -> PlanningState:
         """Build the starting state, with goals the registry can actually serve.
 
-        A goal nothing can satisfy is dropped rather than carried: it would
-        produce a permanently unsatisfiable plan and report a coverage gap as
-        though a provider had failed, when in fact nobody offers the capability
-        for this observable type. That distinction is preserved in coverage as a
-        different reason.
+        A goal nothing can satisfy is not *planned*: it would produce a
+        permanently unsatisfiable plan, a candidate search that finds nobody
+        every round, and a stop reason describing a provider failure when in
+        fact nobody offers the capability for this observable type. It is not
+        forgotten either. It is kept as an *unservable* goal so coverage can
+        state the blind spot -- ``NOT_COVERED`` with nobody considered -- which
+        is what lets a later layer tell "the catalogue has no path" from
+        "nobody was asked" (Task 24, US-06). Servability is decided by
+        descriptor compatibility for this observable type alone: a provider
+        that serves the capability only at a deeper investigation still makes
+        the goal servable, and the depth rule records its own skip.
         """
         self._validate_constraints(request)
         servable = self._servable_capabilities(request)
-        goals = tuple(
-            goal
-            for goal in self._policy.goals_for(
-                request.intel_object.object_type,
-                request.depth,
-                requested=request.requested_capabilities,
-            )
-            if goal.capability in servable
+        template = self._policy.goals_for(
+            request.intel_object.object_type,
+            request.depth,
+            requested=request.requested_capabilities,
         )
+        goals = tuple(goal for goal in template if goal.capability in servable)
+        unservable = tuple(goal for goal in template if goal.capability not in servable)
         if carry_over is not None:
             # A later round of the same investigation: everything already spent,
             # attempted and covered comes with it, so the allowance is
@@ -129,6 +133,7 @@ class AdaptiveEnrichmentPlanner:
             # template never included.
             return carry_over.continuation(
                 goals=goals,
+                unservable_goals=unservable,
                 requested=request.requested_capabilities,
                 focus=focus,
                 excluded_families=excluded_families,
@@ -140,6 +145,7 @@ class AdaptiveEnrichmentPlanner:
                 override_remote=request.constraints.max_remote_provider_runs,
             ),
             goals=goals,
+            unservable_goals=unservable,
             requested_capabilities=request.requested_capabilities,
         )
 

@@ -396,8 +396,4 @@ def has_no_eligible_source(item: CoverageItem | None) -> bool:
     path, not that a path failed. Reading the human-readable reason string would
     make this brittle the moment somebody rewords it.
     """
-    return (
-        item is not None
-        and item.status is CoverageStatus.NOT_COVERED
-        and not item.providers_considered
-    )
+    return item is not None and item.catalogue_unavailable
