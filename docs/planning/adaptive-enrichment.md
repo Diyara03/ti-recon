@@ -60,14 +60,42 @@ The consequence is the point: a provider being added, removed, renamed,
 unconfigured or denied changes which provider answers a goal and never whether
 the goal exists.
 
-### Goals nobody can serve are dropped
+### Goals nobody can serve are recorded, never planned
 
-`initial_state` keeps only goals some registered, plannable provider offers *for
+`initial_state` plans only goals some registered, plannable provider offers *for
 this observable type*. A goal nothing can satisfy would sit permanently
-unsatisfied and be reported as a coverage gap, as though a provider had failed.
-Coverage distinguishes the two cases in its reason text: "no registered provider
-offers this capability for this observable" is a blind spot in the catalogue, not
-a failure in the run.
+unsatisfied, send the candidate search looking for nobody every round, and end
+the run with a stop reason describing a provider failure. So it is not planned —
+and it is not dropped either. It is kept on the state as an **unservable goal**
+and reported as a `CoverageItem` with `status = NOT_COVERED`, an empty
+`providers_considered` and the reason `CAPABILITY_UNAVAILABLE_REASON` ("no
+registered provider offers this capability for this observable").
+
+That record is the only trace that the template asked and the catalogue could
+not answer, and it is what lets a later layer tell a blind spot from an
+unasked question. Before it existed (Task 24, US-06), readiness rebuilt the
+requirement from the same template, found neither an attempt nor a coverage
+item, and reported `not_attempted` with more data available; the workflow then
+asked for a continuation that named nothing it could request and stopped
+`no_actionable_continuation`. Readiness now reads `CoverageItem.catalogue_unavailable`
+— structure, never the reason text — as `CAPABILITY_UNAVAILABLE`, a terminal gap
+with no remaining path, and the workflow's admissible envelope excludes the
+capability so no directive can name it.
+
+Servability is decided by descriptor compatibility alone — **capability and
+observable type**, never capability name. A provider that serves the capability
+only at a deeper investigation still makes the goal servable at a shallower one;
+`capability_minimum_depth` records `DEPTH_TOO_SHALLOW`, and readiness reads that
+as out of depth. The states stay distinct all the way to the report:
+
+| The catalogue… | Planning record | Readiness gap |
+| --- | --- | --- |
+| has **no** compatible provider for this type | unservable goal; `NOT_COVERED`, nobody considered | `capability_unavailable`, no remaining path |
+| has one, and it lacks a credential | goal planned; attempt `NOT_CONFIGURED` | `not_configured`, blocked |
+| has one, and it was not called | goal planned; candidates listed | `not_attempted`, may address |
+| has one, and budget, quota or cooldown stopped it | goal planned; budget skip or blocked attempt | `budget_limited` / `quota_exceeded` / …, blocked or continuable |
+| has one, and it answered nothing | goal planned; attempt `NO_DATA` | none — a completed check |
+| has one, only at a deeper depth or behind a trigger | goal planned; `DEPTH_TOO_SHALLOW` / `GOAL_NOT_ACTIVE` skip | none — not applicable |
 
 ---
 

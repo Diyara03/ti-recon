@@ -357,7 +357,23 @@ Implemented (Jira Tasks 1-19):
   `providers/urlscan/identity.py` serves the selector and the normalizer.
   Recorded, not changed: US-POLICY-01 (addresses have no
   historical-infrastructure goal) and US-REPORTING-01 (urlscan verdict
-  highlights).
+  highlights). Live through the installed plugin (`example.com`, STANDARD):
+  every urlscan invariant held, and the honest declaration exposed US-06 —
+  with no shipped provider serving `CURRENT_INFRASTRUCTURE` for a domain,
+  the planner dropped the template goal *and every record of it*, readiness
+  rebuilt the requirement from the template and typed the absence
+  `not_attempted` with more data available, and the workflow ended
+  `no_actionable_continuation`. Fixed where the fact is known: the planner
+  keeps such a goal as unservable and emits a `NOT_COVERED` coverage item
+  with nobody considered (`CAPABILITY_UNAVAILABLE_REASON`), readiness reads
+  that structure as `capability_unavailable` with no remaining path
+  (`CoverageItem.catalogue_unavailable`), the workflow's admissible envelope
+  excludes it, and the run ends `readiness_exhausted`. Unavailable is kept
+  apart from not-configured (a compatible provider exists and lacks a
+  credential), not-attempted (a compatible provider exists and was not
+  called), blocked (budget, quota, cooldown), no-data (a source answered and
+  held nothing) and out-of-depth or never-activated (the depth rule or the
+  activation rule speaks first). urlscan semantics are unchanged.
 
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Task 13 chooses what
@@ -736,9 +752,16 @@ about it.
     unconfigured or denied changes who answers it and never whether the goal
     exists. `catalog.py` is the only module under `planning/` that may name a
     provider, and a test reads the AST of every other one to prove it. A goal no
-    registered provider can serve for this observable is dropped rather than
-    carried, because a permanently unsatisfiable goal reports a catalogue blind
-    spot as a provider failure.
+    registered provider can serve for this observable is never *planned* —
+    a permanently unsatisfiable goal would report a catalogue blind spot as a
+    provider failure — but it is never forgotten either: it is kept as an
+    unservable goal and reported as a `NOT_COVERED` coverage item with an
+    empty `providers_considered`, the one structural statement a later layer
+    can read as "the catalogue has no path" rather than "nobody was asked"
+    (Task 24, US-06). Servability is descriptor compatibility for the
+    observable type alone — capability *and* type, never capability name —
+    so a provider that serves the capability only at a deeper investigation
+    still makes the goal servable and the depth rule records its own skip.
 
 40. **Coverage is counted per source family, and satisfaction is not knowledge.**
     Three abuse.ch platforms answering is one family; one provider's twenty
