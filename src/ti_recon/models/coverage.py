@@ -45,3 +45,16 @@ class CoverageItem(FrozenTiReconModel):
             CoverageRelevance.REQUIRED,
             CoverageRelevance.RELEVANT,
         } and self.status in {CoverageStatus.NOT_COVERED, CoverageStatus.PARTIAL}
+
+    @property
+    def catalogue_unavailable(self) -> bool:
+        """Whether nothing registered could have served this capability at all.
+
+        Structural rather than textual: the planner records the providers it
+        considered *before* budget, credentials, activation, depth or ranking
+        touch anything, so an empty set beside an uncovered status says the
+        catalogue has no path for this observable type -- not that a path
+        failed, and not that nobody was asked. A reader keyed on the reason
+        text would break the moment somebody reworded it.
+        """
+        return self.status is CoverageStatus.NOT_COVERED and not self.providers_considered

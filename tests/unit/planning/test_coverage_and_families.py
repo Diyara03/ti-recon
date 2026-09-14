@@ -533,6 +533,18 @@ def test_an_unserved_requested_capability_is_reported_as_uncovered() -> None:
     assert all(goal.capability is not ProviderCapability.FILE_BEHAVIOR for goal in state.goals)
     considered = plan.providers_considered(request)
     assert ProviderCapability.FILE_BEHAVIOR not in considered
+    # Not planned, but not forgotten: the goal is on record as a catalogue blind
+    # spot -- uncovered, nobody considered -- so a later layer can tell "nobody
+    # offers this" from "nobody was asked" (Task 24, US-06).
+    assert ProviderCapability.FILE_BEHAVIOR in {goal.capability for goal in state.unservable_goals}
+    item = next(
+        item
+        for item in state.coverage_items(plan.depth_targets(request, state), considered)
+        if item.capability is ProviderCapability.FILE_BEHAVIOR
+    )
+    assert item.status is CoverageStatus.NOT_COVERED
+    assert item.providers_considered == ()
+    assert item.catalogue_unavailable
 
 
 def test_coverage_reports_a_required_goal_nobody_answered() -> None:
