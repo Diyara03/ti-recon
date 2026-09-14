@@ -373,6 +373,56 @@ result entirely.
 resolved attribution. It does not overwrite MalwareBazaar, ThreatFox or GTI, and
 alias reconciliation is a later concern.
 
+### The index is re-validated against the file we asked about
+
+`GET /search/hash` answers with **per-sample records**, and each states its own
+`sha256`, `sha1` and `md5`. Every record is checked against the digests the
+`file` object already carries: for each algorithm both sides state, the values
+must be *equal*. A record that states one we know and states it differently
+describes a different file — its reports are dropped and counted in coverage as
+`foreign_records_discarded`, and it can never supply the sample identity.
+
+The case that matters is a query by MD5 or SHA-1, where collisions are
+practical: two genuinely different samples can share the digest an analyst
+typed, and merging their detonations would attribute one sample's behaviour to
+the other. This is the same discipline as re-validating a loose ThreatFox match
+by parsing (Task 10) and as the graph refusing to fuse two samples whose stronger
+digests disagree (Task 14) — applied here, because the merge would otherwise
+happen inside the provider before correlation ever sees two files.
+
+Comparison is equality on a parsed digest, never containment, and a record
+stating nothing checkable is kept: this re-validates what the provider said
+rather than demanding that it say it.
+
+### A record is dated when the sandbox ran, or not at all
+
+`observed_at` on an evidence record is **the detonation instant**
+(`analysis_start_time`), and only the behaviour record — which describes exactly
+one run — carries it. The sample-level assessment, the coverage record and the
+no-report record carry **no** instant: they span several runs, and a hash
+search's index states no analysis time at all.
+
+That field is not decorative. Correlation copies it onto every relationship the
+record supports, so the wall clock it used to hold meant a 2021 detonation's
+contacted hosts were reported as *observed today* — query time wearing an
+observation's name, which is the one thing Task 15's typed instants exist to
+prevent. `retrieved_at` still records when TI Recon asked.
+
+### What reaches an analyst report
+
+Only a claim's `highlights` are rendered, so the sandbox claim quotes its own
+bounded statements: the neutral verdict, the provider's own verdict words, which
+environment reported what, whether completed runs disagreed, the family label,
+how many runs completed, and one line per run that was actually read — naming
+that run's report id, environment, detonation instant and how much behaviour it
+produced.
+
+`threat_score`, `threat_level` and `av_detect` are deliberately **not** quoted.
+They are preserved on the evidence record as provider data, and printing a
+number beside a verdict invites a reader to treat it as a score this engine does
+not compute. Highlights are quotation, never weight: fusion reads none of them,
+and a claim with none is weighed exactly like a claim with eight.
+
 ---
 
 ## 11. Report divergence
