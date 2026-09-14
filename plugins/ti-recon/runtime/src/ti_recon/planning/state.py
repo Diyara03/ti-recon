@@ -64,10 +64,17 @@ from ti_recon.planning.models import (
 
 __all__ = [
     "BLOCKING_ERROR_CATEGORIES",
+    "CAPABILITY_UNAVAILABLE_REASON",
     "COVERING_STATUSES",
     "PARTIAL_STATUSES",
     "PlanningState",
 ]
+
+#: The coverage reason for a goal no registered, plannable provider offers for
+#: this observable type. One string, shared by the planner and its tests, because
+#: readiness reads the *structure* of the item -- ``NOT_COVERED`` with an empty
+#: ``providers_considered`` -- and the reason exists for a human.
+CAPABILITY_UNAVAILABLE_REASON = "no registered provider offers this capability for this observable"
 
 #: Statuses that mean a source was successfully consulted.
 COVERING_STATUSES: frozenset[ProviderRunStatus] = frozenset(
@@ -103,6 +110,13 @@ class PlanningState:
     budget: EnrichmentBudget
     goals: tuple[CapabilityGoal, ...] = ()
     requested_capabilities: frozenset[ProviderCapability] = frozenset()
+    #: Template goals no registered, plannable provider offers for this
+    #: observable type. Never planned -- a candidate search over them would find
+    #: nothing every round -- but never forgotten either: each becomes a
+    #: ``NOT_COVERED`` coverage item with an empty ``providers_considered``, which
+    #: is the one structural statement downstream layers can read as "the
+    #: catalogue has no path" rather than "nobody was asked" (Task 24, US-06).
+    unservable_goals: tuple[CapabilityGoal, ...] = ()
 
     #: ``(provider_id, capability)`` pairs already tried. A provider may be asked
     #: for a *different* capability later — one dataset can hold several kinds of
@@ -215,6 +229,7 @@ class PlanningState:
         self,
         *,
         goals: tuple[CapabilityGoal, ...] | None = None,
+        unservable_goals: tuple[CapabilityGoal, ...] | None = None,
         requested: frozenset[ProviderCapability] | None = None,
         focus: frozenset[ProviderCapability] = frozenset(),
         excluded_families: dict[ProviderCapability, frozenset[str]] | None = None,
@@ -241,6 +256,9 @@ class PlanningState:
         return PlanningState(
             budget=self.budget,
             goals=self.goals if goals is None else goals,
+            unservable_goals=(
+                self.unservable_goals if unservable_goals is None else unservable_goals
+            ),
             requested_capabilities=(
                 self.requested_capabilities if requested is None else requested
             ),
@@ -472,6 +490,13 @@ class PlanningState:
         and ``NOT_COVERED`` when nothing was — including when no provider could
         have served it, which is a blind spot rather than a failure and is said
         so in the reason.
+
+        A goal in ``unservable_goals`` is reported too, as ``NOT_COVERED`` with an
+        empty ``providers_considered``. It was never planned, so nothing in this
+        state's ledgers mentions it; the item is the only trace that the template
+        asked for it and the catalogue could not answer. Dropping it silently
+        left readiness to rebuild the requirement from the template and read the
+        absence of any record as "nobody was asked" (Task 24, US-06).
         """
         items: list[CoverageItem] = []
         for goal in self.goals:
@@ -491,19 +516,39 @@ class PlanningState:
                 )
             elif not providers:
                 status = CoverageStatus.NOT_COVERED
-                reason = "no registered provider offers this capability for this observable"
+                reason = CAPABILITY_UNAVAILABLE_REASON
             else:
                 status = CoverageStatus.NOT_COVERED
                 reason = "no eligible provider produced coverage"
             items.append(
                 CoverageItem(
                     capability=capability,
-                    relevance=goal.relevance
-                    if goal.relevance is not CoverageRelevance.NOT_APPLICABLE
-                    else CoverageRelevance.OPTIONAL,
+                    relevance=_reported_relevance(goal),
                     status=status,
                     providers_considered=providers,
                     reason=reason,
                 )
             )
+        for goal in sorted(self.unservable_goals, key=lambda item: item.capability.value):
+            items.append(
+                CoverageItem(
+                    capability=goal.capability,
+                    relevance=_reported_relevance(goal),
+                    status=CoverageStatus.NOT_COVERED,
+                    providers_considered=(),
+                    reason=CAPABILITY_UNAVAILABLE_REASON,
+                )
+            )
         return tuple(items)
+
+
+def _reported_relevance(goal: CapabilityGoal) -> CoverageRelevance:
+    """The relevance a coverage item reports for a goal.
+
+    ``NOT_APPLICABLE`` is a goal-template statement about a type the goal does
+    not concern, and such a goal is never in a state; the coverage model still
+    needs a value, and ``OPTIONAL`` is the one that can never make a gap.
+    """
+    if goal.relevance is CoverageRelevance.NOT_APPLICABLE:
+        return CoverageRelevance.OPTIONAL
+    return goal.relevance
