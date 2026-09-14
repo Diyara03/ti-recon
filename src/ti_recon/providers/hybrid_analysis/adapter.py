@@ -285,9 +285,12 @@ class HybridAnalysisAdapter(ProviderAdapter):
             search = await client.search_hash(file_hash=digest, credential=credential)
             requests_made += 1
             rate_limit = search.rate_limit or rate_limit
-            sha256, refs = read_search_result(search.payload)
+            # Re-validated against the digests this file already carries: a
+            # search answers with per-sample records, and a record describing a
+            # different file is not this file's detonation history.
+            index = read_search_result(search.payload, hashes=request.intel_object.hashes)
 
-            selection = select_reports(refs, request.depth)
+            selection = select_reports(index.reports, request.depth)
             bounds = self._lookup_policy.bounds(request.depth)
             for ref in selection.selected:
                 try:
@@ -321,7 +324,11 @@ class HybridAnalysisAdapter(ProviderAdapter):
         finally:
             await client.aclose()
 
-        view = SandboxSampleView(canonical_sha256=sha256, reports=refs, summaries=tuple(summaries))
+        view = SandboxSampleView(
+            canonical_sha256=index.canonical_sha256,
+            reports=index.reports,
+            summaries=tuple(summaries),
+        )
         return self._envelope(
             request,
             view=view,
@@ -331,6 +338,7 @@ class HybridAnalysisAdapter(ProviderAdapter):
             rate_limit=rate_limit,
             containers=tuple(containers),
             unavailable=tuple(unavailable),
+            foreign_records=index.foreign_records,
         )
 
     def _plan(self, intel_object: IntelObject) -> tuple[str, str] | None:
@@ -364,6 +372,7 @@ class HybridAnalysisAdapter(ProviderAdapter):
         rate_limit: RateLimitSnapshot | None,
         containers: tuple[str, ...],
         unavailable: tuple[str, ...],
+        foreign_records: int = 0,
     ) -> ProviderResultEnvelope:
         """Assemble the result, and decide what status honestly describes it."""
         context = NormalizationContext(
@@ -397,6 +406,7 @@ class HybridAnalysisAdapter(ProviderAdapter):
                 partial_reason=partial_reason,
                 container_reports=containers,
                 unavailable_reports=unavailable,
+                foreign_records=foreign_records,
             )
         )
 
@@ -470,9 +480,9 @@ class HybridAnalysisAdapter(ProviderAdapter):
         if planned is None:
             return NormalizedPayload(warnings=(HYBRID_ANALYSIS_NOT_SUPPORTED,))
         algorithm, _ = planned
-        sha256, refs = read_search_result(dict(payload))
-        view = SandboxSampleView(canonical_sha256=sha256, reports=refs)
-        selection = select_reports(refs, InvestigationDepth.QUICK)
+        index = read_search_result(dict(payload), hashes=request.intel_object.hashes)
+        view = SandboxSampleView(canonical_sha256=index.canonical_sha256, reports=index.reports)
+        selection = select_reports(index.reports, InvestigationDepth.QUICK)
         envelope = self._envelope(
             request,
             view=view,
@@ -482,6 +492,7 @@ class HybridAnalysisAdapter(ProviderAdapter):
             rate_limit=None,
             containers=(),
             unavailable=(),
+            foreign_records=index.foreign_records,
         )
         return NormalizedPayload(
             evidence=envelope.evidence,

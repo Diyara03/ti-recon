@@ -51,6 +51,9 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, Final
 
+from pydantic import Field
+
+from ti_recon.models.base import FrozenTiReconModel
 from ti_recon.sandbox.bounds import SandboxBounds
 from ti_recon.sandbox.models import (
     MAX_COMMAND_LINE,
@@ -74,7 +77,9 @@ from ti_recon.sandbox.models import (
 __all__ = [
     "EXCLUDED_DETONATION_FIELDS",
     "SAFE_DETONATION_FIELDS",
+    "SEARCH_DIGEST_FIELDS",
     "VERDICT_BY_PROVIDER_WORD",
+    "SearchIndex",
     "read_key_info",
     "read_report_refs",
     "read_report_summary",
@@ -276,21 +281,66 @@ def _environment(payload: Mapping[str, Any]) -> SandboxEnvironment:
 # --------------------------------------------------------------------------- #
 
 
-def read_search_result(payload: Any) -> tuple[str | None, tuple[SandboxReportRef, ...]]:
-    """``(canonical sha256, report index)`` from a hash search.
+#: The digest fields a search record carries, and the TI Recon algorithm name
+#: each one answers. Used to re-validate a record against the file that was
+#: asked about — never to *derive* an identity.
+SEARCH_DIGEST_FIELDS: Final[tuple[tuple[str, str, int], ...]] = (
+    ("sha256", "SHA-256", 64),
+    ("sha1", "SHA-1", 40),
+    ("md5", "MD5", 32),
+)
+
+
+class SearchIndex(FrozenTiReconModel):
+    """What a hash search said about the file that was asked about.
+
+    ``foreign_records`` counts records the response carried that describe a
+    *different* file. It is published in coverage rather than discarded
+    silently: "the provider answered with three records and one of them was
+    another sample" is a fact an analyst reading a thin result needs.
+    """
+
+    canonical_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    reports: tuple[SandboxReportRef, ...] = ()
+    foreign_records: int = Field(default=0, ge=0)
+
+
+def read_search_result(payload: Any, *, hashes: Mapping[str, str] | None = None) -> SearchIndex:
+    """The report index for one queried file.
 
     The API has returned both a list of per-sample records and a single object
     over its life, so both shapes are accepted: refusing to read a document
     because the envelope changed would lose real coverage over a formatting
     difference.
+
+    A list is a list of **samples**, so every record is re-validated against the
+    digests TI Recon already holds for the file it asked about (Task 24,
+    HA-01). A record that states a digest for an algorithm we know, and states a
+    different one, describes a different file: its reports are dropped and
+    counted rather than merged into this sample's view. Two files sharing an
+    MD5 is the case that matters — collisions are practical for MD5 and SHA-1 —
+    and merging them would attribute one sample's detonations to another, which
+    is the same mistake Task 14 refuses at the graph with ``FILE_HASH_CONFLICT``
+    and Task 10 refuses for a loose ThreatFox match.
+
+    Comparison is by *equality* on a parsed digest, never containment, and a
+    record that states nothing we can check is kept: this is a re-validation of
+    what the provider said, not a demand that it say it.
     """
     records = payload if isinstance(payload, list) else [payload]
+    known = {
+        name: value.lower() for name, value in (hashes or {}).items() if isinstance(value, str)
+    }
     sha256: str | None = None
     refs: list[SandboxReportRef] = []
     seen: set[str] = set()
+    foreign = 0
 
     for record in records:
         if not isinstance(record, Mapping):
+            continue
+        if not _describes_queried_file(record, known):
+            foreign += 1
             continue
         sha256 = sha256 or _digest(record.get("sha256"), 64)
         # A search record is itself a report in the flat form the API returns.
@@ -299,7 +349,24 @@ def read_search_result(payload: Any) -> tuple[str | None, tuple[SandboxReportRef
                 continue
             seen.add(ref.report_id)
             refs.append(ref)
-    return sha256, tuple(refs)
+    return SearchIndex(canonical_sha256=sha256, reports=tuple(refs), foreign_records=foreign)
+
+
+def _describes_queried_file(record: Mapping[str, Any], known: Mapping[str, str]) -> bool:
+    """Whether this record is about the file TI Recon asked about.
+
+    ``True`` when nothing can be compared — an unverifiable record is not
+    thereby a foreign one, and dropping it would lose real coverage whenever
+    the provider omits a field.
+    """
+    for field, algorithm, length in SEARCH_DIGEST_FIELDS:
+        expected = known.get(algorithm)
+        if expected is None:
+            continue
+        stated = _digest(record.get(field), length)
+        if stated is not None and stated != expected:
+            return False
+    return True
 
 
 def read_report_refs(record: Mapping[str, Any]) -> tuple[SandboxReportRef, ...]:
