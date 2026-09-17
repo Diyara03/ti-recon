@@ -375,6 +375,40 @@ Implemented (Jira Tasks 1-19):
   held nothing) and out-of-depth or never-activated (the depth rule or the
   activation rule speaks first). urlscan semantics are unchanged.
 
+- Task 24 Phase 7 — Hybrid Analysis audit before live validation, offline
+  only: nothing was submitted, downloaded or called. The integration was
+  already current (`GET /search/hash`, `GET /report/{id}/summary`,
+  `GET /key/current`; the deprecated `POST` forms are unimplemented and
+  unreachable), read-only by construction behind a three-shape
+  `ALLOWED_PATHS`, and honest about its one capability — `FILE_BEHAVIOR`,
+  answered by a sample-level assessment record or a capability-specific empty
+  answer. Three defects fixed at the boundary where each fact is known:
+  HA-01 (a hash search answers with *per-sample* records and every record's
+  reports were merged, so a record describing a different file contributed its
+  detonations and could supply the sample identity — records are now
+  re-validated against the digests the `file` object carries, by parsing and
+  comparing for equality, and a disagreeing record is dropped and counted as
+  `foreign_records_discarded`; the case that matters is an MD5 or SHA-1 query,
+  where collisions are practical); HA-02 (every record carried
+  `observed_at = utc_now()`, and correlation copies that onto each
+  relationship, so a years-old detonation's contacted hosts were reported as
+  observed today — the behaviour record now carries its run's
+  `analysis_start_time` and records spanning several runs carry no instant);
+  HA-03 (the sandbox claim quoted nothing, so a verdict resting on it reached
+  the report as "a sandbox classified this sample" — it now quotes the verdict
+  words, the per-environment outcomes, divergence, the family label, the
+  completed-run count and one line per run actually read, and still never the
+  threat score or AV count). Confirmed unchanged: one directional finding per
+  sample whatever the report count, `hybrid_analysis` as its own source family,
+  selection by strongest *completed* verdict then contrast with no recency
+  claim, and 1/2/3 physical requests at QUICK/STANDARD/DEEP. Recorded, not
+  changed: HA-POLICY-01 (this sandbox's claim is `UNQUALIFIED`, so policy lets
+  it corroborate and never decide — an exact-file malicious sandbox assessment
+  alone reaches SUSPICIOUS/LOW; whether this provider's own documented fields
+  warrant a provider-owned `STRONG_DIRECT` test, as GTI's do, is a later
+  decision) and HA-REPORTING-01 (signature names and ATT&CK technique ids stay
+  on the behaviour record and are not quoted).
+
 **GTI, urlscan, GreyNoise, Censys, ThreatFox, URLhaus, MalwareBazaar, MISP
 Warning Lists and Hybrid Analysis are the only providers.** Task 13 chooses what
 to ask, Task 14 assembles what came back, Task 15 says what each finding means in
@@ -2413,6 +2447,22 @@ about it.
      satisfied the moment it activated leaves no other trace. A goal with no
      attempt, no answered family and only inactive skips stays
      `NOT_APPLICABLE`.
+
+196. **A per-sample answer is re-validated against the sample that was asked
+     about, and a record is dated when the source observed it.** A hash search
+     answers with records about *files*, so a record stating a digest TI Recon
+     already holds for this file, and stating it differently, is about a
+     different file: its reports are dropped and counted, and it can never
+     supply the identity. Equality on a parsed digest, never containment — the
+     same rule a loose ThreatFox match gets (24) and the graph's refusal to fuse
+     two samples (47), applied inside the provider because the merge would
+     otherwise happen before correlation sees two files. And the instant on an
+     evidence record is the source's own observation — a detonation's
+     `analysis_start_time` — never the wall clock at normalization: correlation
+     copies it onto every relationship the record supports, so an invented one
+     reports a years-old run's contacted hosts as seen today (58). A record
+     spanning several observations carries no instant rather than a chosen one,
+     and `retrieved_at` still says when TI Recon asked.
 
 195. **A search match is not a claim scope, and contacted is not accused.** A
      stored-scan hit says only that the scan matched the query; which page

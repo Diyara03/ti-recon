@@ -32,6 +32,7 @@ happened" from "nothing could have happened".
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from pydantic import Field
@@ -44,7 +45,7 @@ from ti_recon.enums import (
     ObjectClass,
     RelationshipType,
 )
-from ti_recon.models.base import FrozenTiReconModel, utc_now
+from ti_recon.models.base import FrozenTiReconModel
 from ti_recon.models.evidence import Evidence
 from ti_recon.models.intel_object import IntelObject
 from ti_recon.models.relationship import Relationship
@@ -135,12 +136,23 @@ def _evidence(
     claim_type: str,
     effect: EvidenceEffect,
     attributes: dict[str, Any],
+    observed_at: datetime | None = None,
 ) -> Evidence:
     """Build one record with mandatory sample-level provenance.
 
     No Admiralty grading and no ``provider_confidence``: how much a sandbox run
     is worth is TI Recon policy, and an adapter asserting it would smuggle in a
     judgement it is not allowed to make.
+
+    ``observed_at`` is **when the sandbox detonated the sample**, and only a
+    record that describes one run can supply it. It was the wall clock at
+    normalization until Task 24 (HA-02), which is enrichment time wearing an
+    observation's name: correlation copies this instant onto every relationship
+    the record supports, so a 2021 detonation's contacted hosts were reported as
+    observed today. A record spanning several runs — the sample-level
+    assessment, the coverage record — carries **no** instant rather than an
+    invented one; the index a hash search returns states no analysis time at
+    all, and ``retrieved_at`` already records when TI Recon asked.
     """
     return Evidence(
         investigation_id=context.investigation_id,
@@ -154,7 +166,7 @@ def _evidence(
         match_scope=MatchScope.EXACT_OBSERVABLE,
         lineage_group_id=context.lineage_group_id,
         attributes=attributes,
-        observed_at=utc_now(),
+        observed_at=observed_at,
     )
 
 
@@ -377,6 +389,9 @@ def normalize_behaviour(
         claim_type=BEHAVIOUR_CLAIM_TYPE,
         effect=EvidenceEffect.CONTEXT_ONLY,
         attributes=attributes,
+        # The detonation instant, so the relationships this record supports are
+        # dated when the sandbox watched them rather than when we asked.
+        observed_at=quality.analysis_started_at,
     )
     result = SandboxNormalization(evidence=(evidence,))
     return result.merge(
@@ -516,6 +531,7 @@ def normalize_coverage(
     partial_reason: str | None,
     container_reports: tuple[str, ...] = (),
     unavailable_reports: tuple[str, ...] = (),
+    foreign_records: int = 0,
 ) -> SandboxNormalization:
     """What was looked at, what was skipped, and how the choice was made.
 
@@ -561,6 +577,10 @@ def normalize_coverage(
         attributes["container_reports"] = list(container_reports)
     if unavailable_reports:
         attributes["unavailable_reports"] = list(unavailable_reports)
+    if foreign_records:
+        # Records the search returned that state a digest belonging to a
+        # different file. Counted rather than dropped in silence.
+        attributes["foreign_records_discarded"] = foreign_records
     if partial_reason is not None:
         attributes["partial_reason"] = partial_reason
 
